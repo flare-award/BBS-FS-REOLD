@@ -40,6 +40,7 @@ public class BBSSettings {
 	public static ValueInt primaryColor;
 	public static ValueBoolean primaryColorGradient;
 	public static ValueInt primaryColorEnd;
+	public static ValueInt primaryColorGradientDirection;
 	public static ValueInt stencilHighlightColor;
 	public static ValueBoolean enableTrackpadIncrements;
 	public static ValueBoolean enableTrackpadScrolling;
@@ -206,10 +207,18 @@ public class BBSSettings {
 	public static ValueFloat filmFilterSharpness;
 	public static ValueFloat filmFilterVignette;
 	public static ValueFloat filmFilterSepia;
+	public static ValueFloat filmFilterGrain;
+	public static ValueFloat filmFilterAberration;
+	public static ValueFloat filmFilterInvert;
+	public static ValueFloat filmFilterPosterize;
+	public static ValueFloat filmFilterPixelate;
+	public static ValueFloat filmFilterDistortion;
+	public static ValueFloat filmFilterBloom;
 
 	/* A photo laid over the film preview and export - PNG transparency respected.
 	 * Position is in NDC-like units (0 centered, positive X right, positive Y down),
-	 * scale is the photo's height relative to the frame's, stretches are multipliers. */
+	 * scale is the photo's height relative to the frame's, stretches are multipliers.
+	 * The single-photo values are legacy: they migrate into the layer list below. */
 	public static ValueString filmPhotoTexture;
 	public static ValueFloat filmPhotoOpacity;
 	public static ValueFloat filmPhotoX;
@@ -217,6 +226,9 @@ public class BBSSettings {
 	public static ValueFloat filmPhotoScale;
 	public static ValueFloat filmPhotoStretchX;
 	public static ValueFloat filmPhotoStretchY;
+
+	/* Serialized list of photo overlay layers (see the client's PhotoLayer class). */
+	public static ValueString filmPhotoLayers;
 
 	public static ValueBoolean shaderCurvesEnabled;
 	public static ValueBoolean translucencyQueue;
@@ -256,6 +268,14 @@ public class BBSSettings {
 	public static final float MIN_FILM_PHOTO_STRETCH = 0.1F;
 	public static final float MAX_FILM_PHOTO_STRETCH = 5F;
 	public static final float MAX_FILM_PHOTO_OFFSET = 2F;
+	public static final float MAX_FILM_POSTERIZE = 32F;
+	public static final float MAX_FILM_PIXELATE = 64F;
+	public static final float MAX_FILM_PHOTO_FADE = 30F;
+
+	/* Directions the primary color gradient can flow in */
+	public static final int GRADIENT_HORIZONTAL = 0;
+	public static final int GRADIENT_VERTICAL = 1;
+	public static final int GRADIENT_DIAGONAL = 2;
 	/**
 	 * Tonal map of the interface's surfaces, four levels deep: deep sits under
 	 * the content (fields, timeline wells), chrome frames everything, base is
@@ -307,6 +327,15 @@ public class BBSSettings {
 	public static int primaryColorEnd()
 	{
 		return primaryColorEnd == null ? DEFAULT_PRIMARY_COLOR_END : primaryColorEnd.get();
+	}
+
+	/**
+	 * Which way the accent gradient flows: {@link #GRADIENT_HORIZONTAL},
+	 * {@link #GRADIENT_VERTICAL} or {@link #GRADIENT_DIAGONAL}.
+	 */
+	public static int primaryGradientDirection()
+	{
+		return primaryColorGradientDirection == null ? GRADIENT_HORIZONTAL : primaryColorGradientDirection.get();
 	}
 
 	public static boolean isLightTheme()
@@ -714,6 +743,20 @@ public class BBSSettings {
 		filmFilterVignette.invisible();
 		filmFilterSepia = builder.getFloat("film_filter_sepia", 0F, 0F, 1F);
 		filmFilterSepia.invisible();
+		filmFilterGrain = builder.getFloat("film_filter_grain", 0F, 0F, 1F);
+		filmFilterGrain.invisible();
+		filmFilterAberration = builder.getFloat("film_filter_aberration", 0F, 0F, 1F);
+		filmFilterAberration.invisible();
+		filmFilterInvert = builder.getFloat("film_filter_invert", 0F, 0F, 1F);
+		filmFilterInvert.invisible();
+		filmFilterPosterize = builder.getFloat("film_filter_posterize", 0F, 0F, MAX_FILM_POSTERIZE);
+		filmFilterPosterize.invisible();
+		filmFilterPixelate = builder.getFloat("film_filter_pixelate", 0F, 0F, MAX_FILM_PIXELATE);
+		filmFilterPixelate.invisible();
+		filmFilterDistortion = builder.getFloat("film_filter_distortion", 0F, -1F, 1F);
+		filmFilterDistortion.invisible();
+		filmFilterBloom = builder.getFloat("film_filter_bloom", 0F, 0F, 1F);
+		filmFilterBloom.invisible();
 		filmPhotoTexture = builder.getString("film_photo_texture", "");
 		filmPhotoTexture.invisible();
 		filmPhotoOpacity = builder.getFloat("film_photo_opacity", 1F, 0F, 1F);
@@ -728,9 +771,12 @@ public class BBSSettings {
 		filmPhotoStretchX.invisible();
 		filmPhotoStretchY = builder.getFloat("film_photo_stretch_y", 1F, MIN_FILM_PHOTO_STRETCH, MAX_FILM_PHOTO_STRETCH);
 		filmPhotoStretchY.invisible();
+		filmPhotoLayers = builder.getString("film_photo_layers", "");
+		filmPhotoLayers.invisible();
 		primaryColor = builder.getInt("primary_color", DEFAULT_PRIMARY_COLOR).color();
 		primaryColorGradient = builder.getBoolean("primary_color_gradient", false);
 		primaryColorEnd = builder.getInt("primary_color_end", DEFAULT_PRIMARY_COLOR_END).color();
+		primaryColorGradientDirection = builder.getInt("primary_color_gradient_direction", GRADIENT_HORIZONTAL, GRADIENT_HORIZONTAL, GRADIENT_DIAGONAL);
 		stencilHighlightColor = builder.getInt("stencil_highlight_color", 0x2EFFFFFF).colorAlpha();
 		theme = builder.getInt("theme", DEFAULT_THEME);
 

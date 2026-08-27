@@ -25,6 +25,8 @@ public class PresetManager
     public static final PresetManager ANIMATION_STATES = new PresetManager(BBSMod.getSettingsPath("presets/animation_states"));
     public static final PresetManager REPLAYS = new PresetManager(BBSMod.getSettingsPath("presets/replays"));
     public static final PresetManager MODEL_WELDS = new PresetManager(BBSMod.getSettingsPath("presets/model_welds"));
+    public static final PresetManager FILTERS = new PresetManager(BBSMod.getSettingsPath("presets/filters"));
+    public static final PresetManager THEMES = new PresetManager(BBSMod.getSettingsPath("presets/themes"));
 
     private final File folder;
     private final Path rootPath;

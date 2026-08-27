@@ -9,11 +9,13 @@ import mchorse.bbs_mod.ui.utils.UI;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.DoubleConsumer;
+import java.util.function.DoubleSupplier;
 
 /**
  * Base of the film effect overlays (color grading filters and the photo overlay):
  * a live export preview on the left, labeled sliders on the right. Sliders write
- * straight into their settings on every change, so the preview - and the export -
+ * straight into their targets on every change, so the preview - and the export -
  * follow the drag in real time rather than waiting for the mouse to let go.
  */
 public abstract class UIFilmEffectsOverlayPanel extends UIOverlayPanel
@@ -25,7 +27,7 @@ public abstract class UIFilmEffectsOverlayPanel extends UIOverlayPanel
     protected static final int PREVIEW_W = 320;
     protected static final int PREVIEW_H = 180;
 
-    /** Refreshers that pull every slider back in sync with its setting. */
+    /** Refreshers that pull every slider back in sync with its value. */
     protected final List<Runnable> updaters = new ArrayList<>();
 
     public UIFilmEffectsOverlayPanel(IKey title)
@@ -40,11 +42,32 @@ public abstract class UIFilmEffectsOverlayPanel extends UIOverlayPanel
      */
     protected UIElement createRow(IKey label, ValueFloat value, double min, double max, double uiScale)
     {
-        UISliderTrackpad slider = new UISliderTrackpad((v) -> value.set((float) (v / uiScale)));
+        return this.createRow(label, () -> value.get(), (v) -> value.set((float) v), min, max, uiScale, false);
+    }
+
+    /** Same as {@link #createRow(IKey, ValueFloat, double, double, double)}, but whole numbers only. */
+    protected UIElement createIntegerRow(IKey label, ValueFloat value, double min, double max)
+    {
+        return this.createRow(label, () -> value.get(), (v) -> value.set((float) v), min, max, 1D, true);
+    }
+
+    /**
+     * A row of label and slider bound to arbitrary get/set functions - the photo
+     * overlay uses these to edit whichever layer is selected at the moment.
+     */
+    protected UIElement createRow(IKey label, DoubleSupplier getter, DoubleConsumer setter, double min, double max, double uiScale, boolean integer)
+    {
+        UISliderTrackpad slider = new UISliderTrackpad((v) -> setter.accept(v / uiScale));
 
         slider.limit(min, max);
-        slider.setValue(value.get() * uiScale);
-        this.updaters.add(() -> slider.setValue(value.get() * uiScale));
+
+        if (integer)
+        {
+            slider.integer();
+        }
+
+        slider.setValue(getter.getAsDouble() * uiScale);
+        this.updaters.add(() -> slider.setValue(getter.getAsDouble() * uiScale));
 
         UIElement row = UI.row(4, UI.label(label).labelAnchor(0, 0.5F), slider);
 

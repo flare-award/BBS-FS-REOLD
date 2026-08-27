@@ -211,9 +211,11 @@ public class Batcher2D
 
     /**
      * {@link #surfaceBox(int, int, int, int, int, boolean, boolean)} whose fill flows
-     * left to right between two colors, keeping the same bevel treatment.
+     * between two colors in the given direction, keeping the same bevel treatment.
+     * The direction is one of the {@link BBSSettings} gradient constants: horizontal
+     * flows left to right, vertical top to bottom, diagonal top-left to bottom-right.
      */
-    public void gradientSurfaceBox(int x1, int y1, int x2, int y2, int leftFill, int rightFill, boolean shadow, boolean border)
+    public void gradientSurfaceBox(int x1, int y1, int x2, int y2, int startFill, int endFill, boolean shadow, boolean border, int direction)
     {
         if (border)
         {
@@ -225,20 +227,37 @@ public class Batcher2D
             y2--;
         }
 
-        this.gradientHBox(x1, y1, x2, y2, leftFill, rightFill);
+        /* Corner colors, laid out as c1 (top-left), c2 (top-right), c3 (bottom-left),
+         * c4 (bottom-right) - matching the box() vertex order */
+        int c1 = startFill;
+        int c2 = direction == BBSSettings.GRADIENT_VERTICAL ? startFill : endFill;
+        int c3 = direction == BBSSettings.GRADIENT_HORIZONTAL ? startFill : endFill;
+        int c4 = endFill;
+
+        if (direction == BBSSettings.GRADIENT_DIAGONAL)
+        {
+            c2 = Colors.lerp(startFill, endFill, 0.5F);
+            c3 = c2;
+        }
+
+        this.box(x1, y1, x2 - x1, y2 - y1, c1, c2, c3, c4);
 
         if (BBSSettings.interfaceHighlights.get())
         {
-            int lightLeft = Colors.lerp(leftFill, Colors.WHITE, HIGHLIGHT_STRENGTH);
-            int lightRight = Colors.lerp(rightFill, Colors.WHITE, HIGHLIGHT_STRENGTH);
+            int light1 = Colors.lerp(c1, Colors.WHITE, HIGHLIGHT_STRENGTH);
+            int light2 = Colors.lerp(c2, Colors.WHITE, HIGHLIGHT_STRENGTH);
+            int light3 = Colors.lerp(c3, Colors.WHITE, HIGHLIGHT_STRENGTH);
 
-            this.gradientHBox(x1, y1, x2, y1 + 1, lightLeft, lightRight);
-            this.box(x1, y1, x1 + 1, y2, lightLeft);
+            this.box(x1, y1, x2 - x1, 1, light1, light2, light1, light2);
+            this.box(x1, y1, 1, y2 - y1, light1, light1, light3, light3);
         }
 
         if (shadow && BBSSettings.interfaceShadows.get())
         {
-            this.gradientHBox(x1, y2 - 2, x2, y2, Colors.lerp(leftFill, Colors.A100, 0.4F), Colors.lerp(rightFill, Colors.A100, 0.4F));
+            int dark3 = Colors.lerp(c3, Colors.A100, 0.4F);
+            int dark4 = Colors.lerp(c4, Colors.A100, 0.4F);
+
+            this.box(x1, y2 - 2, x2 - x1, 2, dark3, dark4, dark3, dark4);
         }
     }
 

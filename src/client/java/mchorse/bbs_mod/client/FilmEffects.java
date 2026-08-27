@@ -3,25 +3,36 @@ package mchorse.bbs_mod.client;
 import com.mojang.blaze3d.systems.RenderSystem;
 import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.BBSSettings;
+import mchorse.bbs_mod.camera.clips.misc.FilterClip;
+import mchorse.bbs_mod.camera.controller.CameraWorkCameraController;
 import mchorse.bbs_mod.graphics.Framebuffer;
 import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.graphics.texture.TextureFormat;
 import mchorse.bbs_mod.resources.Link;
 import mchorse.bbs_mod.settings.values.numeric.ValueFloat;
 import mchorse.bbs_mod.utils.MathUtils;
+import mchorse.bbs_mod.utils.clips.ClipContext;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL30;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
 /**
  * Post-processing baked into the film's export texture.
  *
  * <p>Right after {@link BBSRendering#onRenderBeforeScreen()} blits the frame into the
  * export framebuffer, this class color-grades it with a fullscreen shader pass and lays
- * a photo over it. The film preview, the video recorder and the screenshot all read that
- * very texture, so whatever happens here shows up in every one of them at once.</p>
+ * photo layers over it. The film preview, the video recorder and the screenshot all read
+ * that very texture, so whatever happens here shows up in every one of them at once.</p>
+ *
+ * <p>Slider values come from {@link BBSSettings}, but while a {@link FilterClip} plays
+ * on the camera timeline, its keyframed channels override the matching sliders for
+ * that frame - which is how the filters animate in playback and export alike.</p>
  */
 public class FilmEffects
 {
@@ -33,6 +44,12 @@ public class FilmEffects
 
     /** How far the temperature slider's full swing pushes the red/blue channels. */
     private static final float TEMPERATURE_STRENGTH = 0.2F;
+
+    /** The film frame is ticks, the fade sliders are seconds. */
+    private static final float TICKS_PER_SECOND = 20F;
+
+    /** How much smaller than the frame the bloom buffers are (in each axis). */
+    private static final int BLOOM_DOWNSCALE = 4;
 
     private static final String FILTER_VERTEX = """
         #version 150
@@ -51,6 +68,7 @@ public class FilmEffects
         #version 150
 
         uniform sampler2D u_texture;
+        uniform sampler2D u_bloom;
         uniform vec2 u_texel;
         uniform float u_brightness;
         uniform float u_contrast;
@@ -61,6 +79,14 @@ public class FilmEffects
         uniform float u_sharpness;
         uniform float u_vignette;
         uniform float u_sepia;
+        uniform float u_grain;
+        uniform float u_aberration;
+        uniform float u_invert;
+        uniform float u_posterize;
+        uniform float u_pixelate;
+        uniform float u_distortion;
+        uniform float u_bloom_strength;
+        uniform float u_seed;
 
         in vec2 v_uv;
 
@@ -74,17 +100,56 @@ public class FilmEffects
             return color * c + cross(k, color) * sin(angle) + k * dot(k, color) * (1.0 - c);
         }
 
+        vec3 sampleFrame(vec2 uv)
+        {
+            if (u_aberration > 0.0)
+            {
+                /* Radial fringing: red samples outward, blue inward */
+                vec2 shift = (uv - 0.5) * u_aberration * 0.03;
+
+                return vec3(
+                    texture(u_texture, uv + shift).r,
+                    texture(u_texture, uv).g,
+                    texture(u_texture, uv - shift).b);
+            }
+
+            return texture(u_texture, uv).rgb;
+        }
+
         void main()
         {
-            vec3 color = texture(u_texture, v_uv).rgb;
+            vec2 uv = v_uv;
+
+            if (u_distortion != 0.0)
+            {
+                /* Barrel (positive) or pincushion (negative) lens warp,
+                 * aspect-corrected so the bulge stays circular */
+                float aspect = u_texel.y / u_texel.x;
+                vec2 d = uv - 0.5;
+
+                d.x *= aspect;
+                d *= 1.0 + u_distortion * dot(d, d) * 1.5;
+                d.x /= aspect;
+                uv = clamp(d + 0.5, 0.0, 1.0);
+            }
+
+            if (u_pixelate >= 1.0)
+            {
+                /* Snap the sample point to the center of a u_pixelate-sized cell */
+                vec2 cell = u_texel * u_pixelate;
+
+                uv = (floor(uv / cell) + 0.5) * cell;
+            }
+
+            vec3 color = sampleFrame(uv);
 
             if (u_sharpness > 0.0)
             {
-                vec3 blur = texture(u_texture, v_uv + vec2(u_texel.x, 0.0)).rgb;
+                vec3 blur = sampleFrame(uv + vec2(u_texel.x, 0.0));
 
-                blur += texture(u_texture, v_uv - vec2(u_texel.x, 0.0)).rgb;
-                blur += texture(u_texture, v_uv + vec2(0.0, u_texel.y)).rgb;
-                blur += texture(u_texture, v_uv - vec2(0.0, u_texel.y)).rgb;
+                blur += sampleFrame(uv - vec2(u_texel.x, 0.0));
+                blur += sampleFrame(uv + vec2(0.0, u_texel.y));
+                blur += sampleFrame(uv - vec2(0.0, u_texel.y));
                 color += (color - blur * 0.25) * u_sharpness;
             }
 
@@ -97,6 +162,15 @@ public class FilmEffects
             color = mix(vec3(luma), color, u_saturation);
             color = hueShift(color, u_hue);
             color = pow(max(color, vec3(0.0)), vec3(u_gamma));
+            color = mix(color, vec3(1.0) - color, u_invert);
+
+            if (u_posterize >= 2.0)
+            {
+                /* u_posterize is the number of tones each channel keeps */
+                float steps = u_posterize - 1.0;
+
+                color = floor(clamp(color, 0.0, 1.0) * steps + 0.5) / steps;
+            }
 
             vec3 sepia = vec3(
                 dot(color, vec3(0.393, 0.769, 0.189)),
@@ -105,6 +179,11 @@ public class FilmEffects
 
             color = mix(color, sepia, u_sepia);
 
+            if (u_bloom_strength > 0.0)
+            {
+                color += texture(u_bloom, uv).rgb * u_bloom_strength;
+            }
+
             if (u_vignette > 0.0)
             {
                 float dist = distance(v_uv, vec2(0.5)) * 1.4142;
@@ -112,13 +191,76 @@ public class FilmEffects
                 color *= 1.0 - u_vignette * smoothstep(0.35, 1.1, dist);
             }
 
+            if (u_grain > 0.0)
+            {
+                /* Animated monochrome noise, one random value per output pixel */
+                vec2 pixel = floor(v_uv / u_texel) + u_seed;
+                float noise = fract(sin(dot(pixel, vec2(12.9898, 78.233))) * 43758.5453);
+
+                color += (noise - 0.5) * u_grain * 0.3;
+            }
+
             fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+        }""";
+
+    private static final String BLOOM_CUT_FRAGMENT = """
+        #version 150
+
+        uniform sampler2D u_texture;
+        uniform vec2 u_texel;
+
+        in vec2 v_uv;
+
+        out vec4 fragColor;
+
+        void main()
+        {
+            /* Box down-sample so the quarter-res buffer doesn't shimmer */
+            vec3 color = texture(u_texture, v_uv).rgb;
+
+            color += texture(u_texture, v_uv + vec2(u_texel.x, 0.0)).rgb;
+            color += texture(u_texture, v_uv + vec2(0.0, u_texel.y)).rgb;
+            color += texture(u_texture, v_uv + u_texel).rgb;
+            color *= 0.25;
+
+            /* Keep only the highlights; the soft knee avoids hard flicker edges */
+            float brightness = max(color.r, max(color.g, color.b));
+
+            fragColor = vec4(color * smoothstep(0.6, 0.9, brightness), 1.0);
+        }""";
+
+    private static final String BLOOM_BLUR_FRAGMENT = """
+        #version 150
+
+        uniform sampler2D u_texture;
+        uniform vec2 u_direction;
+
+        in vec2 v_uv;
+
+        out vec4 fragColor;
+
+        void main()
+        {
+            float weights[5] = float[](0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216);
+            vec3 color = texture(u_texture, v_uv).rgb * weights[0];
+
+            for (int i = 1; i < 5; i++)
+            {
+                vec2 offset = u_direction * float(i);
+
+                color += texture(u_texture, v_uv + offset).rgb * weights[i];
+                color += texture(u_texture, v_uv - offset).rgb * weights[i];
+            }
+
+            fragColor = vec4(color, 1.0);
         }""";
 
     private static final String PHOTO_VERTEX = """
         #version 150
 
         uniform vec4 u_transform;
+        uniform vec2 u_rotation;
+        uniform float u_aspect;
 
         in vec2 a_position;
 
@@ -126,8 +268,15 @@ public class FilmEffects
 
         void main()
         {
+            vec2 p = a_position * u_transform.zw;
+
+            /* Rotate in frame space so the photo doesn't skew on wide screens */
+            p.x *= u_aspect;
+            p = vec2(p.x * u_rotation.x - p.y * u_rotation.y, p.x * u_rotation.y + p.y * u_rotation.x);
+            p.x /= u_aspect;
+
             v_uv = vec2(a_position.x * 0.5 + 0.5, 0.5 - a_position.y * 0.5);
-            gl_Position = vec4(u_transform.xy + a_position * u_transform.zw, 0.0, 1.0);
+            gl_Position = vec4(u_transform.xy + p, 0.0, 1.0);
         }""";
 
     private static final String PHOTO_FRAGMENT = """
@@ -150,11 +299,19 @@ public class FilmEffects
     /* Once any GL setup fails, the effects stay off instead of failing every frame */
     private static boolean broken;
 
+    /* While held down by the filters overlay's compare button, filters are skipped */
+    private static boolean showOriginal;
+
     private static int vao;
     private static int vbo;
     private static int filterProgram;
     private static int photoProgram;
+    private static int bloomCutProgram;
+    private static int bloomBlurProgram;
+    private static int bloomFramebuffer;
     private static Texture pingTexture;
+    private static Texture bloomTextureA;
+    private static Texture bloomTextureB;
 
     private static int uniformTexel;
     private static int uniformBrightness;
@@ -166,48 +323,158 @@ public class FilmEffects
     private static int uniformSharpness;
     private static int uniformVignette;
     private static int uniformSepia;
+    private static int uniformGrain;
+    private static int uniformAberration;
+    private static int uniformInvert;
+    private static int uniformPosterize;
+    private static int uniformPixelate;
+    private static int uniformDistortion;
+    private static int uniformBloomStrength;
+    private static int uniformSeed;
+    private static int uniformBloomCutTexel;
+    private static int uniformBlurDirection;
     private static int uniformTransform;
+    private static int uniformRotation;
+    private static int uniformAspect;
     private static int uniformOpacity;
+
+    /* The photo layer list is reparsed only when the serialized setting changes */
+    private static String cachedLayersString;
+    private static List<PhotoLayer> cachedLayers = new ArrayList<>();
+
+    /**
+     * Whether the compare button in the filters overlay is held down right now,
+     * which shows the frame with every filter bypassed.
+     */
+    public static boolean isShowingOriginal()
+    {
+        return showOriginal;
+    }
+
+    public static void setShowOriginal(boolean original)
+    {
+        showOriginal = original;
+    }
 
     public static boolean hasFilters()
     {
-        return isActive(BBSSettings.filmFilterBrightness, 0F)
-            || isActive(BBSSettings.filmFilterContrast, 0F)
-            || isActive(BBSSettings.filmFilterSaturation, 0F)
-            || isActive(BBSSettings.filmFilterHue, 0F)
-            || isActive(BBSSettings.filmFilterTemperature, 0F)
-            || isActive(BBSSettings.filmFilterGamma, 1F)
-            || isActive(BBSSettings.filmFilterSharpness, 0F)
-            || isActive(BBSSettings.filmFilterVignette, 0F)
-            || isActive(BBSSettings.filmFilterSepia, 0F);
+        return hasFilters(getFilterState());
+    }
+
+    private static boolean hasFilters(FilterState state)
+    {
+        return isActive(state.brightness, 0F)
+            || isActive(state.contrast, 0F)
+            || isActive(state.saturation, 0F)
+            || isActive(state.hue, 0F)
+            || isActive(state.temperature, 0F)
+            || isActive(state.gamma, 1F)
+            || isActive(state.sharpness, 0F)
+            || isActive(state.vignette, 0F)
+            || isActive(state.sepia, 0F)
+            || isActive(state.grain, 0F)
+            || isActive(state.aberration, 0F)
+            || isActive(state.invert, 0F)
+            || state.posterize >= 2F
+            || state.pixelate >= 1F
+            || isActive(state.distortion, 0F)
+            || isActive(state.bloom, 0F);
     }
 
     public static boolean hasPhoto()
     {
-        return getPhotoLink() != null;
-    }
+        for (PhotoLayer layer : getPhotoLayers())
+        {
+            if (!layer.texture.isEmpty())
+            {
+                return true;
+            }
+        }
 
-    public static Link getPhotoLink()
-    {
-        String texture = BBSSettings.filmPhotoTexture == null ? "" : BBSSettings.filmPhotoTexture.get();
-
-        return texture == null || texture.isEmpty() ? null : Link.create(texture);
+        return false;
     }
 
     /**
-     * The overlay photo loaded with linear filtering (a stretched photo shouldn't
-     * turn blocky), or {@code null} when no photo was picked.
+     * The current photo layer stack. The returned list is the live cache: the photo
+     * overlay UI mutates its layers in place and persists them back through
+     * {@link #savePhotoLayers(List)}.
      */
-    public static Texture getPhotoTexture()
+    public static List<PhotoLayer> getPhotoLayers()
     {
-        Link link = getPhotoLink();
+        if (BBSSettings.filmPhotoLayers == null)
+        {
+            return cachedLayers;
+        }
 
-        return link == null ? null : BBSModClient.getTextures().getTexture(link, GL11.GL_LINEAR);
+        migrateLegacyPhoto();
+
+        String serialized = BBSSettings.filmPhotoLayers.get();
+
+        if (!serialized.equals(cachedLayersString))
+        {
+            cachedLayers = PhotoLayer.parseList(serialized);
+            cachedLayersString = serialized;
+        }
+
+        return cachedLayers;
     }
 
-    private static boolean isActive(ValueFloat value, float neutral)
+    public static void savePhotoLayers(List<PhotoLayer> layers)
     {
-        return value != null && Math.abs(value.get() - neutral) > NEUTRAL_EPSILON;
+        String serialized = PhotoLayer.serializeList(layers);
+
+        cachedLayers = layers;
+        cachedLayersString = serialized;
+        BBSSettings.filmPhotoLayers.set(serialized);
+    }
+
+    /**
+     * The old single-photo settings fold into the first layer of the list the
+     * first time the stack is read, so nobody's setup disappears on update.
+     */
+    private static void migrateLegacyPhoto()
+    {
+        String texture = BBSSettings.filmPhotoTexture == null ? "" : BBSSettings.filmPhotoTexture.get();
+
+        if (texture == null || texture.isEmpty())
+        {
+            return;
+        }
+
+        List<PhotoLayer> layers = PhotoLayer.parseList(BBSSettings.filmPhotoLayers.get());
+        PhotoLayer layer = new PhotoLayer();
+
+        layer.texture = texture;
+        layer.opacity = BBSSettings.filmPhotoOpacity.get();
+        layer.x = BBSSettings.filmPhotoX.get();
+        layer.y = BBSSettings.filmPhotoY.get();
+        layer.scale = BBSSettings.filmPhotoScale.get();
+        layer.stretchX = BBSSettings.filmPhotoStretchX.get();
+        layer.stretchY = BBSSettings.filmPhotoStretchY.get();
+        layers.add(layer);
+
+        BBSSettings.filmPhotoLayers.set(PhotoLayer.serializeList(layers));
+        BBSSettings.filmPhotoTexture.set("");
+        cachedLayersString = null;
+    }
+
+    /**
+     * The layer's photo loaded with linear filtering (a stretched photo shouldn't
+     * turn blocky), or {@code null} when the layer has no texture picked.
+     */
+    public static Texture getPhotoTexture(PhotoLayer layer)
+    {
+        if (layer.texture.isEmpty())
+        {
+            return null;
+        }
+
+        return BBSModClient.getTextures().getTexture(Link.create(layer.texture), GL11.GL_LINEAR);
+    }
+
+    private static boolean isActive(float value, float neutral)
+    {
+        return Math.abs(value - neutral) > NEUTRAL_EPSILON;
     }
 
     /**
@@ -217,7 +484,8 @@ public class FilmEffects
      */
     public static void apply(Framebuffer framebuffer, int width, int height)
     {
-        boolean filters = hasFilters();
+        FilterState state = getFilterState();
+        boolean filters = hasFilters(state) && !showOriginal;
         boolean photo = hasPhoto();
 
         if (broken || (!filters && !photo) || width <= 0 || height <= 0)
@@ -229,6 +497,10 @@ public class FilmEffects
         int prevVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
         int prevArrayBuffer = GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING);
         int prevActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+
+        GL13.glActiveTexture(GL13.GL_TEXTURE1);
+
+        int prevTexture1 = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
 
         GL13.glActiveTexture(GL13.GL_TEXTURE0);
 
@@ -249,12 +521,12 @@ public class FilmEffects
 
             if (filters)
             {
-                applyFilters(framebuffer, width, height);
+                applyFilters(framebuffer, width, height, state);
             }
 
             if (photo)
             {
-                applyPhoto(width, height);
+                applyPhotos(width, height);
             }
         }
         catch (Exception e)
@@ -270,6 +542,9 @@ public class FilmEffects
             GL30.glBindVertexArray(prevVao);
             GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, prevArrayBuffer);
             GL20.glUseProgram(prevProgram);
+            GL13.glActiveTexture(GL13.GL_TEXTURE1);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTexture1);
+            GL13.glActiveTexture(GL13.GL_TEXTURE0);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTexture);
             GL13.glActiveTexture(prevActiveTexture);
             GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
@@ -281,8 +556,10 @@ public class FilmEffects
     /**
      * Color grading pass. A shader can't read the texture it writes to, so the frame
      * is snapshotted into a ping texture first and drawn back through the filters.
+     * When bloom is on, the snapshot's highlights get blurred into a quarter-res
+     * buffer beforehand, which the main pass adds back on top.
      */
-    private static void applyFilters(Framebuffer framebuffer, int width, int height)
+    private static void applyFilters(Framebuffer framebuffer, int width, int height, FilterState state)
     {
         ensureFilterProgram();
         ensurePingTexture(width, height);
@@ -292,49 +569,226 @@ public class FilmEffects
         GL11.glCopyTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
 
         RenderSystem.disableBlend();
+
+        boolean bloom = isActive(state.bloom, 0F);
+
+        if (bloom)
+        {
+            applyBloom(framebuffer, width, height);
+        }
+
         GL20.glUseProgram(filterProgram);
         GL20.glUniform2f(uniformTexel, 1F / width, 1F / height);
-        GL20.glUniform1f(uniformBrightness, 1F + BBSSettings.filmFilterBrightness.get());
-        GL20.glUniform1f(uniformContrast, 1F + BBSSettings.filmFilterContrast.get());
-        GL20.glUniform1f(uniformSaturation, 1F + BBSSettings.filmFilterSaturation.get());
-        GL20.glUniform1f(uniformHue, MathUtils.toRad(BBSSettings.filmFilterHue.get()));
-        GL20.glUniform1f(uniformTemperature, BBSSettings.filmFilterTemperature.get() * TEMPERATURE_STRENGTH);
-        GL20.glUniform1f(uniformGamma, 1F / BBSSettings.filmFilterGamma.get());
-        GL20.glUniform1f(uniformSharpness, BBSSettings.filmFilterSharpness.get() * SHARPNESS_STRENGTH);
-        GL20.glUniform1f(uniformVignette, BBSSettings.filmFilterVignette.get());
-        GL20.glUniform1f(uniformSepia, BBSSettings.filmFilterSepia.get());
+        GL20.glUniform1f(uniformBrightness, 1F + state.brightness);
+        GL20.glUniform1f(uniformContrast, 1F + state.contrast);
+        GL20.glUniform1f(uniformSaturation, 1F + state.saturation);
+        GL20.glUniform1f(uniformHue, MathUtils.toRad(state.hue));
+        GL20.glUniform1f(uniformTemperature, state.temperature * TEMPERATURE_STRENGTH);
+        GL20.glUniform1f(uniformGamma, 1F / state.gamma);
+        GL20.glUniform1f(uniformSharpness, state.sharpness * SHARPNESS_STRENGTH);
+        GL20.glUniform1f(uniformVignette, state.vignette);
+        GL20.glUniform1f(uniformSepia, state.sepia);
+        GL20.glUniform1f(uniformGrain, state.grain);
+        GL20.glUniform1f(uniformAberration, state.aberration);
+        GL20.glUniform1f(uniformInvert, state.invert);
+        GL20.glUniform1f(uniformPosterize, (float) Math.floor(state.posterize));
+        GL20.glUniform1f(uniformPixelate, (float) Math.floor(state.pixelate));
+        GL20.glUniform1f(uniformDistortion, state.distortion);
+        GL20.glUniform1f(uniformBloomStrength, bloom ? state.bloom : 0F);
+        GL20.glUniform1f(uniformSeed, getGrainSeed());
+
+        if (bloom)
+        {
+            GL13.glActiveTexture(GL13.GL_TEXTURE1);
+            bloomTextureA.bind();
+            GL13.glActiveTexture(GL13.GL_TEXTURE0);
+        }
+
+        pingTexture.bind();
         GL11.glDrawArrays(GL11.GL_TRIANGLE_STRIP, 0, 4);
     }
 
     /**
-     * Photo pass, alpha-blended over the graded frame. The quad is placed in NDC:
-     * scale 1 spans the frame's full height, the width keeps the photo's aspect
-     * ratio, and the stretches multiply each axis on top of that.
+     * Fills {@link #bloomTextureA} with the frame's blurred highlights: threshold
+     * cut at quarter resolution, then one horizontal and one vertical gaussian pass.
      */
-    private static void applyPhoto(int width, int height)
+    private static void applyBloom(Framebuffer framebuffer, int width, int height)
     {
-        Texture photo = getPhotoTexture();
+        int bloomWidth = Math.max(1, width / BLOOM_DOWNSCALE);
+        int bloomHeight = Math.max(1, height / BLOOM_DOWNSCALE);
 
-        if (photo == null || photo.width <= 0 || photo.height <= 0)
-        {
-            return;
-        }
+        ensureBloomResources(bloomWidth, bloomHeight);
 
+        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, bloomFramebuffer);
+        GL11.glViewport(0, 0, bloomWidth, bloomHeight);
+
+        /* Threshold cut: frame -> A */
+        GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, bloomTextureA.id, 0);
+        GL20.glUseProgram(bloomCutProgram);
+        GL20.glUniform2f(uniformBloomCutTexel, 1F / width, 1F / height);
+        pingTexture.bind();
+        GL11.glDrawArrays(GL11.GL_TRIANGLE_STRIP, 0, 4);
+
+        /* Horizontal blur: A -> B */
+        GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, bloomTextureB.id, 0);
+        GL20.glUseProgram(bloomBlurProgram);
+        GL20.glUniform2f(uniformBlurDirection, 1F / bloomWidth, 0F);
+        bloomTextureA.bind();
+        GL11.glDrawArrays(GL11.GL_TRIANGLE_STRIP, 0, 4);
+
+        /* Vertical blur: B -> A */
+        GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, bloomTextureA.id, 0);
+        GL20.glUniform2f(uniformBlurDirection, 0F, 1F / bloomHeight);
+        bloomTextureB.bind();
+        GL11.glDrawArrays(GL11.GL_TRIANGLE_STRIP, 0, 4);
+
+        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, framebuffer.id);
+        GL11.glViewport(0, 0, width, height);
+    }
+
+    /**
+     * Photo pass, alpha-blended over the graded frame layer by layer. Each quad is
+     * placed in NDC: scale 1 spans the frame's full height, the width keeps the
+     * photo's aspect ratio, and the stretches multiply each axis on top of that.
+     */
+    private static void applyPhotos(int width, int height)
+    {
         ensurePhotoProgram();
-
-        float scale = BBSSettings.filmPhotoScale.get();
-        float halfW = scale * BBSSettings.filmPhotoStretchX.get() * (photo.width / (float) photo.height) * (height / (float) width);
-        float halfH = scale * BBSSettings.filmPhotoStretchY.get();
 
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         GL20.glUseProgram(photoProgram);
 
-        /* The setting's positive Y means "down the screen", NDC's positive Y is up */
-        GL20.glUniform4f(uniformTransform, BBSSettings.filmPhotoX.get(), -BBSSettings.filmPhotoY.get(), halfW, halfH);
-        GL20.glUniform1f(uniformOpacity, BBSSettings.filmPhotoOpacity.get());
-        photo.bind();
-        GL11.glDrawArrays(GL11.GL_TRIANGLE_STRIP, 0, 4);
+        for (PhotoLayer layer : getPhotoLayers())
+        {
+            Texture photo = getPhotoTexture(layer);
+
+            if (photo == null || photo.width <= 0 || photo.height <= 0)
+            {
+                continue;
+            }
+
+            float opacity = layer.opacity * getPlaybackFade(layer);
+
+            if (opacity <= 0F)
+            {
+                continue;
+            }
+
+            float halfW = layer.scale * layer.stretchX * (photo.width / (float) photo.height) * (height / (float) width);
+            float halfH = layer.scale * layer.stretchY;
+
+            /* Positive degrees turn the photo clockwise on screen, hence the minus:
+             * the setting's Y axis points down while NDC's points up */
+            float angle = MathUtils.toRad(-layer.rotate);
+
+            GL20.glUniform4f(uniformTransform, layer.x, -layer.y, halfW, halfH);
+            GL20.glUniform2f(uniformRotation, (float) Math.cos(angle), (float) Math.sin(angle));
+            GL20.glUniform1f(uniformAspect, width / (float) height);
+            GL20.glUniform1f(uniformOpacity, opacity);
+            photo.bind();
+            GL11.glDrawArrays(GL11.GL_TRIANGLE_STRIP, 0, 4);
+        }
+    }
+
+    /**
+     * How visible a layer is at the film's current tick, given its fade in and
+     * fade out spans. Outside of film playback the layer is fully visible.
+     */
+    private static float getPlaybackFade(PhotoLayer layer)
+    {
+        if (layer.fadeIn <= 0F && layer.fadeOut <= 0F)
+        {
+            return 1F;
+        }
+
+        if (!(BBSModClient.getCameraController().getCurrent() instanceof CameraWorkCameraController controller))
+        {
+            return 1F;
+        }
+
+        ClipContext context = controller.getContext();
+        float tick = context.ticks + context.transition;
+        float duration = context.clips.calculateDuration();
+        float fade = 1F;
+
+        if (layer.fadeIn > 0F)
+        {
+            fade = Math.min(fade, tick / (layer.fadeIn * TICKS_PER_SECOND));
+        }
+
+        if (layer.fadeOut > 0F && duration > 0F)
+        {
+            fade = Math.min(fade, (duration - tick) / (layer.fadeOut * TICKS_PER_SECOND));
+        }
+
+        return MathUtils.clamp(fade, 0F, 1F);
+    }
+
+    /**
+     * The film filter values effective this frame: the settings' sliders, with any
+     * channel animated by a playing {@link FilterClip} overriding its slider.
+     */
+    private static FilterState getFilterState()
+    {
+        Map<String, Double> overrides = null;
+
+        if (BBSModClient.getCameraController().getCurrent() instanceof CameraWorkCameraController controller)
+        {
+            overrides = FilterClip.getValues(controller.getContext());
+        }
+
+        FilterState state = new FilterState();
+
+        state.brightness = filterValue(overrides, "brightness", BBSSettings.filmFilterBrightness, 0F);
+        state.contrast = filterValue(overrides, "contrast", BBSSettings.filmFilterContrast, 0F);
+        state.saturation = filterValue(overrides, "saturation", BBSSettings.filmFilterSaturation, 0F);
+        state.hue = filterValue(overrides, "hue", BBSSettings.filmFilterHue, 0F);
+        state.temperature = filterValue(overrides, "temperature", BBSSettings.filmFilterTemperature, 0F);
+        state.gamma = filterValue(overrides, "gamma", BBSSettings.filmFilterGamma, 1F);
+        state.sharpness = filterValue(overrides, "sharpness", BBSSettings.filmFilterSharpness, 0F);
+        state.vignette = filterValue(overrides, "vignette", BBSSettings.filmFilterVignette, 0F);
+        state.sepia = filterValue(overrides, "sepia", BBSSettings.filmFilterSepia, 0F);
+        state.grain = filterValue(overrides, "grain", BBSSettings.filmFilterGrain, 0F);
+        state.aberration = filterValue(overrides, "aberration", BBSSettings.filmFilterAberration, 0F);
+        state.invert = filterValue(overrides, "invert", BBSSettings.filmFilterInvert, 0F);
+        state.posterize = filterValue(overrides, "posterize", BBSSettings.filmFilterPosterize, 0F);
+        state.pixelate = filterValue(overrides, "pixelate", BBSSettings.filmFilterPixelate, 0F);
+        state.distortion = filterValue(overrides, "distortion", BBSSettings.filmFilterDistortion, 0F);
+        state.bloom = filterValue(overrides, "bloom", BBSSettings.filmFilterBloom, 0F);
+
+        return state;
+    }
+
+    private static float filterValue(Map<String, Double> overrides, String id, ValueFloat setting, float fallback)
+    {
+        if (overrides != null)
+        {
+            Double value = overrides.get(id);
+
+            if (value != null && setting != null)
+            {
+                return MathUtils.clamp(value.floatValue(), setting.getMin(), setting.getMax());
+            }
+        }
+
+        return setting == null ? fallback : setting.get();
+    }
+
+    /**
+     * Grain follows the film's clock when one is playing, so an exported video
+     * gets the exact same noise every render; otherwise it just runs on real time.
+     */
+    private static float getGrainSeed()
+    {
+        if (BBSModClient.getCameraController().getCurrent() instanceof CameraWorkCameraController controller)
+        {
+            ClipContext context = controller.getContext();
+
+            return (context.ticks % 1000) * 7.31F + context.transition * 7.31F;
+        }
+
+        return (System.currentTimeMillis() % 100000L) / 50F;
     }
 
     private static void ensureGeometry()
@@ -372,6 +826,18 @@ public class FilmEffects
         uniformSharpness = GL20.glGetUniformLocation(filterProgram, "u_sharpness");
         uniformVignette = GL20.glGetUniformLocation(filterProgram, "u_vignette");
         uniformSepia = GL20.glGetUniformLocation(filterProgram, "u_sepia");
+        uniformGrain = GL20.glGetUniformLocation(filterProgram, "u_grain");
+        uniformAberration = GL20.glGetUniformLocation(filterProgram, "u_aberration");
+        uniformInvert = GL20.glGetUniformLocation(filterProgram, "u_invert");
+        uniformPosterize = GL20.glGetUniformLocation(filterProgram, "u_posterize");
+        uniformPixelate = GL20.glGetUniformLocation(filterProgram, "u_pixelate");
+        uniformDistortion = GL20.glGetUniformLocation(filterProgram, "u_distortion");
+        uniformBloomStrength = GL20.glGetUniformLocation(filterProgram, "u_bloom_strength");
+        uniformSeed = GL20.glGetUniformLocation(filterProgram, "u_seed");
+
+        /* The blurred highlights always sit on texture unit 1 */
+        GL20.glUseProgram(filterProgram);
+        GL20.glUniform1i(GL20.glGetUniformLocation(filterProgram, "u_bloom"), 1);
     }
 
     private static void ensurePhotoProgram()
@@ -383,6 +849,8 @@ public class FilmEffects
 
         photoProgram = compileProgram(PHOTO_VERTEX, PHOTO_FRAGMENT);
         uniformTransform = GL20.glGetUniformLocation(photoProgram, "u_transform");
+        uniformRotation = GL20.glGetUniformLocation(photoProgram, "u_rotation");
+        uniformAspect = GL20.glGetUniformLocation(photoProgram, "u_aspect");
         uniformOpacity = GL20.glGetUniformLocation(photoProgram, "u_opacity");
     }
 
@@ -400,6 +868,49 @@ public class FilmEffects
             pingTexture.bind();
             pingTexture.setSize(width, height);
         }
+    }
+
+    private static void ensureBloomResources(int width, int height)
+    {
+        if (bloomCutProgram == 0)
+        {
+            bloomCutProgram = compileProgram(FILTER_VERTEX, BLOOM_CUT_FRAGMENT);
+            uniformBloomCutTexel = GL20.glGetUniformLocation(bloomCutProgram, "u_texel");
+        }
+
+        if (bloomBlurProgram == 0)
+        {
+            bloomBlurProgram = compileProgram(FILTER_VERTEX, BLOOM_BLUR_FRAGMENT);
+            uniformBlurDirection = GL20.glGetUniformLocation(bloomBlurProgram, "u_direction");
+        }
+
+        if (bloomFramebuffer == 0)
+        {
+            bloomFramebuffer = GL30.glGenFramebuffers();
+        }
+
+        bloomTextureA = ensureBloomTexture(bloomTextureA, width, height);
+        bloomTextureB = ensureBloomTexture(bloomTextureB, width, height);
+    }
+
+    private static Texture ensureBloomTexture(Texture texture, int width, int height)
+    {
+        if (texture == null)
+        {
+            texture = new Texture();
+            texture.setFormat(TextureFormat.RGB_U8);
+
+            /* Linear so the quarter-res glow stretches back up smoothly */
+            texture.setFilter(GL11.GL_LINEAR);
+        }
+
+        if (texture.width != width || texture.height != height)
+        {
+            texture.bind();
+            texture.setSize(width, height);
+        }
+
+        return texture;
     }
 
     private static int compileProgram(String vertexSource, String fragmentSource)
@@ -420,7 +931,7 @@ public class FilmEffects
             throw new IllegalStateException("Failed to link a film effects program: " + GL20.glGetProgramInfoLog(program));
         }
 
-        /* The only sampler always reads from texture unit 0 */
+        /* The main sampler always reads from texture unit 0 */
         GL20.glUseProgram(program);
         GL20.glUniform1i(GL20.glGetUniformLocation(program, "u_texture"), 0);
 
@@ -440,5 +951,26 @@ public class FilmEffects
         }
 
         return shader;
+    }
+
+    /** The film filter values effective this frame, sliders and clip overrides merged. */
+    private static class FilterState
+    {
+        public float brightness;
+        public float contrast;
+        public float saturation;
+        public float hue;
+        public float temperature;
+        public float gamma = 1F;
+        public float sharpness;
+        public float vignette;
+        public float sepia;
+        public float grain;
+        public float aberration;
+        public float invert;
+        public float posterize;
+        public float pixelate;
+        public float distortion;
+        public float bloom;
     }
 }

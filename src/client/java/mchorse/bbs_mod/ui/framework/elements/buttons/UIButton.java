@@ -99,7 +99,7 @@ public class UIButton extends UIClickable<UIButton> implements ITextColoring
                     end = Colors.mulRGB(end, 0.85F);
                 }
 
-                context.batcher.gradientSurfaceBox(this.area.x, this.area.y, this.area.ex(), this.area.ey(), color | Colors.A100, end | Colors.A100, true, false);
+                context.batcher.gradientSurfaceBox(this.area.x, this.area.y, this.area.ex(), this.area.ey(), color | Colors.A100, end | Colors.A100, true, false, BBSSettings.primaryGradientDirection());
             }
             else
             {
