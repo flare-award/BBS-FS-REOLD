@@ -209,6 +209,39 @@ public class Batcher2D
         }
     }
 
+    /**
+     * {@link #surfaceBox(int, int, int, int, int, boolean, boolean)} whose fill flows
+     * left to right between two colors, keeping the same bevel treatment.
+     */
+    public void gradientSurfaceBox(int x1, int y1, int x2, int y2, int leftFill, int rightFill, boolean shadow, boolean border)
+    {
+        if (border)
+        {
+            this.box(x1, y1, x2, y2, Colors.A100);
+
+            x1++;
+            y1++;
+            x2--;
+            y2--;
+        }
+
+        this.gradientHBox(x1, y1, x2, y2, leftFill, rightFill);
+
+        if (BBSSettings.interfaceHighlights.get())
+        {
+            int lightLeft = Colors.lerp(leftFill, Colors.WHITE, HIGHLIGHT_STRENGTH);
+            int lightRight = Colors.lerp(rightFill, Colors.WHITE, HIGHLIGHT_STRENGTH);
+
+            this.gradientHBox(x1, y1, x2, y1 + 1, lightLeft, lightRight);
+            this.box(x1, y1, x1 + 1, y2, lightLeft);
+        }
+
+        if (shadow && BBSSettings.interfaceShadows.get())
+        {
+            this.gradientHBox(x1, y2 - 2, x2, y2, Colors.lerp(leftFill, Colors.A100, 0.4F), Colors.lerp(rightFill, Colors.A100, 0.4F));
+        }
+    }
+
     public void dropShadow(int left, int top, int right, int bottom, int offset, int opaque, int shadow)
     {
         left -= offset;

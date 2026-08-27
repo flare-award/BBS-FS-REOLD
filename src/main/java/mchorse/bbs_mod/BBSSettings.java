@@ -38,6 +38,8 @@ public class BBSSettings {
 	public static ValueStringKeys disabledMorphFormCategories;
 	public static ValueLanguage language;
 	public static ValueInt primaryColor;
+	public static ValueBoolean primaryColorGradient;
+	public static ValueInt primaryColorEnd;
 	public static ValueInt stencilHighlightColor;
 	public static ValueBoolean enableTrackpadIncrements;
 	public static ValueBoolean enableTrackpadScrolling;
@@ -194,6 +196,28 @@ public class BBSSettings {
 	public static ValueFloat filmsBannerY;
 	public static ValueFloat filmsBannerZoom;
 
+	/* Color grading filters baked into the film preview and video export (all neutral by default). */
+	public static ValueFloat filmFilterBrightness;
+	public static ValueFloat filmFilterContrast;
+	public static ValueFloat filmFilterSaturation;
+	public static ValueFloat filmFilterHue;
+	public static ValueFloat filmFilterTemperature;
+	public static ValueFloat filmFilterGamma;
+	public static ValueFloat filmFilterSharpness;
+	public static ValueFloat filmFilterVignette;
+	public static ValueFloat filmFilterSepia;
+
+	/* A photo laid over the film preview and export - PNG transparency respected.
+	 * Position is in NDC-like units (0 centered, positive X right, positive Y down),
+	 * scale is the photo's height relative to the frame's, stretches are multipliers. */
+	public static ValueString filmPhotoTexture;
+	public static ValueFloat filmPhotoOpacity;
+	public static ValueFloat filmPhotoX;
+	public static ValueFloat filmPhotoY;
+	public static ValueFloat filmPhotoScale;
+	public static ValueFloat filmPhotoStretchX;
+	public static ValueFloat filmPhotoStretchY;
+
 	public static ValueBoolean shaderCurvesEnabled;
 	public static ValueBoolean translucencyQueue;
 
@@ -218,12 +242,20 @@ public class BBSSettings {
 	private static final float IDENTITY_BRIGHTNESS = 1F;
 	private static final float BRIGHTNESS_EPSILON = 0.001F;
 	private static final int DEFAULT_PRIMARY_COLOR = 0xff3242;
+	private static final int DEFAULT_PRIMARY_COLOR_END = 0xff8a3c;
 	private static final float DEFAULT_OVERLAY_BACKGROUND_OPACITY = 0.5F;
 	private static final int DEFAULT_MODEL_EDITOR_TRANSPARENCY = 25;
 	private static final int MAX_MODEL_EDITOR_TRANSPARENCY = 100;
 	public static final float DEFAULT_FILMS_BANNER_FOCUS = 0.5F;
 	public static final float MIN_FILMS_BANNER_ZOOM = 1F;
 	public static final float MAX_FILMS_BANNER_ZOOM = 8F;
+	public static final float MIN_FILM_GAMMA = 0.25F;
+	public static final float MAX_FILM_GAMMA = 4F;
+	public static final float MIN_FILM_PHOTO_SCALE = 0.05F;
+	public static final float MAX_FILM_PHOTO_SCALE = 3F;
+	public static final float MIN_FILM_PHOTO_STRETCH = 0.1F;
+	public static final float MAX_FILM_PHOTO_STRETCH = 5F;
+	public static final float MAX_FILM_PHOTO_OFFSET = 2F;
 	/**
 	 * Tonal map of the interface's surfaces, four levels deep: deep sits under
 	 * the content (fields, timeline wells), chrome frames everything, base is
@@ -261,6 +293,20 @@ public class BBSSettings {
 	public static int primaryColor(int alpha)
 	{
 		return withAlpha(primaryColor.get(), alpha);
+	}
+
+	/**
+	 * Whether the accent flows from {@link #primaryColor} into {@link #primaryColorEnd}
+	 * as a horizontal gradient on buttons instead of staying a single flat color.
+	 */
+	public static boolean isPrimaryGradient()
+	{
+		return primaryColorGradient != null && primaryColorGradient.get();
+	}
+
+	public static int primaryColorEnd()
+	{
+		return primaryColorEnd == null ? DEFAULT_PRIMARY_COLOR_END : primaryColorEnd.get();
 	}
 
 	public static boolean isLightTheme()
@@ -648,7 +694,43 @@ public class BBSSettings {
 		filmsBannerY.invisible();
 		filmsBannerZoom = builder.getFloat("films_banner_zoom", MIN_FILMS_BANNER_ZOOM, MIN_FILMS_BANNER_ZOOM, MAX_FILMS_BANNER_ZOOM);
 		filmsBannerZoom.invisible();
+
+		/* Film preview/export filters and the photo overlay - edited from the film panel's preview bar. */
+		filmFilterBrightness = builder.getFloat("film_filter_brightness", 0F, -1F, 1F);
+		filmFilterBrightness.invisible();
+		filmFilterContrast = builder.getFloat("film_filter_contrast", 0F, -1F, 1F);
+		filmFilterContrast.invisible();
+		filmFilterSaturation = builder.getFloat("film_filter_saturation", 0F, -1F, 1F);
+		filmFilterSaturation.invisible();
+		filmFilterHue = builder.getFloat("film_filter_hue", 0F, -180F, 180F);
+		filmFilterHue.invisible();
+		filmFilterTemperature = builder.getFloat("film_filter_temperature", 0F, -1F, 1F);
+		filmFilterTemperature.invisible();
+		filmFilterGamma = builder.getFloat("film_filter_gamma", 1F, MIN_FILM_GAMMA, MAX_FILM_GAMMA);
+		filmFilterGamma.invisible();
+		filmFilterSharpness = builder.getFloat("film_filter_sharpness", 0F, 0F, 1F);
+		filmFilterSharpness.invisible();
+		filmFilterVignette = builder.getFloat("film_filter_vignette", 0F, 0F, 1F);
+		filmFilterVignette.invisible();
+		filmFilterSepia = builder.getFloat("film_filter_sepia", 0F, 0F, 1F);
+		filmFilterSepia.invisible();
+		filmPhotoTexture = builder.getString("film_photo_texture", "");
+		filmPhotoTexture.invisible();
+		filmPhotoOpacity = builder.getFloat("film_photo_opacity", 1F, 0F, 1F);
+		filmPhotoOpacity.invisible();
+		filmPhotoX = builder.getFloat("film_photo_x", 0F, -MAX_FILM_PHOTO_OFFSET, MAX_FILM_PHOTO_OFFSET);
+		filmPhotoX.invisible();
+		filmPhotoY = builder.getFloat("film_photo_y", 0F, -MAX_FILM_PHOTO_OFFSET, MAX_FILM_PHOTO_OFFSET);
+		filmPhotoY.invisible();
+		filmPhotoScale = builder.getFloat("film_photo_scale", 1F, MIN_FILM_PHOTO_SCALE, MAX_FILM_PHOTO_SCALE);
+		filmPhotoScale.invisible();
+		filmPhotoStretchX = builder.getFloat("film_photo_stretch_x", 1F, MIN_FILM_PHOTO_STRETCH, MAX_FILM_PHOTO_STRETCH);
+		filmPhotoStretchX.invisible();
+		filmPhotoStretchY = builder.getFloat("film_photo_stretch_y", 1F, MIN_FILM_PHOTO_STRETCH, MAX_FILM_PHOTO_STRETCH);
+		filmPhotoStretchY.invisible();
 		primaryColor = builder.getInt("primary_color", DEFAULT_PRIMARY_COLOR).color();
+		primaryColorGradient = builder.getBoolean("primary_color_gradient", false);
+		primaryColorEnd = builder.getInt("primary_color_end", DEFAULT_PRIMARY_COLOR_END).color();
 		stencilHighlightColor = builder.getInt("stencil_highlight_color", 0x2EFFFFFF).colorAlpha();
 		theme = builder.getInt("theme", DEFAULT_THEME);
 

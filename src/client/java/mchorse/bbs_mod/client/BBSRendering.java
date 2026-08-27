@@ -459,6 +459,12 @@ public class BBSRendering
         GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
         GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevDraw);
 
+        /* Color grading and the photo overlay are baked right into the export texture:
+         * the film preview, the video recorder and the screenshot all read it, so the
+         * effects land in everything the user sees and exports at once. The recording
+         * overlay below stays out on purpose - it's screen-only feedback. */
+        FilmEffects.apply(exportFramebuffer, targetWidth, targetHeight);
+
         renderRecordingOverlay();
 
         toggleFramebuffer(false);

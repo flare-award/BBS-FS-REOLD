@@ -88,7 +88,23 @@ public class UIButton extends UIClickable<UIButton> implements ITextColoring
 
         if (this.background)
         {
-            context.batcher.surfaceBox(this.area.x, this.area.y, this.area.ex(), this.area.ey(), color | Colors.A100, true, false);
+            if (!this.custom && BBSSettings.isPrimaryGradient())
+            {
+                /* The accent flows into the second color; hovering dims both ends the
+                 * same way the flat fill dims, so the gradient darkens as one piece. */
+                int end = BBSSettings.primaryColorEnd() | Colors.A100;
+
+                if (this.hover)
+                {
+                    end = Colors.mulRGB(end, 0.85F);
+                }
+
+                context.batcher.gradientSurfaceBox(this.area.x, this.area.y, this.area.ex(), this.area.ey(), color | Colors.A100, end | Colors.A100, true, false);
+            }
+            else
+            {
+                context.batcher.surfaceBox(this.area.x, this.area.y, this.area.ex(), this.area.ey(), color | Colors.A100, true, false);
+            }
         }
 
         FontRenderer font = context.batcher.getFont();
