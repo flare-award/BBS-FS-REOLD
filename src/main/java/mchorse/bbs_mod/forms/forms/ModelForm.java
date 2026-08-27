@@ -16,6 +16,8 @@ import mchorse.bbs_mod.settings.values.core.ValueLinks;
 import mchorse.bbs_mod.settings.values.core.ValuePose;
 import mchorse.bbs_mod.settings.values.core.ValueString;
 import mchorse.bbs_mod.settings.values.numeric.ValueBoolean;
+import mchorse.bbs_mod.settings.values.numeric.ValueFloat;
+import mchorse.bbs_mod.settings.values.numeric.ValueInt;
 import mchorse.bbs_mod.utils.colors.Color;
 import mchorse.bbs_mod.utils.pose.Pose;
 import org.joml.Vector3f;
@@ -27,6 +29,12 @@ import java.util.Map;
 
 public class ModelForm extends Form
 {
+    /* Which render layer the model draws in - see the Material tab's Layer option */
+    public static final int LAYER_AUTO = 0;
+    public static final int LAYER_TRANSLUCENT = 1;
+    public static final int LAYER_SOLID = 2;
+    public static final int LAYER_CUTOUT = 3;
+
     public final ValueLink texture = new ValueLink("texture", null);
     public final ValueLinks materialTextures = new ValueLinks("material_textures");
     public final ValueString model = new ValueString("model", "");
@@ -34,6 +42,21 @@ public class ModelForm extends Form
     public final ValuePose poseOverlay = new ValuePose("pose_overlay", new Pose());
     public final ValueActionsConfig actions = new ValueActionsConfig("actions", new ActionsConfig());
     public final ValueColor color = new ValueColor("color", Color.white());
+
+    /**
+     * Material properties edited in the Material tab. The overlay mixes the
+     * pixels toward its color (alpha is the strength), the render layer picks
+     * how the model draws (see the {@code LAYER_*} constants), and the five
+     * 0..1 sliders feed shader packs that support LabPBR materials.
+     */
+    public final ValueColor colorOverlay = new ValueColor("color_overlay", new Color(1F, 1F, 1F, 0F));
+    public final ValueInt renderLayer = new ValueInt("render_layer", LAYER_AUTO, LAYER_AUTO, LAYER_CUTOUT);
+    public final ValueFloat smoothness = new ValueFloat("smoothness", 0F, 0F, 1F);
+    public final ValueFloat metalic = new ValueFloat("metalic", 0F, 0F, 1F);
+    public final ValueFloat sss = new ValueFloat("sss", 0F, 0F, 1F);
+    public final ValueFloat pixelEmission = new ValueFloat("pixel_emission", 0F, 0F, 1F);
+    public final ValueFloat relief = new ValueFloat("relief", 0F, 0F, 1F);
+
     public final ValueShapeKeys shapeKeys = new ValueShapeKeys("shape_keys", new ShapeKeys());
     public final ValueBoolean boneTracks = new ValueBoolean("bone_tracks", true);
     public final ValueData ik = new ValueData("ik");
@@ -82,6 +105,14 @@ public class ModelForm extends Form
 
         this.add(this.actions);
         this.add(this.color);
+        this.add(this.colorOverlay);
+        this.renderLayer.invisible();
+        this.add(this.renderLayer);
+        this.add(this.smoothness);
+        this.add(this.metalic);
+        this.add(this.sss);
+        this.add(this.pixelEmission);
+        this.add(this.relief);
         this.add(this.shapeKeys);
         this.boneTracks.invisible();
         this.add(this.boneTracks);

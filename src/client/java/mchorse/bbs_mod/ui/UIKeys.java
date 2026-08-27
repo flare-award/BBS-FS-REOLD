@@ -545,6 +545,31 @@ public class UIKeys
     public static final IKey FORMS_EDITORS_LABEL_SHADOW_OFFSET = L10n.lang("bbs.ui.forms.editors.label.shadow_offset");
     public static final IKey FORMS_EDITORS_LABEL_TITLE = L10n.lang("bbs.ui.forms.editors.label.title");
     public static final IKey FORMS_EDITORS_MOB_TITLE = L10n.lang("bbs.ui.forms.editors.mob.title");
+
+    public static final IKey FORMS_EDITORS_MATERIAL_TITLE = L10n.lang("bbs.ui.forms.editors.material.title");
+    public static final IKey FORMS_EDITORS_MATERIAL_MODEL = L10n.lang("bbs.ui.forms.editors.material.model");
+    public static final IKey FORMS_EDITORS_MATERIAL_SECTION_COLOR = L10n.lang("bbs.ui.forms.editors.material.section_color");
+    public static final IKey FORMS_EDITORS_MATERIAL_SECTION_RENDERING = L10n.lang("bbs.ui.forms.editors.material.section_rendering");
+    public static final IKey FORMS_EDITORS_MATERIAL_SECTION_SHADERS = L10n.lang("bbs.ui.forms.editors.material.section_shaders");
+    public static final IKey FORMS_EDITORS_MATERIAL_SECTION_SHADERS_TOOLTIP = L10n.lang("bbs.ui.forms.editors.material.section_shaders-tooltip");
+    public static final IKey FORMS_EDITORS_MATERIAL_COLOR = L10n.lang("bbs.ui.forms.editors.material.color");
+    public static final IKey FORMS_EDITORS_MATERIAL_COLOR_TOOLTIP = L10n.lang("bbs.ui.forms.editors.material.color-tooltip");
+    public static final IKey FORMS_EDITORS_MATERIAL_COLOR_OVERLAY = L10n.lang("bbs.ui.forms.editors.material.color_overlay");
+    public static final IKey FORMS_EDITORS_MATERIAL_COLOR_OVERLAY_TOOLTIP = L10n.lang("bbs.ui.forms.editors.material.color_overlay-tooltip");
+    public static final IKey FORMS_EDITORS_MATERIAL_LIGHTING = L10n.lang("bbs.ui.forms.editors.material.lighting");
+    public static final IKey FORMS_EDITORS_MATERIAL_LIGHTING_TOOLTIP = L10n.lang("bbs.ui.forms.editors.material.lighting-tooltip");
+    public static final IKey FORMS_EDITORS_MATERIAL_LAYER = L10n.lang("bbs.ui.forms.editors.material.layer");
+    public static final IKey FORMS_EDITORS_MATERIAL_LAYER_TOOLTIP = L10n.lang("bbs.ui.forms.editors.material.layer-tooltip");
+    public static final IKey FORMS_EDITORS_MATERIAL_LAYER_AUTO = L10n.lang("bbs.ui.forms.editors.material.layer_auto");
+    public static final IKey FORMS_EDITORS_MATERIAL_LAYER_TRANSLUCENT = L10n.lang("bbs.ui.forms.editors.material.layer_translucent");
+    public static final IKey FORMS_EDITORS_MATERIAL_LAYER_SOLID = L10n.lang("bbs.ui.forms.editors.material.layer_solid");
+    public static final IKey FORMS_EDITORS_MATERIAL_LAYER_CUTOUT = L10n.lang("bbs.ui.forms.editors.material.layer_cutout");
+    public static final IKey FORMS_EDITORS_MATERIAL_GLOSS = L10n.lang("bbs.ui.forms.editors.material.gloss");
+    public static final IKey FORMS_EDITORS_MATERIAL_METALLIC = L10n.lang("bbs.ui.forms.editors.material.metallic");
+    public static final IKey FORMS_EDITORS_MATERIAL_SCATTERING = L10n.lang("bbs.ui.forms.editors.material.scattering");
+    public static final IKey FORMS_EDITORS_MATERIAL_EMISSION = L10n.lang("bbs.ui.forms.editors.material.emission");
+    public static final IKey FORMS_EDITORS_MATERIAL_RELIEF = L10n.lang("bbs.ui.forms.editors.material.relief");
+
     public static final IKey FORMS_EDITORS_MODEL_ACTIONS = L10n.lang("bbs.ui.forms.editors.model.actions");
     public static final IKey FORMS_EDITORS_MODEL_IK = L10n.lang("bbs.ui.forms.editors.model.ik");
     public static final IKey FORMS_EDITORS_MODEL_IK_BONES = L10n.lang("bbs.ui.forms.editors.model.ik.bones");

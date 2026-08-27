@@ -766,11 +766,21 @@ public class ModelFormRenderer extends FormRenderer<ModelForm> implements ITicka
              * proper holes and draws the rest as a solid, normally-shaded entity. Only for texture
              * translucency at full colour — a uniform colour fade must stay translucent, or the
              * cutout test would erase the whole faded model. */
-            boolean cutout = irisWorld && textureObject != null && textureObject.hasTranslucency()
+            boolean autoCutout = irisWorld && textureObject != null && textureObject.hasTranslucency()
                 && contextColor.a >= 1F && formColor.a >= 1F && !additive;
 
+            /* The Material tab's Layer option: Auto keeps the degrade above, Translucent
+             * forbids it, Solid and Cutout draw immediately with blending off. */
+            int renderLayer = this.form.renderLayer.get();
+            boolean forcedOpaque = renderLayer == ModelForm.LAYER_SOLID || renderLayer == ModelForm.LAYER_CUTOUT;
+            boolean cutout = renderLayer == ModelForm.LAYER_AUTO ? autoCutout : forcedOpaque;
+
             Supplier<ShaderProgram> mainShader = cutout
-                ? GameRenderer::getRenderTypeEntityCutoutProgram
+                ? (irisWorld || !model.isVAORendered())
+                    ? (renderLayer == ModelForm.LAYER_SOLID
+                        ? GameRenderer::getRenderTypeEntitySolidProgram
+                        : GameRenderer::getRenderTypeEntityCutoutProgram)
+                    : BBSShaders::getModel
                 : (irisWorld || !model.isVAORendered())
                     ? GameRenderer::getRenderTypeEntityTranslucentCullProgram
                     : BBSShaders::getModel;
