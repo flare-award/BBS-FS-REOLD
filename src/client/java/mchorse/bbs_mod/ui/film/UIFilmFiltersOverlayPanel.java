@@ -58,7 +58,9 @@ public class UIFilmFiltersOverlayPanel extends UIFilmEffectsOverlayPanel
             this.createIntegerRow(UIKeys.FILM_FILTERS_POSTERIZE, BBSSettings.filmFilterPosterize, 0D, BBSSettings.MAX_FILM_POSTERIZE),
             this.createIntegerRow(UIKeys.FILM_FILTERS_PIXELATE, BBSSettings.filmFilterPixelate, 0D, BBSSettings.MAX_FILM_PIXELATE),
             this.createRow(UIKeys.FILM_FILTERS_DISTORTION, BBSSettings.filmFilterDistortion, -100D, 100D, 100D),
-            this.createRow(UIKeys.FILM_FILTERS_BLOOM, BBSSettings.filmFilterBloom, 0D, 100D, 100D)
+            this.createRow(UIKeys.FILM_FILTERS_BLOOM, BBSSettings.filmFilterBloom, 0D, 100D, 100D),
+            this.createRow(UIKeys.FILM_FILTERS_RADIAL, BBSSettings.filmFilterRadial, 0D, 100D, 100D),
+            this.createRow(UIKeys.FILM_FILTERS_VHS, BBSSettings.filmFilterVhs, 0D, 100D, 100D)
         );
 
         preview.relative(this.content).xy(PADDING, PADDING).wh(PREVIEW_W, PREVIEW_H);
@@ -106,6 +108,8 @@ public class UIFilmFiltersOverlayPanel extends UIFilmEffectsOverlayPanel
         data.putFloat("pixelate", BBSSettings.filmFilterPixelate.get());
         data.putFloat("distortion", BBSSettings.filmFilterDistortion.get());
         data.putFloat("bloom", BBSSettings.filmFilterBloom.get());
+        data.putFloat("radial", BBSSettings.filmFilterRadial.get());
+        data.putFloat("vhs", BBSSettings.filmFilterVhs.get());
 
         return data;
     }
@@ -134,6 +138,8 @@ public class UIFilmFiltersOverlayPanel extends UIFilmEffectsOverlayPanel
         BBSSettings.filmFilterPixelate.set(data.getFloat("pixelate", 0F));
         BBSSettings.filmFilterDistortion.set(data.getFloat("distortion", 0F));
         BBSSettings.filmFilterBloom.set(data.getFloat("bloom", 0F));
+        BBSSettings.filmFilterRadial.set(data.getFloat("radial", 0F));
+        BBSSettings.filmFilterVhs.set(data.getFloat("vhs", 0F));
 
         this.updateFields();
     }

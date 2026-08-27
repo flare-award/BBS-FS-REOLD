@@ -144,6 +144,16 @@ public class IrisUtils
         PBRTextureLoaderRegistry.INSTANCE.register(IrisTextureWrapper.class, new IrisTextureWrapperLoader());
     }
 
+    /**
+     * Register a mod-made GL texture (one that never passes through the texture
+     * manager, like a recolored copy) under the given link, so Iris resolves
+     * the link's PBR companions for it too.
+     */
+    public static void trackSynthetic(int glId, Link key)
+    {
+        TextureTracker.INSTANCE.trackTexture(glId, new IrisTextureWrapper(key, -1));
+    }
+
     public static void trackTexture(Texture texture)
     {
         TextureManager textures = BBSModClient.getTextures();

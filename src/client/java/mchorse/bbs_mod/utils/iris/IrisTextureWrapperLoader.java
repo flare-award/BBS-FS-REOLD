@@ -1,5 +1,6 @@
 package mchorse.bbs_mod.utils.iris;
 
+import mchorse.bbs_mod.graphics.texture.FormMaterials;
 import mchorse.bbs_mod.resources.Link;
 import mchorse.bbs_mod.utils.StringUtils;
 import mchorse.bbs_mod.utils.resources.FilteredLink;
@@ -30,8 +31,29 @@ public class IrisTextureWrapperLoader implements PBRTextureLoader
             Link normalKey = this.createPrefixedCopy(key, "_n.png");
             Link specularKey = this.createPrefixedCopy(key, "_s.png");
 
-            pbrTextureConsumer.acceptNormalTexture(new IrisTextureWrapper(normalKey, this.defaultNormalTexture, wrapper.index));
-            pbrTextureConsumer.acceptSpecularTexture(new IrisTextureWrapper(specularKey, this.defaultSpecularTexture, wrapper.index));
+            /* The Material tab's sliders win over the file-based companions: when a
+             * form rendered with this texture has them set, FormMaterials serves a
+             * synthesized LabPBR map for it; otherwise the _n/_s files apply as usual. */
+            pbrTextureConsumer.acceptNormalTexture(new IrisTextureWrapper(normalKey, this.defaultNormalTexture, wrapper.index)
+            {
+                @Override
+                public int getGlId()
+                {
+                    int id = FormMaterials.getNormalId(key);
+
+                    return id >= 0 ? id : super.getGlId();
+                }
+            });
+            pbrTextureConsumer.acceptSpecularTexture(new IrisTextureWrapper(specularKey, this.defaultSpecularTexture, wrapper.index)
+            {
+                @Override
+                public int getGlId()
+                {
+                    int id = FormMaterials.getSpecularId(key);
+
+                    return id >= 0 ? id : super.getGlId();
+                }
+            });
         }
     }
 

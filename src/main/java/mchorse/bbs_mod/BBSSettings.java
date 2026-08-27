@@ -214,6 +214,8 @@ public class BBSSettings {
 	public static ValueFloat filmFilterPixelate;
 	public static ValueFloat filmFilterDistortion;
 	public static ValueFloat filmFilterBloom;
+	public static ValueFloat filmFilterRadial;
+	public static ValueFloat filmFilterVhs;
 
 	/* A photo laid over the film preview and export - PNG transparency respected.
 	 * Position is in NDC-like units (0 centered, positive X right, positive Y down),
@@ -270,7 +272,6 @@ public class BBSSettings {
 	public static final float MAX_FILM_PHOTO_OFFSET = 2F;
 	public static final float MAX_FILM_POSTERIZE = 32F;
 	public static final float MAX_FILM_PIXELATE = 64F;
-	public static final float MAX_FILM_PHOTO_FADE = 30F;
 
 	/* Directions the primary color gradient can flow in */
 	public static final int GRADIENT_HORIZONTAL = 0;
@@ -757,6 +758,10 @@ public class BBSSettings {
 		filmFilterDistortion.invisible();
 		filmFilterBloom = builder.getFloat("film_filter_bloom", 0F, 0F, 1F);
 		filmFilterBloom.invisible();
+		filmFilterRadial = builder.getFloat("film_filter_radial", 0F, 0F, 1F);
+		filmFilterRadial.invisible();
+		filmFilterVhs = builder.getFloat("film_filter_vhs", 0F, 0F, 1F);
+		filmFilterVhs.invisible();
 		filmPhotoTexture = builder.getString("film_photo_texture", "");
 		filmPhotoTexture.invisible();
 		filmPhotoOpacity = builder.getFloat("film_photo_opacity", 1F, 0F, 1F);

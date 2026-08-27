@@ -3,6 +3,7 @@ package mchorse.bbs_mod.camera.clips.misc;
 import mchorse.bbs_mod.camera.clips.CameraClip;
 import mchorse.bbs_mod.camera.data.Position;
 import mchorse.bbs_mod.camera.values.ValueChannels;
+import mchorse.bbs_mod.data.types.BaseType;
 import mchorse.bbs_mod.utils.clips.Clip;
 import mchorse.bbs_mod.utils.clips.ClipContext;
 import mchorse.bbs_mod.utils.keyframes.KeyframeChannel;
@@ -28,7 +29,8 @@ public class FilterClip extends CameraClip
         "brightness", "contrast", "saturation", "hue",
         "temperature", "gamma", "sharpness", "vignette",
         "sepia", "grain", "aberration", "invert",
-        "posterize", "pixelate", "distortion", "bloom"
+        "posterize", "pixelate", "distortion", "bloom",
+        "radial", "vhs"
     );
 
     public final ValueChannels channels = new ValueChannels("channels");
@@ -41,7 +43,28 @@ public class FilterClip extends CameraClip
     public FilterClip()
     {
         this.add(this.channels);
-        this.channels.addChannel("brightness");
+
+        /* Every filter channel is present from the start, so the whole set shows
+         * up in the keyframe editor right away; empty channels change nothing. */
+        for (String id : CHANNEL_IDS)
+        {
+            this.channels.addChannel(id);
+        }
+    }
+
+    @Override
+    public void fromData(BaseType data)
+    {
+        super.fromData(data);
+
+        /* Clips saved before the full set existed re-gain the missing channels */
+        for (String id : CHANNEL_IDS)
+        {
+            if (!(this.channels.get(id) instanceof KeyframeChannel))
+            {
+                this.channels.addChannel(id);
+            }
+        }
     }
 
     @Override

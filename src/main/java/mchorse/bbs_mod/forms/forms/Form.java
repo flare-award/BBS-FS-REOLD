@@ -13,6 +13,7 @@ import mchorse.bbs_mod.forms.states.AnimationStates;
 import mchorse.bbs_mod.forms.states.StatePlayer;
 import mchorse.bbs_mod.forms.values.ValueAnchor;
 import mchorse.bbs_mod.settings.values.base.BaseValue;
+import mchorse.bbs_mod.settings.values.core.ValueColor;
 import mchorse.bbs_mod.settings.values.core.ValueGroup;
 import mchorse.bbs_mod.settings.values.core.ValueString;
 import mchorse.bbs_mod.settings.values.core.ValueTransform;
@@ -20,6 +21,7 @@ import mchorse.bbs_mod.settings.values.numeric.ValueBoolean;
 import mchorse.bbs_mod.settings.values.numeric.ValueFloat;
 import mchorse.bbs_mod.settings.values.numeric.ValueInt;
 import mchorse.bbs_mod.settings.values.ui.ValueStringKeys;
+import mchorse.bbs_mod.utils.colors.Color;
 import mchorse.bbs_mod.utils.StringUtils;
 import mchorse.bbs_mod.utils.pose.Transform;
 import net.minecraft.entity.LivingEntity;
@@ -34,6 +36,12 @@ public abstract class Form extends ValueGroup
     /** Sentinel in {@link #disabledTracks} meaning every track of this form is hidden on the timeline. */
     public static final String DISABLED_ALL = "*";
 
+    /* Which render layer the form draws in - see the Material tab's Layer option */
+    public static final int LAYER_AUTO = 0;
+    public static final int LAYER_TRANSLUCENT = 1;
+    public static final int LAYER_SOLID = 2;
+    public static final int LAYER_CUTOUT = 3;
+
     public final ValueBoolean visible = new ValueBoolean("visible", true);
     public final ValueStringKeys disabledTracks = new ValueStringKeys("disabled_tracks");
     public final ValueString trackName = new ValueString("track_name", "");
@@ -45,6 +53,20 @@ public abstract class Form extends ValueGroup
     public final ValueAnchor anchor = new ValueAnchor("anchor", new Anchor());
     public final ValueBoolean shaderShadow = new ValueBoolean("shaderShadow", true);
     public final ValueBoolean additiveColor = new ValueBoolean("additive_color", false);
+
+    /**
+     * Material properties edited in the Material tab. The overlay mixes the
+     * texture's pixels toward its color (alpha is the strength), the render
+     * layer picks how the form draws (see the {@code LAYER_*} constants), and
+     * the five 0..1 sliders feed shader packs that support LabPBR materials.
+     */
+    public final ValueColor colorOverlay = new ValueColor("color_overlay", new Color(1F, 1F, 1F, 0F));
+    public final ValueInt renderLayer = new ValueInt("render_layer", LAYER_AUTO, LAYER_AUTO, LAYER_CUTOUT);
+    public final ValueFloat smoothness = new ValueFloat("smoothness", 0F, 0F, 1F);
+    public final ValueFloat metalic = new ValueFloat("metalic", 0F, 0F, 1F);
+    public final ValueFloat sss = new ValueFloat("sss", 0F, 0F, 1F);
+    public final ValueFloat pixelEmission = new ValueFloat("pixel_emission", 0F, 0F, 1F);
+    public final ValueFloat relief = new ValueFloat("relief", 0F, 0F, 1F);
 
     public final List<ValueTransform> additionalTransforms = new ArrayList<>();
 
@@ -101,6 +123,14 @@ public abstract class Form extends ValueGroup
         this.add(this.anchor);
         this.add(this.shaderShadow);
         this.add(this.additiveColor);
+        this.add(this.colorOverlay);
+        this.renderLayer.invisible();
+        this.add(this.renderLayer);
+        this.add(this.smoothness);
+        this.add(this.metalic);
+        this.add(this.sss);
+        this.add(this.pixelEmission);
+        this.add(this.relief);
 
         this.hitbox.invisible();
         this.hitboxWidth.invisible();

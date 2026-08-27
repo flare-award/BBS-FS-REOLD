@@ -288,6 +288,8 @@ public class UIKeys
     public static final IKey FILM_FILTERS_BRIGHTNESS = L10n.lang("bbs.ui.film.filters.brightness");
     public static final IKey FILM_FILTERS_ABERRATION = L10n.lang("bbs.ui.film.filters.aberration");
     public static final IKey FILM_FILTERS_BLOOM = L10n.lang("bbs.ui.film.filters.bloom");
+    public static final IKey FILM_FILTERS_RADIAL = L10n.lang("bbs.ui.film.filters.radial");
+    public static final IKey FILM_FILTERS_VHS = L10n.lang("bbs.ui.film.filters.vhs");
     public static final IKey FILM_FILTERS_CLIP_ADD = L10n.lang("bbs.ui.film.filters.clip_add");
     public static final IKey FILM_FILTERS_CLIP_PICK = L10n.lang("bbs.ui.film.filters.clip_pick");
     public static final IKey FILM_FILTERS_CLIP_REMOVE = L10n.lang("bbs.ui.film.filters.clip_remove");
@@ -344,12 +346,13 @@ public class UIKeys
     public static final IKey FILM_PANELS_REPLAYS_LIST = L10n.lang("bbs.ui.film.panels.replays_list");
     public static final IKey FILM_PANELS_REPLAY_PROPS = L10n.lang("bbs.ui.film.panels.replay_props");
     public static final IKey FILM_PHOTO_COVER = L10n.lang("bbs.ui.film.photo.cover");
-    public static final IKey FILM_PHOTO_FADE_IN = L10n.lang("bbs.ui.film.photo.fade_in");
-    public static final IKey FILM_PHOTO_FADE_OUT = L10n.lang("bbs.ui.film.photo.fade_out");
     public static final IKey FILM_PHOTO_HINT = L10n.lang("bbs.ui.film.photo.hint");
     public static final IKey FILM_PHOTO_LAYER_ADD = L10n.lang("bbs.ui.film.photo.layer_add");
     public static final IKey FILM_PHOTO_LAYER_DUPE = L10n.lang("bbs.ui.film.photo.layer_dupe");
     public static final IKey FILM_PHOTO_LAYER_REMOVE = L10n.lang("bbs.ui.film.photo.layer_remove");
+    public static final IKey FILM_PHOTO_MOVE_UP = L10n.lang("bbs.ui.film.photo.move_up");
+    public static final IKey FILM_PHOTO_MOVE_DOWN = L10n.lang("bbs.ui.film.photo.move_down");
+    public static final IKey FILM_PHOTO_PRESETS = L10n.lang("bbs.ui.film.photo.presets");
     public static final IKey FILM_PHOTO_NO_TEXTURE = L10n.lang("bbs.ui.film.photo.no_texture");
     public static final IKey FILM_PHOTO_OPACITY = L10n.lang("bbs.ui.film.photo.opacity");
     public static final IKey FILM_PHOTO_PICK = L10n.lang("bbs.ui.film.photo.pick");

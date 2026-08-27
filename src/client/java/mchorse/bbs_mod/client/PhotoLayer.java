@@ -12,7 +12,7 @@ import java.util.List;
 
 /**
  * One photo layer of the film's overlay. A film can stack any number of these,
- * each with its own texture, placement, rotation and fade timing. The whole
+ * each with its own texture, placement and rotation. The whole
  * stack serializes into a single string setting, so it travels together with
  * the rest of the film filter values (and their presets).
  */
@@ -28,12 +28,6 @@ public class PhotoLayer
 
     /** Clockwise rotation in degrees */
     public float rotate;
-
-    /** How many seconds the layer takes to fade in from the film's start */
-    public float fadeIn;
-
-    /** How many seconds before the film's end the layer starts fading out */
-    public float fadeOut;
 
     public static List<PhotoLayer> parseList(String serialized)
     {
@@ -103,8 +97,6 @@ public class PhotoLayer
         data.putFloat("stretch_x", this.stretchX);
         data.putFloat("stretch_y", this.stretchY);
         data.putFloat("rotate", this.rotate);
-        data.putFloat("fade_in", this.fadeIn);
-        data.putFloat("fade_out", this.fadeOut);
 
         return data;
     }
@@ -119,7 +111,5 @@ public class PhotoLayer
         this.stretchX = MathUtils.clamp(data.getFloat("stretch_x", 1F), BBSSettings.MIN_FILM_PHOTO_STRETCH, BBSSettings.MAX_FILM_PHOTO_STRETCH);
         this.stretchY = MathUtils.clamp(data.getFloat("stretch_y", 1F), BBSSettings.MIN_FILM_PHOTO_STRETCH, BBSSettings.MAX_FILM_PHOTO_STRETCH);
         this.rotate = MathUtils.clamp(data.getFloat("rotate", 0F), -180F, 180F);
-        this.fadeIn = MathUtils.clamp(data.getFloat("fade_in", 0F), 0F, BBSSettings.MAX_FILM_PHOTO_FADE);
-        this.fadeOut = MathUtils.clamp(data.getFloat("fade_out", 0F), 0F, BBSSettings.MAX_FILM_PHOTO_FADE);
     }
 }

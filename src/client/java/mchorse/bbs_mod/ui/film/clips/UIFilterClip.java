@@ -62,6 +62,8 @@ public class UIFilterClip extends UIClip<FilterClip>
             case "pixelate": return UIKeys.FILM_FILTERS_PIXELATE;
             case "distortion": return UIKeys.FILM_FILTERS_DISTORTION;
             case "bloom": return UIKeys.FILM_FILTERS_BLOOM;
+            case "radial": return UIKeys.FILM_FILTERS_RADIAL;
+            case "vhs": return UIKeys.FILM_FILTERS_VHS;
         }
 
         return IKey.constant(id);
@@ -159,7 +161,19 @@ public class UIFilterClip extends UIClip<FilterClip>
 
         this.keyframes.view.removeAllSheets();
 
-        for (KeyframeChannel<?> channel : this.clip.channels.getAllKeyframeChannels())
+        /* Sheets go in the sliders' order, not alphabetically, so the dope
+         * sheet reads like the filters overlay does */
+        List<KeyframeChannel<?>> channels = new ArrayList<>(this.clip.channels.getAllKeyframeChannels());
+
+        channels.sort((a, b) ->
+        {
+            int indexA = FilterClip.CHANNEL_IDS.indexOf(a.getId());
+            int indexB = FilterClip.CHANNEL_IDS.indexOf(b.getId());
+
+            return Integer.compare(indexA < 0 ? FilterClip.CHANNEL_IDS.size() : indexA, indexB < 0 ? FilterClip.CHANNEL_IDS.size() : indexB);
+        });
+
+        for (KeyframeChannel<?> channel : channels)
         {
             this.addKeyframeSheet(channel);
         }

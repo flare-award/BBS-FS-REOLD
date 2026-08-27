@@ -4,6 +4,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.camera.clips.misc.FilterClip;
+import mchorse.bbs_mod.camera.clips.misc.PhotoClip;
 import mchorse.bbs_mod.camera.controller.CameraWorkCameraController;
 import mchorse.bbs_mod.graphics.Framebuffer;
 import mchorse.bbs_mod.graphics.texture.Texture;
@@ -19,6 +20,7 @@ import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL30;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -44,9 +46,6 @@ public class FilmEffects
 
     /** How far the temperature slider's full swing pushes the red/blue channels. */
     private static final float TEMPERATURE_STRENGTH = 0.2F;
-
-    /** The film frame is ticks, the fade sliders are seconds. */
-    private static final float TICKS_PER_SECOND = 20F;
 
     /** How much smaller than the frame the bloom buffers are (in each axis). */
     private static final int BLOOM_DOWNSCALE = 4;
@@ -86,6 +85,8 @@ public class FilmEffects
         uniform float u_pixelate;
         uniform float u_distortion;
         uniform float u_bloom_strength;
+        uniform float u_radial;
+        uniform float u_vhs;
         uniform float u_seed;
 
         in vec2 v_uv;
@@ -141,7 +142,39 @@ public class FilmEffects
                 uv = (floor(uv / cell) + 0.5) * cell;
             }
 
+            if (u_vhs > 0.0)
+            {
+                /* Per-scanline horizontal jitter, tape-style: a few sines at odd
+                 * frequencies, seeded by the film clock so exports are stable */
+                float line = floor(v_uv.y / u_texel.y);
+                float wobble = sin(line * 0.35 + u_seed * 0.63) * sin(line * 0.043 + u_seed * 0.121);
+
+                uv.x += wobble * u_texel.x * u_vhs * 4.0;
+            }
+
             vec3 color = sampleFrame(uv);
+
+            if (u_radial > 0.0)
+            {
+                /* Zoom blur: smear samples toward the frame's center */
+                vec2 toCenter = (vec2(0.5) - uv) * u_radial * 0.12;
+                vec3 accumulated = color;
+
+                for (int i = 1; i < 8; i++)
+                {
+                    accumulated += sampleFrame(uv + toCenter * (float(i) / 8.0));
+                }
+
+                color = accumulated / 8.0;
+            }
+
+            if (u_vhs > 0.0)
+            {
+                /* Chroma bleed to the right and darkened scanlines */
+                color.r = mix(color.r, sampleFrame(uv + vec2(u_texel.x * u_vhs * 2.0, 0.0)).r, 0.75);
+                color.b = mix(color.b, sampleFrame(uv - vec2(u_texel.x * u_vhs * 2.0, 0.0)).b, 0.75);
+                color *= 1.0 - u_vhs * 0.2 * (0.5 + 0.5 * sin(v_uv.y / u_texel.y * 3.14159));
+            }
 
             if (u_sharpness > 0.0)
             {
@@ -330,6 +363,8 @@ public class FilmEffects
     private static int uniformPixelate;
     private static int uniformDistortion;
     private static int uniformBloomStrength;
+    private static int uniformRadial;
+    private static int uniformVhs;
     private static int uniformSeed;
     private static int uniformBloomCutTexel;
     private static int uniformBlurDirection;
@@ -378,7 +413,9 @@ public class FilmEffects
             || state.posterize >= 2F
             || state.pixelate >= 1F
             || isActive(state.distortion, 0F)
-            || isActive(state.bloom, 0F);
+            || isActive(state.bloom, 0F)
+            || isActive(state.radial, 0F)
+            || isActive(state.vhs, 0F);
     }
 
     public static boolean hasPhoto()
@@ -386,6 +423,14 @@ public class FilmEffects
         for (PhotoLayer layer : getPhotoLayers())
         {
             if (!layer.texture.isEmpty())
+            {
+                return true;
+            }
+        }
+
+        for (PhotoClip.State state : getClipPhotoStates())
+        {
+            if (!state.texture.isEmpty())
             {
                 return true;
             }
@@ -464,12 +509,17 @@ public class FilmEffects
      */
     public static Texture getPhotoTexture(PhotoLayer layer)
     {
-        if (layer.texture.isEmpty())
+        return getPhotoTexture(layer.texture);
+    }
+
+    public static Texture getPhotoTexture(String texture)
+    {
+        if (texture.isEmpty())
         {
             return null;
         }
 
-        return BBSModClient.getTextures().getTexture(Link.create(layer.texture), GL11.GL_LINEAR);
+        return BBSModClient.getTextures().getTexture(Link.create(texture), GL11.GL_LINEAR);
     }
 
     private static boolean isActive(float value, float neutral)
@@ -595,6 +645,8 @@ public class FilmEffects
         GL20.glUniform1f(uniformPixelate, (float) Math.floor(state.pixelate));
         GL20.glUniform1f(uniformDistortion, state.distortion);
         GL20.glUniform1f(uniformBloomStrength, bloom ? state.bloom : 0F);
+        GL20.glUniform1f(uniformRadial, state.radial);
+        GL20.glUniform1f(uniformVhs, state.vhs);
         GL20.glUniform1f(uniformSeed, getGrainSeed());
 
         if (bloom)
@@ -661,68 +713,47 @@ public class FilmEffects
 
         for (PhotoLayer layer : getPhotoLayers())
         {
-            Texture photo = getPhotoTexture(layer);
+            drawPhoto(getPhotoTexture(layer.texture), layer.opacity, layer.x, layer.y, layer.scale, layer.stretchX, layer.stretchY, layer.rotate, width, height);
+        }
 
-            if (photo == null || photo.width <= 0 || photo.height <= 0)
-            {
-                continue;
-            }
-
-            float opacity = layer.opacity * getPlaybackFade(layer);
-
-            if (opacity <= 0F)
-            {
-                continue;
-            }
-
-            float halfW = layer.scale * layer.stretchX * (photo.width / (float) photo.height) * (height / (float) width);
-            float halfH = layer.scale * layer.stretchY;
-
-            /* Positive degrees turn the photo clockwise on screen, hence the minus:
-             * the setting's Y axis points down while NDC's points up */
-            float angle = MathUtils.toRad(-layer.rotate);
-
-            GL20.glUniform4f(uniformTransform, layer.x, -layer.y, halfW, halfH);
-            GL20.glUniform2f(uniformRotation, (float) Math.cos(angle), (float) Math.sin(angle));
-            GL20.glUniform1f(uniformAspect, width / (float) height);
-            GL20.glUniform1f(uniformOpacity, opacity);
-            photo.bind();
-            GL11.glDrawArrays(GL11.GL_TRIANGLE_STRIP, 0, 4);
+        /* Layers animated by playing photo clips draw on top of the static stack */
+        for (PhotoClip.State state : getClipPhotoStates())
+        {
+            drawPhoto(getPhotoTexture(state.texture), state.opacity, state.x, state.y, state.scale, state.stretchX, state.stretchY, state.rotate, width, height);
         }
     }
 
-    /**
-     * How visible a layer is at the film's current tick, given its fade in and
-     * fade out spans. Outside of film playback the layer is fully visible.
-     */
-    private static float getPlaybackFade(PhotoLayer layer)
+    private static void drawPhoto(Texture photo, float opacity, float x, float y, float scale, float stretchX, float stretchY, float rotate, int width, int height)
     {
-        if (layer.fadeIn <= 0F && layer.fadeOut <= 0F)
+        if (photo == null || photo.width <= 0 || photo.height <= 0 || opacity <= 0F)
         {
-            return 1F;
+            return;
         }
 
-        if (!(BBSModClient.getCameraController().getCurrent() instanceof CameraWorkCameraController controller))
+        float halfW = scale * stretchX * (photo.width / (float) photo.height) * (height / (float) width);
+        float halfH = scale * stretchY;
+
+        /* Positive degrees turn the photo clockwise on screen, hence the minus:
+         * the setting's Y axis points down while NDC's points up */
+        float angle = MathUtils.toRad(-rotate);
+
+        GL20.glUniform4f(uniformTransform, x, -y, halfW, halfH);
+        GL20.glUniform2f(uniformRotation, (float) Math.cos(angle), (float) Math.sin(angle));
+        GL20.glUniform1f(uniformAspect, width / (float) height);
+        GL20.glUniform1f(uniformOpacity, opacity);
+        photo.bind();
+        GL11.glDrawArrays(GL11.GL_TRIANGLE_STRIP, 0, 4);
+    }
+
+    /** Photo layers contributed by photo clips playing on the camera timeline right now. */
+    private static List<PhotoClip.State> getClipPhotoStates()
+    {
+        if (BBSModClient.getCameraController().getCurrent() instanceof CameraWorkCameraController controller)
         {
-            return 1F;
+            return PhotoClip.getStates(controller.getContext());
         }
 
-        ClipContext context = controller.getContext();
-        float tick = context.ticks + context.transition;
-        float duration = context.clips.calculateDuration();
-        float fade = 1F;
-
-        if (layer.fadeIn > 0F)
-        {
-            fade = Math.min(fade, tick / (layer.fadeIn * TICKS_PER_SECOND));
-        }
-
-        if (layer.fadeOut > 0F && duration > 0F)
-        {
-            fade = Math.min(fade, (duration - tick) / (layer.fadeOut * TICKS_PER_SECOND));
-        }
-
-        return MathUtils.clamp(fade, 0F, 1F);
+        return Collections.emptyList();
     }
 
     /**
@@ -756,6 +787,8 @@ public class FilmEffects
         state.pixelate = filterValue(overrides, "pixelate", BBSSettings.filmFilterPixelate, 0F);
         state.distortion = filterValue(overrides, "distortion", BBSSettings.filmFilterDistortion, 0F);
         state.bloom = filterValue(overrides, "bloom", BBSSettings.filmFilterBloom, 0F);
+        state.radial = filterValue(overrides, "radial", BBSSettings.filmFilterRadial, 0F);
+        state.vhs = filterValue(overrides, "vhs", BBSSettings.filmFilterVhs, 0F);
 
         return state;
     }
@@ -833,6 +866,8 @@ public class FilmEffects
         uniformPixelate = GL20.glGetUniformLocation(filterProgram, "u_pixelate");
         uniformDistortion = GL20.glGetUniformLocation(filterProgram, "u_distortion");
         uniformBloomStrength = GL20.glGetUniformLocation(filterProgram, "u_bloom_strength");
+        uniformRadial = GL20.glGetUniformLocation(filterProgram, "u_radial");
+        uniformVhs = GL20.glGetUniformLocation(filterProgram, "u_vhs");
         uniformSeed = GL20.glGetUniformLocation(filterProgram, "u_seed");
 
         /* The blurred highlights always sit on texture unit 1 */
@@ -972,5 +1007,7 @@ public class FilmEffects
         public float pixelate;
         public float distortion;
         public float bloom;
+        public float radial;
+        public float vhs;
     }
 }

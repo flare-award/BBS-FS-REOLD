@@ -6,6 +6,8 @@ import mchorse.bbs_mod.client.BBSRendering;
 import mchorse.bbs_mod.client.BBSShaders;
 import mchorse.bbs_mod.forms.FormTranslucentQueue;
 import mchorse.bbs_mod.forms.forms.BillboardForm;
+import mchorse.bbs_mod.forms.forms.Form;
+import mchorse.bbs_mod.graphics.texture.FormMaterials;
 import mchorse.bbs_mod.forms.renderers.utils.FormColorBlend;
 import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.resources.Link;
@@ -85,8 +87,20 @@ public class BillboardFormRenderer extends FormRenderer<BillboardForm>
         }
 
         VertexFormat format = shading ? VertexFormats.POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL : VertexFormats.POSITION_TEXTURE_LIGHT_COLOR;
+        int renderLayer = this.form.renderLayer.get();
+        boolean forcedOpaque = renderLayer == Form.LAYER_SOLID || renderLayer == Form.LAYER_CUTOUT;
+
+        /* The Material tab's Layer option: Solid and Cutout draw the quad immediately
+         * with an alpha-tested program instead of deferring it as translucent. */
+        Supplier<ShaderProgram> mainShader = shading
+            ? (forcedOpaque
+                ? (renderLayer == Form.LAYER_SOLID
+                    ? GameRenderer::getRenderTypeEntitySolidProgram
+                    : GameRenderer::getRenderTypeEntityCutoutProgram)
+                : GameRenderer::getRenderTypeEntityTranslucentProgram)
+            : GameRenderer::getPositionTexLightmapColorProgram;
         Supplier<ShaderProgram> shader = this.getShader(context,
-            shading ? GameRenderer::getRenderTypeEntityTranslucentProgram : GameRenderer::getPositionTexLightmapColorProgram,
+            mainShader,
             shading ? BBSShaders::getPickerBillboardProgram : BBSShaders::getPickerBillboardNoShadingProgram
         );
 
@@ -103,6 +117,12 @@ public class BillboardFormRenderer extends FormRenderer<BillboardForm>
         }
 
         Texture texture = BBSModClient.getTextures().getTexture(t);
+
+        /* Feed the Material tab's PBR sliders to the shader pack; the quad binds a
+         * copy recolored toward the color overlay when one is set. */
+        FormMaterials.update(t, this.form);
+
+        Texture bound = FormMaterials.getOverlayed(t, texture, this.form.colorOverlay.get());
 
         float w = texture.width;
         float h = texture.height;
@@ -166,7 +186,7 @@ public class BillboardFormRenderer extends FormRenderer<BillboardForm>
             uvQuad.transform(matrix);
         }
 
-        this.renderQuad(format, texture, shader, matrices, overlay, light, overlayColor, transition, defer);
+        this.renderQuad(format, bound, shader, matrices, overlay, light, overlayColor, transition, defer);
     }
 
     private void renderQuad(VertexFormat format, Texture texture, Supplier<ShaderProgram> shader, MatrixStack matrices, int overlay, int light, int overlayColor, float transition, boolean defer)
@@ -231,7 +251,9 @@ public class BillboardFormRenderer extends FormRenderer<BillboardForm>
 
         boolean linear = this.form.linear.get();
         boolean mipmap = this.form.mipmap.get();
-        boolean translucent = texture.hasTranslucency() || color.a < 1F || linear || mipmap;
+        int renderLayer = this.form.renderLayer.get();
+        boolean forcedOpaque = renderLayer == Form.LAYER_SOLID || renderLayer == Form.LAYER_CUTOUT;
+        boolean translucent = !forcedOpaque && (texture.hasTranslucency() || color.a < 1F || linear || mipmap);
 
         if (defer && translucent && FormTranslucentQueue.isActive())
         {
@@ -262,7 +284,19 @@ public class BillboardFormRenderer extends FormRenderer<BillboardForm>
         }
         else
         {
+            /* Solid and Cutout draw with blending off: semi-transparent texels
+             * go solid, fully transparent ones are cut by the program's alpha test */
+            if (forcedOpaque)
+            {
+                RenderSystem.disableBlend();
+            }
+
             BufferRenderer.drawWithGlobalProgram(builder.end());
+
+            if (forcedOpaque)
+            {
+                RenderSystem.enableBlend();
+            }
         }
 
         texture.setFilterMipmap(false, false);

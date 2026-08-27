@@ -1,6 +1,7 @@
 package mchorse.bbs_mod.forms.renderers;
 
 import mchorse.bbs_mod.client.BBSRendering;
+import mchorse.bbs_mod.forms.FormUtils;
 import mchorse.bbs_mod.forms.FormUtilsClient;
 import mchorse.bbs_mod.forms.entities.IEntity;
 import mchorse.bbs_mod.forms.forms.BodyPart;
@@ -86,8 +87,10 @@ public abstract class FormRenderer <T extends Form>
 
     public final void render(FormRenderingContext context)
     {
-        if (!this.form.shaderShadow.get() && BBSRendering.isIrisShadowPass())
+        if (BBSRendering.isIrisShadowPass() && !this.form.shaderShadow.get() && !FormUtils.getRoot(this.form).shaderShadow.get())
         {
+            /* The root form's toggle carries the whole hierarchy: enabling the
+             * shader shadow on the model shouldn't leave its body parts shadowless. */
             return;
         }
 
