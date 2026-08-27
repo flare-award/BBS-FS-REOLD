@@ -829,6 +829,12 @@ public class UIFormEditor extends UIElement implements IUIFormList, ICursor
         return this.form != null;
     }
 
+    /** The transparency belongs to the model's panels only - other form types keep their solid surfaces. */
+    private boolean isModelEditing()
+    {
+        return this.form instanceof ModelForm;
+    }
+
     public boolean edit(Form form)
     {
         this.form = null;
@@ -1064,7 +1070,19 @@ public class UIFormEditor extends UIElement implements IUIFormList, ICursor
             this.undoHandler.submitUndo();
         }
 
-        super.render(context);
+        /* The model's panels are a sheet over the world: the transparency setting comes off the alpha of
+         * every surface this editor lays down - the tab strip, the body part sidebar and the options
+         * column with its sliders - while the rest of the interface keeps drawing its surfaces solid. */
+        BBSSettings.surfaceTransparency = this.isModelEditing() ? BBSSettings.modelEditorTransparency() : 0F;
+
+        try
+        {
+            super.render(context);
+        }
+        finally
+        {
+            BBSSettings.surfaceTransparency = 0F;
+        }
     }
 
     public Matrix4f getOrigin(float transition)

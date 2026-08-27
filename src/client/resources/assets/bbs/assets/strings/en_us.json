@@ -77,6 +77,8 @@
 	"bbs.config.personalization.overlay_background_opacity-comment": "How much the interface behind an overlay panel (settings, pickers) is dimmed. Zero leaves it fully visible.",
 	"bbs.config.personalization.overlay_gradient_border": "Panel glow",
 	"bbs.config.personalization.overlay_gradient_border-comment": "The gradient outline in the accent colour around overlay panels and context menus.",
+	"bbs.config.personalization.model_editor_transparency": "Model editor transparency",
+	"bbs.config.personalization.model_editor_transparency-comment": "How see-through the side panels of a model's form editor are, in percent. Zero keeps them solid, a hundred lets the world show through completely.",
 	"bbs.config.timeline.track_width": "Keyframe track thickness",
 	"bbs.config.timeline.track_width-comment": "The thickness of the keyframe track strip in the dope sheet view",
 	"bbs.config.timeline.keyframe_default_shape": "Default keyframe shape",

@@ -75,6 +75,8 @@
 	"bbs.config.personalization.overlay_background_opacity-comment": "Насколько затемняется интерфейс позади всплывающих панелей (настройки, выборщики). Ноль оставляет его видимым полностью.",
 	"bbs.config.personalization.overlay_gradient_border": "Свечение панелей",
 	"bbs.config.personalization.overlay_gradient_border-comment": "Градиентная обводка акцентным цветом вокруг всплывающих панелей и контекстных меню.",
+	"bbs.config.personalization.model_editor_transparency": "Прозрачность редактора моделей",
+	"bbs.config.personalization.model_editor_transparency-comment": "Насколько прозрачны боковые панели редактора формы модели, в процентах. Ноль оставляет их плотными, сто делает полностью прозрачными.",
 	"bbs.config.timeline.track_width": "Толщина дорожки",
 	"bbs.config.timeline.track_width-comment": "Толщина полоски дорожки кейфреймов",
 	"bbs.config.timeline.keyframe_default_shape": "Форма кейфрейма по умолчанию",

@@ -185,6 +185,7 @@ public class BBSSettings {
 	public static ValueBoolean interfaceHighlights;
 	public static ValueFloat overlayBackgroundOpacity;
 	public static ValueBoolean overlayGradientBorder;
+	public static ValueInt modelEditorTransparency;
 
 	public static ValueBoolean shaderCurvesEnabled;
 	public static ValueBoolean translucencyQueue;
@@ -211,6 +212,8 @@ public class BBSSettings {
 	private static final float BRIGHTNESS_EPSILON = 0.001F;
 	private static final int DEFAULT_PRIMARY_COLOR = 0xff3242;
 	private static final float DEFAULT_OVERLAY_BACKGROUND_OPACITY = 0.5F;
+	private static final int DEFAULT_MODEL_EDITOR_TRANSPARENCY = 25;
+	private static final int MAX_MODEL_EDITOR_TRANSPARENCY = 100;
 	/**
 	 * Tonal map of the interface's surfaces, four levels deep: deep sits under
 	 * the content (fields, timeline wells), chrome frames everything, base is
@@ -306,9 +309,29 @@ public class BBSSettings {
 		return a | (r << 16) | (g << 8) | b;
 	}
 
+	/**
+	 * Render-scoped, like {@link #lightInputs}: the model's form editor sets this for
+	 * the duration of its own rendering so the surfaces of its panels let the world
+	 * show through. Zero keeps every surface exactly as solid as it always was.
+	 */
+	public static float surfaceTransparency = 0F;
+
+	private static int applySurfaceTransparency(int color)
+	{
+		if (surfaceTransparency <= 0F)
+		{
+			return color;
+		}
+
+		float factor = 1F - MathUtils.clamp(surfaceTransparency, 0F, 1F);
+		int alpha = Math.round(((color >> 24) & 0xff) * factor);
+
+		return withAlpha(color, MathUtils.clamp(alpha, 0, 255) << 24);
+	}
+
 	private static int getThemeSurface(int lightColor, int darkColor)
 	{
-		return applyBackgroundBrightness(getThemeColor(lightColor, darkColor));
+		return applySurfaceTransparency(applyBackgroundBrightness(getThemeColor(lightColor, darkColor)));
 	}
 
 	public static int chromeSurface()
@@ -354,6 +377,18 @@ public class BBSSettings {
 	public static int inputSurface()
 	{
 		return lightInputs ? raisedSurface() : deepSurface();
+	}
+
+	/**
+	 * The model editor's transparency percentage as a 0..1 factor that
+	 * {@link #surfaceTransparency} understands. Zero keeps the panels solid,
+	 * a hundred percent makes them fully see-through.
+	 */
+	public static float modelEditorTransparency()
+	{
+		int percent = modelEditorTransparency == null ? DEFAULT_MODEL_EDITOR_TRANSPARENCY : modelEditorTransparency.get();
+
+		return MathUtils.clamp(percent, 0, MAX_MODEL_EDITOR_TRANSPARENCY) / (float) MAX_MODEL_EDITOR_TRANSPARENCY;
 	}
 
 	public static int panelShadowOpaqueColor()
@@ -591,6 +626,7 @@ public class BBSSettings {
 		interfaceHighlights = builder.getBoolean("interface_highlights", false);
 		overlayBackgroundOpacity = builder.getFloat("overlay_background_opacity", DEFAULT_OVERLAY_BACKGROUND_OPACITY, 0F, 1F).slider();
 		overlayGradientBorder = builder.getBoolean("overlay_gradient_border", true);
+		modelEditorTransparency = builder.getInt("model_editor_transparency", DEFAULT_MODEL_EDITOR_TRANSPARENCY, 0, MAX_MODEL_EDITOR_TRANSPARENCY).slider();
 		primaryColor = builder.getInt("primary_color", DEFAULT_PRIMARY_COLOR).color();
 		stencilHighlightColor = builder.getInt("stencil_highlight_color", 0x2EFFFFFF).colorAlpha();
 		theme = builder.getInt("theme", DEFAULT_THEME);
