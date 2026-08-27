@@ -37,7 +37,7 @@ public class UIPhotoClip extends UIClip<PhotoClip>
     {
         switch (id)
         {
-            case "texture": return UIKeys.FILM_PHOTO_PICK;
+            case "texture": return UIKeys.FILM_PHOTO_TEXTURE;
             case "opacity": return UIKeys.FILM_PHOTO_OPACITY;
             case "x": return UIKeys.GENERAL_X;
             case "y": return UIKeys.GENERAL_Y;

@@ -361,6 +361,7 @@ public class UIKeys
     public static final IKey FILM_PHOTO_SCALE = L10n.lang("bbs.ui.film.photo.scale");
     public static final IKey FILM_PHOTO_STRETCH_X = L10n.lang("bbs.ui.film.photo.stretch_x");
     public static final IKey FILM_PHOTO_STRETCH_Y = L10n.lang("bbs.ui.film.photo.stretch_y");
+    public static final IKey FILM_PHOTO_TEXTURE = L10n.lang("bbs.ui.film.photo.texture");
     public static final IKey FILM_PHOTO_TITLE = L10n.lang("bbs.ui.film.photo.title");
     public static final IKey SNOWSTORM_PANELS_GENERAL = L10n.lang("bbs.ui.snowstorm.panels.general");
     public static final IKey SNOWSTORM_PANELS_EMITTER = L10n.lang("bbs.ui.snowstorm.panels.emitter");

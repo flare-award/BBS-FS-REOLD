@@ -744,6 +744,7 @@
 	"bbs.ui.film.photo.scale": "Size",
 	"bbs.ui.film.photo.stretch_x": "Stretch X",
 	"bbs.ui.film.photo.stretch_y": "Stretch Y",
+	"bbs.ui.film.photo.texture": "Photo",
 	"bbs.ui.film.photo.title": "Photo filter",
 	"bbs.ui.film.options": "Film options",
 	"bbs.ui.film.tabs.new_tab": "New tab",
