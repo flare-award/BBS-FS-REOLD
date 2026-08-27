@@ -159,7 +159,7 @@ public class UIFilmFiltersOverlayPanel extends UIFilmEffectsOverlayPanel
         }
 
         @Override
-        protected boolean subMouseReleased(UIContext context)
+        public boolean subMouseReleased(UIContext context)
         {
             FilmEffects.setShowOriginal(false);
 
