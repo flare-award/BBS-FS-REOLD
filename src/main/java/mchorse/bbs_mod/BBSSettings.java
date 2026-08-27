@@ -187,6 +187,13 @@ public class BBSSettings {
 	public static ValueBoolean overlayGradientBorder;
 	public static ValueInt modelEditorTransparency;
 
+	/* The films dashboard's banner photo: which texture it shows and how the
+	 * photo is fitted - focus (0..1 within the leftover image) and cover zoom. */
+	public static ValueString filmsBannerTexture;
+	public static ValueFloat filmsBannerX;
+	public static ValueFloat filmsBannerY;
+	public static ValueFloat filmsBannerZoom;
+
 	public static ValueBoolean shaderCurvesEnabled;
 	public static ValueBoolean translucencyQueue;
 
@@ -214,6 +221,9 @@ public class BBSSettings {
 	private static final float DEFAULT_OVERLAY_BACKGROUND_OPACITY = 0.5F;
 	private static final int DEFAULT_MODEL_EDITOR_TRANSPARENCY = 25;
 	private static final int MAX_MODEL_EDITOR_TRANSPARENCY = 100;
+	public static final float DEFAULT_FILMS_BANNER_FOCUS = 0.5F;
+	public static final float MIN_FILMS_BANNER_ZOOM = 1F;
+	public static final float MAX_FILMS_BANNER_ZOOM = 8F;
 	/**
 	 * Tonal map of the interface's surfaces, four levels deep: deep sits under
 	 * the content (fields, timeline wells), chrome frames everything, base is
@@ -310,8 +320,8 @@ public class BBSSettings {
 	}
 
 	/**
-	 * Render-scoped, like {@link #lightInputs}: the model's form editor sets this for
-	 * the duration of its own rendering so the surfaces of its panels let the world
+	 * Render-scoped, like {@link #lightInputs}: the form editor sets this for the
+	 * duration of its own rendering so the surfaces of its panels let the world
 	 * show through. Zero keeps every surface exactly as solid as it always was.
 	 */
 	public static float surfaceTransparency = 0F;
@@ -380,9 +390,10 @@ public class BBSSettings {
 	}
 
 	/**
-	 * The model editor's transparency percentage as a 0..1 factor that
+	 * The form editor's transparency percentage as a 0..1 factor that
 	 * {@link #surfaceTransparency} understands. Zero keeps the panels solid,
-	 * a hundred percent makes them fully see-through.
+	 * a hundred percent makes them fully see-through. The config key predates
+	 * the setting covering every form type, hence the name.
 	 */
 	public static float modelEditorTransparency()
 	{
@@ -627,6 +638,16 @@ public class BBSSettings {
 		overlayBackgroundOpacity = builder.getFloat("overlay_background_opacity", DEFAULT_OVERLAY_BACKGROUND_OPACITY, 0F, 1F).slider();
 		overlayGradientBorder = builder.getBoolean("overlay_gradient_border", true);
 		modelEditorTransparency = builder.getInt("model_editor_transparency", DEFAULT_MODEL_EDITOR_TRANSPARENCY, 0, MAX_MODEL_EDITOR_TRANSPARENCY).slider();
+
+		/* Edited from the films dashboard's banner overlay rather than from this settings menu. */
+		filmsBannerTexture = builder.getString("films_banner_texture", "");
+		filmsBannerTexture.invisible();
+		filmsBannerX = builder.getFloat("films_banner_x", DEFAULT_FILMS_BANNER_FOCUS, 0F, 1F);
+		filmsBannerX.invisible();
+		filmsBannerY = builder.getFloat("films_banner_y", DEFAULT_FILMS_BANNER_FOCUS, 0F, 1F);
+		filmsBannerY.invisible();
+		filmsBannerZoom = builder.getFloat("films_banner_zoom", MIN_FILMS_BANNER_ZOOM, MIN_FILMS_BANNER_ZOOM, MAX_FILMS_BANNER_ZOOM);
+		filmsBannerZoom.invisible();
 		primaryColor = builder.getInt("primary_color", DEFAULT_PRIMARY_COLOR).color();
 		stencilHighlightColor = builder.getInt("stencil_highlight_color", 0x2EFFFFFF).colorAlpha();
 		theme = builder.getInt("theme", DEFAULT_THEME);

@@ -234,6 +234,12 @@ public class UIKeys
     public static final IKey ENGINE_ROTATE_3D_SPHERE_MODE_ARCBALL = L10n.lang("bbs.rotate_3d_sphere_mode.arcball");
     public static final IKey ENGINE_THEME_DARK = L10n.lang("bbs.theme.dark");
     public static final IKey ENGINE_THEME_LIGHT = L10n.lang("bbs.theme.light");
+    public static final IKey FILM_BANNER_HINT = L10n.lang("bbs.ui.film.banner.hint");
+    public static final IKey FILM_BANNER_PICK = L10n.lang("bbs.ui.film.banner.pick");
+    public static final IKey FILM_BANNER_RESET = L10n.lang("bbs.ui.film.banner.reset");
+    public static final IKey FILM_BANNER_TITLE = L10n.lang("bbs.ui.film.banner.title");
+    public static final IKey FILM_BANNER_TOOLTIP = L10n.lang("bbs.ui.film.banner.tooltip");
+    public static final IKey FILM_BANNER_ZOOM = L10n.lang("bbs.ui.film.banner.zoom");
     public static final IKey FILM_CONTROLLER_CONTROL_MODE_TOOLTIP = L10n.lang("bbs.ui.film.controller.control_mode-tooltip");
     public static final IKey FILM_CONTROLLER_INSERT_FRAME_DESCRIPTION = L10n.lang("bbs.ui.film.controller.insert_frame-description");
     public static final IKey FILM_CONTROLLER_INSERT_FRAME_TITLE = L10n.lang("bbs.ui.film.controller.insert_frame-title");

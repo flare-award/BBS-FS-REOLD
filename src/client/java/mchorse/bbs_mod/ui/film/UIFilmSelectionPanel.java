@@ -1,7 +1,9 @@
 package mchorse.bbs_mod.ui.film;
 
+import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.film.Film;
 import mchorse.bbs_mod.l10n.keys.IKey;
+import mchorse.bbs_mod.resources.Link;
 import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.dashboard.panels.UISelectionScreen;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
@@ -10,6 +12,7 @@ import mchorse.bbs_mod.ui.framework.elements.overlay.UIPromptOverlayPanel;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.utils.DataPath;
+import mchorse.bbs_mod.utils.Direction;
 
 import java.util.List;
 
@@ -20,6 +23,44 @@ public class UIFilmSelectionPanel extends UISelectionScreen<Film>
     public UIFilmSelectionPanel(UIFilmPanel panel)
     {
         super(panel);
+
+        UIIcon editBanner = new UIIcon(Icons.EDIT, (b) -> this.openBannerEditor());
+
+        editBanner.tooltip(UIKeys.FILM_BANNER_TOOLTIP, Direction.BOTTOM);
+        editBanner.wh(20, 20);
+        editBanner.relative(this.banner).x(1F, -24).y(4);
+        this.banner.add(editBanner);
+    }
+
+    private void openBannerEditor()
+    {
+        UIOverlay.addOverlay(this.getContext(), new UIFilmBannerOverlayPanel(), UIFilmBannerOverlayPanel.WIDTH, UIFilmBannerOverlayPanel.HEIGHT);
+    }
+
+    @Override
+    protected Link getBannerTexture()
+    {
+        Link custom = UIFilmBannerOverlayPanel.getCustomBanner();
+
+        return custom == null ? super.getBannerTexture() : custom;
+    }
+
+    @Override
+    protected float getBannerFocusX()
+    {
+        return BBSSettings.filmsBannerX.get();
+    }
+
+    @Override
+    protected float getBannerFocusY()
+    {
+        return BBSSettings.filmsBannerY.get();
+    }
+
+    @Override
+    protected float getBannerZoom()
+    {
+        return BBSSettings.filmsBannerZoom.get();
     }
 
     @Override
