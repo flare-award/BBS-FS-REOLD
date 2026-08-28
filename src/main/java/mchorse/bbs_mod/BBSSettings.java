@@ -185,12 +185,12 @@ public class BBSSettings {
 
 	public static ValueFloat backgroundBrightness;
 
-	/* Custom background color: 0 keeps the theme's own surfaces, 1 recolors them
-	 * with backgroundColor, 2 flows them from backgroundColor into
-	 * backgroundColorEnd across the screen in the chosen direction. */
+	/* Custom interface background: 0 keeps the theme's own surfaces, 1 recolors
+	 * them with interfaceBackgroundColor, 2 flows them from that color into
+	 * interfaceBackgroundColorEnd across the screen in the chosen direction. */
 	public static ValueInt backgroundColorMode;
-	public static ValueInt backgroundColor;
-	public static ValueInt backgroundColorEnd;
+	public static ValueInt interfaceBackgroundColor;
+	public static ValueInt interfaceBackgroundColorEnd;
 	public static ValueInt backgroundGradientDirection;
 	public static ValueBoolean interfaceShadows;
 	public static ValueBoolean interfaceHighlights;
@@ -437,7 +437,7 @@ public class BBSSettings {
 	{
 		if (backgroundColorMode() != BACKGROUND_DEFAULT)
 		{
-			return customSurface(backgroundColor.get(), darkColor);
+			return customSurface(interfaceBackgroundColor.get(), darkColor);
 		}
 
 		return applySurfaceTransparency(applyBackgroundBrightness(getThemeColor(lightColor, darkColor)));
@@ -487,8 +487,8 @@ public class BBSSettings {
 			return 0;
 		}
 
-		int start = backgroundColor.get();
-		int end = backgroundColorEnd.get();
+		int start = interfaceBackgroundColor.get();
+		int end = interfaceBackgroundColorEnd.get();
 
 		if (surfaceColor == customSurface(start, DARK_DEEP_SURFACE)) return customSurface(end, DARK_DEEP_SURFACE);
 		if (surfaceColor == customSurface(start, DARK_CHROME_SURFACE)) return customSurface(end, DARK_CHROME_SURFACE);
@@ -503,10 +503,10 @@ public class BBSSettings {
 	{
 		int mode = backgroundColorMode();
 
-		if (backgroundColor != null)
+		if (interfaceBackgroundColor != null)
 		{
-			backgroundColor.visible(mode != BACKGROUND_DEFAULT);
-			backgroundColorEnd.visible(mode == BACKGROUND_GRADIENT);
+			interfaceBackgroundColor.visible(mode != BACKGROUND_DEFAULT);
+			interfaceBackgroundColorEnd.visible(mode == BACKGROUND_GRADIENT);
 			backgroundGradientDirection.visible(mode == BACKGROUND_GRADIENT);
 		}
 	}
@@ -801,8 +801,8 @@ public class BBSSettings {
 		builder.category("personalization", Icons.COLOR);
 		backgroundBrightness = builder.getFloat("background_brightness", DEFAULT_BACKGROUND_BRIGHTNESS, MIN_BACKGROUND_BRIGHTNESS, MAX_BACKGROUND_BRIGHTNESS).slider();
 		backgroundColorMode = builder.getInt("background_color_mode", BACKGROUND_DEFAULT, BACKGROUND_DEFAULT, BACKGROUND_GRADIENT);
-		backgroundColor = builder.getInt("background_color", DEFAULT_BACKGROUND_COLOR).color();
-		backgroundColorEnd = builder.getInt("background_color_end", DEFAULT_BACKGROUND_COLOR_END).color();
+		interfaceBackgroundColor = builder.getInt("background_color", DEFAULT_BACKGROUND_COLOR).color();
+		interfaceBackgroundColorEnd = builder.getInt("background_color_end", DEFAULT_BACKGROUND_COLOR_END).color();
 		backgroundGradientDirection = builder.getInt("background_gradient_direction", GRADIENT_HORIZONTAL, GRADIENT_HORIZONTAL, GRADIENT_DIAGONAL);
 		interfaceShadows = builder.getBoolean("interface_shadows", true);
 		interfaceHighlights = builder.getBoolean("interface_highlights", false);
