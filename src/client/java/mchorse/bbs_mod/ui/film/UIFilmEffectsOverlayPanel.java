@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.DoubleConsumer;
 import java.util.function.DoubleSupplier;
+import java.util.function.IntConsumer;
+import java.util.function.IntSupplier;
 
 /**
  * Base of the film effect overlays (color grading filters and the photo overlay):
@@ -83,15 +85,21 @@ public abstract class UIFilmEffectsOverlayPanel extends UIOverlayPanel
      */
     protected UIElement createOptionsRow(IKey label, ValueFloat value, IKey... options)
     {
-        UICirculate button = new UICirculate((b) -> value.set((float) b.getValue()));
+        return this.createOptionsRow(label, () -> Math.round(value.get()), (v) -> value.set((float) v), options);
+    }
+
+    /** Same as {@link #createOptionsRow(IKey, ValueFloat, IKey...)}, bound to arbitrary get/set functions. */
+    protected UIElement createOptionsRow(IKey label, IntSupplier getter, IntConsumer setter, IKey... options)
+    {
+        UICirculate button = new UICirculate((b) -> setter.accept(b.getValue()));
 
         for (IKey option : options)
         {
             button.addLabel(option);
         }
 
-        button.setValue(this.optionIndex(value, options.length));
-        this.updaters.add(() -> button.setValue(this.optionIndex(value, options.length)));
+        button.setValue(this.optionIndex(getter, options.length));
+        this.updaters.add(() -> button.setValue(this.optionIndex(getter, options.length)));
 
         UIElement row = UI.row(4, UI.label(label).labelAnchor(0, 0.5F), button);
 
@@ -100,9 +108,9 @@ public abstract class UIFilmEffectsOverlayPanel extends UIOverlayPanel
         return row;
     }
 
-    private int optionIndex(ValueFloat value, int count)
+    private int optionIndex(IntSupplier getter, int count)
     {
-        return Math.max(0, Math.min(count - 1, Math.round(value.get())));
+        return Math.max(0, Math.min(count - 1, getter.getAsInt()));
     }
 
     protected void updateFields()

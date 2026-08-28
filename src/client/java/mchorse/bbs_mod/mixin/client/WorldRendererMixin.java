@@ -69,7 +69,7 @@ public class WorldRendererMixin
 
         if (BBSSettings.chromaSkyEnabled.get() && !BBSSettings.chromaSkyTerrain.get())
         {
-            BBSRendering.onRenderChunkLayer(matrices, positionMatrix);
+            BBSRendering.onRenderChunkLayer(matrices);
 
             info.cancel();
         }
@@ -80,7 +80,7 @@ public class WorldRendererMixin
     {
         if (layer == RenderLayer.getSolid())
         {
-            BBSRendering.onRenderChunkLayer(stack, positionMatrix);
+            BBSRendering.onRenderChunkLayer(stack);
         }
     }
 

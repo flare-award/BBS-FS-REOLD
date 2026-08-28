@@ -1,6 +1,7 @@
 package mchorse.bbs_mod.client;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.systems.VertexSorter;
 import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.camera.clips.misc.FilterClip;
@@ -13,6 +14,14 @@ import mchorse.bbs_mod.resources.Link;
 import mchorse.bbs_mod.settings.values.numeric.ValueFloat;
 import mchorse.bbs_mod.utils.MathUtils;
 import mchorse.bbs_mod.utils.clips.ClipContext;
+import net.minecraft.client.render.BufferBuilder;
+import net.minecraft.client.render.BufferRenderer;
+import net.minecraft.client.render.GameRenderer;
+import net.minecraft.client.render.Tessellator;
+import net.minecraft.client.render.VertexFormat;
+import net.minecraft.client.render.VertexFormats;
+import net.minecraft.client.util.math.MatrixStack;
+import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL15;
@@ -326,6 +335,7 @@ public class FilmEffects
         uniform vec4 u_transform;
         uniform vec2 u_rotation;
         uniform float u_aspect;
+        uniform float u_flip;
 
         in vec2 a_position;
 
@@ -341,6 +351,16 @@ public class FilmEffects
             p.x /= u_aspect;
 
             v_uv = vec2(a_position.x * 0.5 + 0.5, 0.5 - a_position.y * 0.5);
+
+            if (u_flip == 1.0)
+            {
+                v_uv.y = 1.0 - v_uv.y;
+            }
+            else if (u_flip == 2.0)
+            {
+                v_uv.x = 1.0 - v_uv.x;
+            }
+
             gl_Position = vec4(u_transform.xy + p, 0.0, 1.0);
         }""";
 
@@ -409,6 +429,7 @@ public class FilmEffects
     private static int uniformRotation;
     private static int uniformAspect;
     private static int uniformOpacity;
+    private static int uniformPhotoFlip;
 
     /* The photo layer list is reparsed only when the serialized setting changes */
     private static String cachedLayersString;
@@ -589,7 +610,7 @@ public class FilmEffects
     {
         FilterState state = getFilterState();
         boolean filters = hasFilters(state) && !showOriginal;
-        boolean photo = hasPhoto() && !showNoPhoto && !BBSSettings.filmPhotoBehindModels.get();
+        boolean photo = hasPhoto() && !showNoPhoto && getLayerMode() == 0;
 
         if (broken || (!filters && !photo) || width <= 0 || height <= 0)
         {
@@ -754,14 +775,48 @@ public class FilmEffects
     }
 
     /**
-     * Draw the photo layers into the world framebuffer, before the film's forms
-     * render: the photos cover everything drawn so far (terrain, sky, entities),
-     * and the forms drawn right after cover the photos. Runs only when the photo
-     * overlay's behind-models mode is on; the post pass skips photos then.
+     * Which layer mode the photo overlay is in: 0 draws photos over the whole
+     * frame in the post pass, 1 and 2 draw them into the world instead.
      */
-    public static void renderPhotosInWorld()
+    private static int getLayerMode()
     {
-        if (broken || showNoPhoto || !BBSSettings.filmPhotoBehindModels.get() || !hasPhoto())
+        if (BBSSettings.filmPhotoLayerMode == null)
+        {
+            return 0;
+        }
+
+        return Math.max(0, Math.min(2, Math.round(BBSSettings.filmPhotoLayerMode.get())));
+    }
+
+    /**
+     * Draw the photo layers into the world, so everything rendered after them
+     * covers the photos while everything before stays behind. Drawn with the
+     * vanilla textured program, which Iris redirects into the shader pack's
+     * own pipeline - the photos survive deferred packs that way.
+     *
+     * <p>Called from two hooks. Without shaders, mode 1 (behind the film's
+     * models) draws after the world and its entities, right before the film's
+     * forms; mode 2 (behind every BBS model) draws before the entity phase, so
+     * world-placed model blocks land on top too. With shaders both modes draw
+     * where the forms do - right after the solid terrain layer.</p>
+     */
+    public static void renderPhotosInWorld(boolean beforeEntities)
+    {
+        int mode = getLayerMode();
+
+        if (broken || mode == 0 || showNoPhoto || !hasPhoto())
+        {
+            return;
+        }
+
+        if (BBSRendering.isIrisShadersEnabled())
+        {
+            if (beforeEntities)
+            {
+                return;
+            }
+        }
+        else if (mode == 2 ? !beforeEntities : beforeEntities)
         {
             return;
         }
@@ -778,24 +833,33 @@ public class FilmEffects
             return;
         }
 
-        int prevProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
-        int prevVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
-        int prevArrayBuffer = GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING);
-        int prevActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+        Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
+        VertexSorter previousSorter = RenderSystem.getVertexSorting();
+        MatrixStack modelViewStack = RenderSystem.getModelViewStack();
 
-        GL13.glActiveTexture(GL13.GL_TEXTURE0);
-
-        int prevTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        RenderSystem.setProjectionMatrix(new Matrix4f(), VertexSorter.BY_Z);
+        modelViewStack.push();
+        modelViewStack.loadIdentity();
+        RenderSystem.applyModelViewMatrix();
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        RenderSystem.disableDepthTest();
+        RenderSystem.depthMask(false);
+        RenderSystem.disableCull();
+        RenderSystem.setShader(GameRenderer::getPositionTexColorProgram);
+        RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
 
         try
         {
-            ensureGeometry();
-            GL30.glBindVertexArray(vao);
+            for (PhotoLayer layer : getPhotoLayers())
+            {
+                drawPhotoInWorld(getPhotoTexture(layer.texture), layer.opacity, layer.x, layer.y, layer.scale, layer.stretchX, layer.stretchY, layer.rotate, layer.flip, width, height);
+            }
 
-            RenderSystem.disableDepthTest();
-            RenderSystem.depthMask(false);
-
-            applyPhotos(width, height);
+            for (PhotoClip.State state : getClipPhotoStates())
+            {
+                drawPhotoInWorld(getPhotoTexture(state.texture), state.opacity, state.x, state.y, state.scale, state.stretchX, state.stretchY, state.rotate, state.flip, width, height);
+            }
         }
         catch (Exception e)
         {
@@ -807,14 +871,65 @@ public class FilmEffects
         {
             RenderSystem.depthMask(true);
             RenderSystem.enableDepthTest();
+            RenderSystem.enableCull();
             RenderSystem.disableBlend();
-
-            GL30.glBindVertexArray(prevVao);
-            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, prevArrayBuffer);
-            GL20.glUseProgram(prevProgram);
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTexture);
-            GL13.glActiveTexture(prevActiveTexture);
+            modelViewStack.pop();
+            RenderSystem.applyModelViewMatrix();
+            RenderSystem.setProjectionMatrix(previousProjection, previousSorter);
         }
+    }
+
+    /** One photo quad in NDC, drawn through the vanilla textured program. */
+    private static void drawPhotoInWorld(Texture photo, float opacity, float x, float y, float scale, float stretchX, float stretchY, float rotate, float flip, int width, int height)
+    {
+        if (photo == null || photo.width <= 0 || photo.height <= 0 || opacity <= 0F)
+        {
+            return;
+        }
+
+        float halfW = scale * stretchX * (photo.width / (float) photo.height) * (height / (float) width);
+        float halfH = scale * stretchY;
+        float angle = MathUtils.toRad(-rotate);
+        float cos = (float) Math.cos(angle);
+        float sin = (float) Math.sin(angle);
+        float aspect = width / (float) height;
+        int flipMode = Math.round(flip);
+        Matrix4f identity = new Matrix4f();
+        BufferBuilder builder = Tessellator.getInstance().getBuffer();
+
+        BBSModClient.getTextures().bindTexture(photo);
+        builder.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_TEXTURE_COLOR);
+
+        /* Counterclockwise from the top left corner */
+        float[] corners = {-1F, 1F, -1F, -1F, 1F, -1F, 1F, 1F};
+
+        for (int i = 0; i < 4; i++)
+        {
+            float cx = corners[i * 2];
+            float cy = corners[i * 2 + 1];
+
+            /* Rotate in frame space so the photo doesn't skew on wide screens */
+            float px = cx * halfW * aspect;
+            float py = cy * halfH;
+            float rx = (px * cos - py * sin) / aspect;
+            float ry = px * sin + py * cos;
+
+            float u = cx * 0.5F + 0.5F;
+            float v = 0.5F - cy * 0.5F;
+
+            if (flipMode == 1)
+            {
+                v = 1F - v;
+            }
+            else if (flipMode == 2)
+            {
+                u = 1F - u;
+            }
+
+            builder.vertex(identity, x + rx, -y + ry, 0F).texture(u, v).color(1F, 1F, 1F, opacity).next();
+        }
+
+        BufferRenderer.drawWithGlobalProgram(builder.end());
     }
 
     /**
@@ -832,17 +947,17 @@ public class FilmEffects
 
         for (PhotoLayer layer : getPhotoLayers())
         {
-            drawPhoto(getPhotoTexture(layer.texture), layer.opacity, layer.x, layer.y, layer.scale, layer.stretchX, layer.stretchY, layer.rotate, width, height);
+            drawPhoto(getPhotoTexture(layer.texture), layer.opacity, layer.x, layer.y, layer.scale, layer.stretchX, layer.stretchY, layer.rotate, layer.flip, width, height);
         }
 
         /* Layers animated by playing photo clips draw on top of the static stack */
         for (PhotoClip.State state : getClipPhotoStates())
         {
-            drawPhoto(getPhotoTexture(state.texture), state.opacity, state.x, state.y, state.scale, state.stretchX, state.stretchY, state.rotate, width, height);
+            drawPhoto(getPhotoTexture(state.texture), state.opacity, state.x, state.y, state.scale, state.stretchX, state.stretchY, state.rotate, state.flip, width, height);
         }
     }
 
-    private static void drawPhoto(Texture photo, float opacity, float x, float y, float scale, float stretchX, float stretchY, float rotate, int width, int height)
+    private static void drawPhoto(Texture photo, float opacity, float x, float y, float scale, float stretchX, float stretchY, float rotate, float flip, int width, int height)
     {
         if (photo == null || photo.width <= 0 || photo.height <= 0 || opacity <= 0F)
         {
@@ -860,6 +975,7 @@ public class FilmEffects
         GL20.glUniform2f(uniformRotation, (float) Math.cos(angle), (float) Math.sin(angle));
         GL20.glUniform1f(uniformAspect, width / (float) height);
         GL20.glUniform1f(uniformOpacity, opacity);
+        GL20.glUniform1f(uniformPhotoFlip, Math.round(flip));
         photo.bind();
         GL11.glDrawArrays(GL11.GL_TRIANGLE_STRIP, 0, 4);
     }
@@ -1010,6 +1126,7 @@ public class FilmEffects
         uniformRotation = GL20.glGetUniformLocation(photoProgram, "u_rotation");
         uniformAspect = GL20.glGetUniformLocation(photoProgram, "u_aspect");
         uniformOpacity = GL20.glGetUniformLocation(photoProgram, "u_opacity");
+        uniformPhotoFlip = GL20.glGetUniformLocation(photoProgram, "u_flip");
     }
 
     private static void ensurePingTexture(int width, int height)

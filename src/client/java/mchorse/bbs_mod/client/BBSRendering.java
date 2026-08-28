@@ -1,7 +1,6 @@
 package mchorse.bbs_mod.client;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.systems.VertexSorter;
 import mchorse.bbs_mod.BBSMod;
 import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.BBSSettings;
@@ -483,7 +482,7 @@ public class BBSRendering
         pendingExportResolutionAction = action;
     }
 
-    public static void onRenderChunkLayer(MatrixStack stack, Matrix4f projection)
+    public static void onRenderChunkLayer(MatrixStack stack)
     {
         WorldRenderContextImpl worldRenderContext = new WorldRenderContextImpl();
         MinecraftClient mc = MinecraftClient.getInstance();
@@ -496,30 +495,7 @@ public class BBSRendering
 
         if (isIrisShadersEnabled())
         {
-            if (isIrisShadowPass())
-            {
-                /* Iris' shadow pass hands its ortho projection to renderLayer without touching
-                 * RenderSystem, but the form renderers read RenderSystem's projection - with the
-                 * player's perspective matrix the models never land in the shadow map, and cast
-                 * no shadow. Swap the shadow projection in for the duration of the pass. */
-                Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
-                VertexSorter previousSorter = RenderSystem.getVertexSorting();
-
-                RenderSystem.setProjectionMatrix(projection, VertexSorter.BY_DISTANCE);
-
-                try
-                {
-                    renderCoolStuff(worldRenderContext);
-                }
-                finally
-                {
-                    RenderSystem.setProjectionMatrix(previousProjection, previousSorter);
-                }
-            }
-            else
-            {
-                renderCoolStuff(worldRenderContext);
-            }
+            renderCoolStuff(worldRenderContext);
         }
     }
 
@@ -587,12 +563,12 @@ public class BBSRendering
 
     public static void renderCoolStuff(WorldRenderContext worldRenderContext)
     {
-        /* Photo layers in behind-models mode go down first, so the film's forms
+        /* Photo layers in a behind-models mode go down first, so the film's forms
          * rendered right below land on top of them - and the shadow pass never
          * sees the photos at all. */
         if (!isIrisShadowPass())
         {
-            FilmEffects.renderPhotosInWorld();
+            FilmEffects.renderPhotosInWorld(false);
         }
 
         if (MinecraftClient.getInstance().currentScreen instanceof UIScreen screen)

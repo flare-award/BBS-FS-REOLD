@@ -29,6 +29,9 @@ public class PhotoLayer
     /** Clockwise rotation in degrees */
     public float rotate;
 
+    /** 0 - no mirroring, 1 - flipped vertically, 2 - flipped horizontally */
+    public float flip;
+
     public static List<PhotoLayer> parseList(String serialized)
     {
         List<PhotoLayer> layers = new ArrayList<>();
@@ -97,6 +100,7 @@ public class PhotoLayer
         data.putFloat("stretch_x", this.stretchX);
         data.putFloat("stretch_y", this.stretchY);
         data.putFloat("rotate", this.rotate);
+        data.putFloat("flip", this.flip);
 
         return data;
     }
@@ -111,5 +115,6 @@ public class PhotoLayer
         this.stretchX = MathUtils.clamp(data.getFloat("stretch_x", 1F), BBSSettings.MIN_FILM_PHOTO_STRETCH, BBSSettings.MAX_FILM_PHOTO_STRETCH);
         this.stretchY = MathUtils.clamp(data.getFloat("stretch_y", 1F), BBSSettings.MIN_FILM_PHOTO_STRETCH, BBSSettings.MAX_FILM_PHOTO_STRETCH);
         this.rotate = MathUtils.clamp(data.getFloat("rotate", 0F), -180F, 180F);
+        this.flip = MathUtils.clamp(data.getFloat("flip", 0F), 0F, 2F);
     }
 }

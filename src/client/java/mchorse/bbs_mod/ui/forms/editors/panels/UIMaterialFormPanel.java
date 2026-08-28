@@ -26,6 +26,8 @@ public class UIMaterialFormPanel extends UIFormPanel
     public UIColor color;
     public UIColor colorOverlay;
     public UISliderTrackpad lighting;
+    public UISliderTrackpad hue;
+    public UISliderTrackpad saturation;
     public UICirculate layer;
     public UIToggle shaderShadow;
     public UISliderTrackpad smoothness;
@@ -44,6 +46,10 @@ public class UIMaterialFormPanel extends UIFormPanel
         this.colorOverlay.tooltip(UIKeys.FORMS_EDITORS_MATERIAL_COLOR_OVERLAY_TOOLTIP);
         this.lighting = this.createSlider((form, v) -> form.lighting.set(v));
         this.lighting.tooltip(UIKeys.FORMS_EDITORS_MATERIAL_LIGHTING_TOOLTIP);
+        this.hue = this.createSlider((form, v) -> form.hue.set(v), -180D, 180D, 1D);
+        this.hue.tooltip(UIKeys.FORMS_EDITORS_MATERIAL_HUE_TOOLTIP);
+        this.saturation = this.createSlider((form, v) -> form.saturation.set(v), 0D, 2D, 0.01D);
+        this.saturation.tooltip(UIKeys.FORMS_EDITORS_MATERIAL_SATURATION_TOOLTIP);
 
         this.layer = new UICirculate((b) -> this.form.renderLayer.set(b.getValue()));
         this.layer.addLabel(UIKeys.FORMS_EDITORS_MATERIAL_LAYER_AUTO);
@@ -64,6 +70,8 @@ public class UIMaterialFormPanel extends UIFormPanel
         colorSection.fields.add(
             UI.labelRow(UIKeys.FORMS_EDITORS_MATERIAL_COLOR, this.color),
             UI.labelRow(UIKeys.FORMS_EDITORS_MATERIAL_COLOR_OVERLAY, this.colorOverlay),
+            UI.labelRow(UIKeys.FORMS_EDITORS_MATERIAL_HUE, this.hue),
+            UI.labelRow(UIKeys.FORMS_EDITORS_MATERIAL_SATURATION, this.saturation),
             UI.labelRow(UIKeys.FORMS_EDITORS_MATERIAL_LIGHTING, this.lighting)
         );
 
@@ -91,10 +99,15 @@ public class UIMaterialFormPanel extends UIFormPanel
     /** A 0..1 slider that moves in hundredths and writes into the edited form. */
     private UISliderTrackpad createSlider(BiConsumer<Form, Float> setter)
     {
+        return this.createSlider(setter, 0D, 1D, 0.01D);
+    }
+
+    private UISliderTrackpad createSlider(BiConsumer<Form, Float> setter, double min, double max, double step)
+    {
         UISliderTrackpad slider = new UISliderTrackpad((v) -> setter.accept(this.form, v.floatValue()));
 
-        slider.limit(0D, 1D);
-        slider.snap(0.01D);
+        slider.limit(min, max);
+        slider.snap(step);
 
         return slider;
     }
@@ -133,6 +146,8 @@ public class UIMaterialFormPanel extends UIFormPanel
         this.color.setEnabled(colorValue != null);
         this.color.setColor(colorValue == null ? Colors.WHITE : colorValue.get().getARGBColor());
         this.colorOverlay.setColor(form.colorOverlay.get().getARGBColor());
+        this.hue.setValue(form.hue.get());
+        this.saturation.setValue(form.saturation.get());
         this.lighting.setValue(form.lighting.get());
         this.layer.setValue(form.renderLayer.get());
         this.shaderShadow.setValue(form.shaderShadow.get());

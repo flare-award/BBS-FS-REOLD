@@ -67,6 +67,8 @@ public abstract class Form extends ValueGroup
     public final ValueFloat sss = new ValueFloat("sss", 0F, 0F, 1F);
     public final ValueFloat pixelEmission = new ValueFloat("pixel_emission", 0F, 0F, 1F);
     public final ValueFloat relief = new ValueFloat("relief", 0F, 0F, 1F);
+    public final ValueFloat hue = new ValueFloat("hue", 0F, -180F, 180F);
+    public final ValueFloat saturation = new ValueFloat("saturation", 1F, 0F, 2F);
 
     public final List<ValueTransform> additionalTransforms = new ArrayList<>();
 
@@ -131,6 +133,8 @@ public abstract class Form extends ValueGroup
         this.add(this.sss);
         this.add(this.pixelEmission);
         this.add(this.relief);
+        this.add(this.hue);
+        this.add(this.saturation);
 
         this.hitbox.invisible();
         this.hitboxWidth.invisible();

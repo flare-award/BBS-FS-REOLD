@@ -350,8 +350,11 @@ public class UIKeys
     public static final IKey FILM_PANELS_EDIT_AREA = L10n.lang("bbs.ui.film.panels.edit_area");
     public static final IKey FILM_PANELS_REPLAYS_LIST = L10n.lang("bbs.ui.film.panels.replays_list");
     public static final IKey FILM_PANELS_REPLAY_PROPS = L10n.lang("bbs.ui.film.panels.replay_props");
-    public static final IKey FILM_PHOTO_BEHIND_MODELS = L10n.lang("bbs.ui.film.photo.behind_models");
-    public static final IKey FILM_PHOTO_BEHIND_MODELS_TOOLTIP = L10n.lang("bbs.ui.film.photo.behind_models-tooltip");
+    public static final IKey FILM_PHOTO_LAYER_MODE = L10n.lang("bbs.ui.film.photo.layer_mode");
+    public static final IKey FILM_PHOTO_LAYER_MODE_TOOLTIP = L10n.lang("bbs.ui.film.photo.layer_mode-tooltip");
+    public static final IKey FILM_PHOTO_LAYER_MODE_NORMAL = L10n.lang("bbs.ui.film.photo.layer_mode_normal");
+    public static final IKey FILM_PHOTO_LAYER_MODE_MODELS = L10n.lang("bbs.ui.film.photo.layer_mode_models");
+    public static final IKey FILM_PHOTO_LAYER_MODE_WORLD = L10n.lang("bbs.ui.film.photo.layer_mode_world");
     public static final IKey FILM_PHOTO_COMPARE = L10n.lang("bbs.ui.film.photo.compare");
     public static final IKey FILM_PHOTO_COVER = L10n.lang("bbs.ui.film.photo.cover");
     public static final IKey FILM_PHOTO_HINT = L10n.lang("bbs.ui.film.photo.hint");
@@ -576,6 +579,10 @@ public class UIKeys
     public static final IKey FORMS_EDITORS_MATERIAL_LAYER_TRANSLUCENT = L10n.lang("bbs.ui.forms.editors.material.layer_translucent");
     public static final IKey FORMS_EDITORS_MATERIAL_LAYER_SOLID = L10n.lang("bbs.ui.forms.editors.material.layer_solid");
     public static final IKey FORMS_EDITORS_MATERIAL_LAYER_CUTOUT = L10n.lang("bbs.ui.forms.editors.material.layer_cutout");
+    public static final IKey FORMS_EDITORS_MATERIAL_HUE = L10n.lang("bbs.ui.forms.editors.material.hue");
+    public static final IKey FORMS_EDITORS_MATERIAL_HUE_TOOLTIP = L10n.lang("bbs.ui.forms.editors.material.hue-tooltip");
+    public static final IKey FORMS_EDITORS_MATERIAL_SATURATION = L10n.lang("bbs.ui.forms.editors.material.saturation");
+    public static final IKey FORMS_EDITORS_MATERIAL_SATURATION_TOOLTIP = L10n.lang("bbs.ui.forms.editors.material.saturation-tooltip");
     public static final IKey FORMS_EDITORS_MATERIAL_GLOSS = L10n.lang("bbs.ui.forms.editors.material.gloss");
     public static final IKey FORMS_EDITORS_MATERIAL_METALLIC = L10n.lang("bbs.ui.forms.editors.material.metallic");
     public static final IKey FORMS_EDITORS_MATERIAL_SCATTERING = L10n.lang("bbs.ui.forms.editors.material.scattering");

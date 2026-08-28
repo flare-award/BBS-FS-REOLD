@@ -33,6 +33,7 @@ public class PhotoClip extends CameraClip
     public final KeyframeChannel<Double> stretchX = new KeyframeChannel<>("stretch_x", KeyframeFactories.DOUBLE);
     public final KeyframeChannel<Double> stretchY = new KeyframeChannel<>("stretch_y", KeyframeFactories.DOUBLE);
     public final KeyframeChannel<Double> rotate = new KeyframeChannel<>("rotate", KeyframeFactories.DOUBLE);
+    public final KeyframeChannel<Double> flip = new KeyframeChannel<>("flip", KeyframeFactories.DOUBLE);
 
     /** Photo layers contributed by playing photo clips this frame, in play order. */
     public static List<State> getStates(ClipContext context)
@@ -50,6 +51,7 @@ public class PhotoClip extends CameraClip
         this.add(this.stretchX);
         this.add(this.stretchY);
         this.add(this.rotate);
+        this.add(this.flip);
     }
 
     @Override
@@ -78,6 +80,7 @@ public class PhotoClip extends CameraClip
         state.stretchX = (float) this.channelValue(this.stretchX, tick, 1D);
         state.stretchY = (float) this.channelValue(this.stretchY, tick, 1D);
         state.rotate = (float) this.channelValue(this.rotate, tick, 0D);
+        state.flip = (float) this.channelValue(this.flip, tick, 0D);
 
         getStates(context).add(state);
     }
@@ -106,5 +109,6 @@ public class PhotoClip extends CameraClip
         public float stretchX = 1F;
         public float stretchY = 1F;
         public float rotate;
+        public float flip;
     }
 }

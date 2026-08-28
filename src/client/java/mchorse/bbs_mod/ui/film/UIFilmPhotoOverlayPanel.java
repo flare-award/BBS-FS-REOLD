@@ -14,7 +14,6 @@ import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.UIScrollView;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
-import mchorse.bbs_mod.ui.framework.elements.buttons.UIToggle;
 import mchorse.bbs_mod.ui.framework.elements.input.UITexturePicker;
 import mchorse.bbs_mod.ui.framework.elements.input.list.UIStringList;
 import mchorse.bbs_mod.ui.utils.UI;
@@ -87,22 +86,23 @@ public class UIFilmPhotoOverlayPanel extends UIFilmEffectsOverlayPanel
 
         UIElement actions = UI.row(0, add, dupe, remove, moveUp, moveDown);
 
-        UIToggle behindModels = new UIToggle(UIKeys.FILM_PHOTO_BEHIND_MODELS, (b) -> BBSSettings.filmPhotoBehindModels.set(b.getValue()));
+        UIElement layerMode = this.createOptionsRow(UIKeys.FILM_PHOTO_LAYER_MODE, BBSSettings.filmPhotoLayerMode,
+            UIKeys.FILM_PHOTO_LAYER_MODE_NORMAL, UIKeys.FILM_PHOTO_LAYER_MODE_MODELS, UIKeys.FILM_PHOTO_LAYER_MODE_WORLD);
 
-        behindModels.setValue(BBSSettings.filmPhotoBehindModels.get());
-        behindModels.tooltip(UIKeys.FILM_PHOTO_BEHIND_MODELS_TOOLTIP, Direction.BOTTOM);
-        behindModels.h(20);
+        layerMode.tooltip(UIKeys.FILM_PHOTO_LAYER_MODE_TOOLTIP, Direction.BOTTOM);
 
         UIScrollView column = UI.scrollView(4, PADDING,
             pick,
-            behindModels,
+            layerMode,
             this.createLayerRow(UIKeys.FILM_PHOTO_OPACITY, (layer) -> layer.opacity, (layer, v) -> layer.opacity = v, 0D, 100D, 100D),
             this.createLayerRow(UIKeys.FILM_PHOTO_SCALE, (layer) -> layer.scale, (layer, v) -> layer.scale = v, BBSSettings.MIN_FILM_PHOTO_SCALE * 100D, BBSSettings.MAX_FILM_PHOTO_SCALE * 100D, 100D),
             this.createLayerRow(UIKeys.FILM_PHOTO_STRETCH_X, (layer) -> layer.stretchX, (layer, v) -> layer.stretchX = v, BBSSettings.MIN_FILM_PHOTO_STRETCH * 100D, BBSSettings.MAX_FILM_PHOTO_STRETCH * 100D, 100D),
             this.createLayerRow(UIKeys.FILM_PHOTO_STRETCH_Y, (layer) -> layer.stretchY, (layer, v) -> layer.stretchY = v, BBSSettings.MIN_FILM_PHOTO_STRETCH * 100D, BBSSettings.MAX_FILM_PHOTO_STRETCH * 100D, 100D),
             this.createLayerRow(UIKeys.GENERAL_X, (layer) -> layer.x, (layer, v) -> layer.x = v, -BBSSettings.MAX_FILM_PHOTO_OFFSET * 100D, BBSSettings.MAX_FILM_PHOTO_OFFSET * 100D, 100D),
             this.createLayerRow(UIKeys.GENERAL_Y, (layer) -> layer.y, (layer, v) -> layer.y = v, -BBSSettings.MAX_FILM_PHOTO_OFFSET * 100D, BBSSettings.MAX_FILM_PHOTO_OFFSET * 100D, 100D),
-            this.createLayerRow(UIKeys.FILM_PHOTO_ROTATE, (layer) -> layer.rotate, (layer, v) -> layer.rotate = v, -180D, 180D, 1D)
+            this.createLayerRow(UIKeys.FILM_PHOTO_ROTATE, (layer) -> layer.rotate, (layer, v) -> layer.rotate = v, -180D, 180D, 1D),
+            this.createOptionsRow(UIKeys.FILM_FILTERS_FLIP, this::getLayerFlip, this::setLayerFlip,
+                UIKeys.FILM_FILTERS_FLIP_NONE, UIKeys.FILM_FILTERS_FLIP_VERTICAL, UIKeys.FILM_FILTERS_FLIP_HORIZONTAL)
         );
 
         preview.relative(this.content).xy(PADDING, PADDING).wh(PREVIEW_W, PREVIEW_H);
@@ -146,6 +146,24 @@ public class UIFilmPhotoOverlayPanel extends UIFilmEffectsOverlayPanel
                 this.save();
             }
         }, min, max, uiScale, false);
+    }
+
+    private int getLayerFlip()
+    {
+        PhotoLayer layer = this.getLayer();
+
+        return layer == null ? 0 : Math.round(layer.flip);
+    }
+
+    private void setLayerFlip(int flip)
+    {
+        PhotoLayer layer = this.getLayer();
+
+        if (layer != null)
+        {
+            layer.flip = flip;
+            this.save();
+        }
     }
 
     private PhotoLayer getLayer()

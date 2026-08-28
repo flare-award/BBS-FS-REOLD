@@ -10,6 +10,7 @@ import mchorse.bbs_mod.camera.clips.misc.CurveClientClip;
 import mchorse.bbs_mod.camera.clips.misc.TrackerClientClip;
 import mchorse.bbs_mod.camera.controller.CameraController;
 import mchorse.bbs_mod.client.BBSRendering;
+import mchorse.bbs_mod.client.FilmEffects;
 import mchorse.bbs_mod.client.renderer.LivePlayerItemUse;
 import mchorse.bbs_mod.client.renderer.ModelBlockEntityRenderer;
 import mchorse.bbs_mod.client.renderer.ThirdPersonItemUse;
@@ -509,6 +510,13 @@ public class BBSModClient implements ClientModInitializer
         keyDemorph = this.createKey("demorph", GLFW.GLFW_KEY_PERIOD);
         keyTeleport = this.createKey("teleport", GLFW.GLFW_KEY_Y);
         keyZoom = this.createKeyMouse("zoom", 2);
+
+        WorldRenderEvents.BEFORE_ENTITIES.register((context) ->
+        {
+            /* Photo layers in the behind-the-world mode go down before the entity
+             * phase, so world-placed BBS models land on top of them too */
+            FilmEffects.renderPhotosInWorld(true);
+        });
 
         WorldRenderEvents.AFTER_ENTITIES.register((context) ->
         {

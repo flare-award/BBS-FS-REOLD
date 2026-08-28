@@ -234,9 +234,10 @@ public class BBSSettings {
 	/* Serialized list of photo overlay layers (see the client's PhotoLayer class). */
 	public static ValueString filmPhotoLayers;
 
-	/* When enabled, photo layers draw under the film's forms instead of over the
-	 * whole frame: the models cover the photo, the rest of the world sits behind it. */
-	public static ValueBoolean filmPhotoBehindModels;
+	/* Where photo layers draw: 0 - over the whole frame (post), 1 - under the film's
+	 * models, 2 - under every BBS-placed model (world model blocks included). In
+	 * modes 1 and 2 the models cover the photo while the world sits behind it. */
+	public static ValueFloat filmPhotoLayerMode;
 
 	public static ValueBoolean shaderCurvesEnabled;
 	public static ValueBoolean translucencyQueue;
@@ -788,8 +789,8 @@ public class BBSSettings {
 		filmPhotoStretchY.invisible();
 		filmPhotoLayers = builder.getString("film_photo_layers", "");
 		filmPhotoLayers.invisible();
-		filmPhotoBehindModels = builder.getBoolean("film_photo_behind_models", false);
-		filmPhotoBehindModels.invisible();
+		filmPhotoLayerMode = builder.getFloat("film_photo_layer_mode", 0F, 0F, 2F);
+		filmPhotoLayerMode.invisible();
 		primaryColor = builder.getInt("primary_color", DEFAULT_PRIMARY_COLOR).color();
 		primaryColorGradient = builder.getBoolean("primary_color_gradient", false);
 		primaryColorEnd = builder.getInt("primary_color_end", DEFAULT_PRIMARY_COLOR_END).color();

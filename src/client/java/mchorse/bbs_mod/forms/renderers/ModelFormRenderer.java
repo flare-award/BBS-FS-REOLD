@@ -824,6 +824,14 @@ public class ModelFormRenderer extends FormRenderer<ModelForm> implements ITicka
                 RenderSystem.disableBlend();
             }
 
+            if (shadowPass)
+            {
+                /* Iris runs its whole shadow pass with backface culling off (a mirrored
+                 * ortho view can flip winding and cull the lit side away) - match it, in
+                 * case something re-enabled culling since the pass began. */
+                RenderSystem.disableCull();
+            }
+
             try
             {
                 this.renderModel(context.entity, shader, context.stack, model, context.light, context.overlay, contextColor, formColor, additive, false, context.stencilMap, context.getTransition(), context.world);

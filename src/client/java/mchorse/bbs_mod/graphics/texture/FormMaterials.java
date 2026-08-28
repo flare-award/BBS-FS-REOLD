@@ -88,9 +88,10 @@ public class FormMaterials
     }
 
     /**
-     * The texture to actually bind for the form: a cached copy with the relief
-     * emboss carved in and the pixels mixed toward the color overlay. With both
-     * effects off (or a broken texture) the base texture comes back untouched.
+     * The texture to actually bind for the form: a cached copy with the hue and
+     * saturation adjusted, the relief emboss carved in and the pixels mixed
+     * toward the color overlay. With every effect off (or a broken texture) the
+     * base texture comes back untouched.
      */
     public static Texture getProcessed(Link link, Texture base, Form form)
     {
@@ -101,13 +102,15 @@ public class FormMaterials
 
         Color overlay = form.colorOverlay.get();
         float relief = form.relief.get();
+        float hue = form.hue.get();
+        float saturation = form.saturation.get();
 
-        if (overlay.a <= 0F && relief <= 0F)
+        if (overlay.a <= 0F && relief <= 0F && hue == 0F && saturation == 1F)
         {
             return base;
         }
 
-        return processed.computeIfAbsent(link, (key) -> new ProcessedEntry()).get(link, base, overlay, relief);
+        return processed.computeIfAbsent(link, (key) -> new ProcessedEntry()).get(link, base, overlay, relief, hue, saturation);
     }
 
     /** The four LabPBR slider values and the specular texture they bake into. */
@@ -198,8 +201,10 @@ public class FormMaterials
         private int baseId = -1;
         private int lastColor;
         private float lastRelief = -1F;
+        private float lastHue;
+        private float lastSaturation = 1F;
 
-        public Texture get(Link link, Texture base, Color overlay, float relief)
+        public Texture get(Link link, Texture base, Color overlay, float relief, float hue, float saturation)
         {
             int color = overlay.a <= 0F ? 0 : overlay.getARGBColor();
 
@@ -214,6 +219,8 @@ public class FormMaterials
                 this.baseId = base.id;
                 this.lastColor = 0;
                 this.lastRelief = -1F;
+                this.lastHue = 0F;
+                this.lastSaturation = 1F;
                 this.luminance = null;
 
                 if (this.basePixels == null)
@@ -222,11 +229,13 @@ public class FormMaterials
                 }
             }
 
-            if (this.derived == null || this.lastColor != color || this.lastRelief != relief)
+            if (this.derived == null || this.lastColor != color || this.lastRelief != relief || this.lastHue != hue || this.lastSaturation != saturation)
             {
-                this.upload(link, base, overlay, relief);
+                this.upload(link, base, overlay, relief, hue, saturation);
                 this.lastColor = color;
                 this.lastRelief = relief;
+                this.lastHue = hue;
+                this.lastSaturation = saturation;
             }
 
             return this.derived == null ? base : this.derived;
@@ -250,13 +259,14 @@ public class FormMaterials
         }
 
         /**
-         * Bake the effects into the derived copy. Relief is a classic emboss:
-         * every pixel is raised or sunk by the luminance slope of its diagonal
-         * neighbors, so texture detail reads as carved ridges - a visible
-         * effect under any pipeline, shader packs or not. The color overlay
-         * then mixes every pixel toward its color, alpha being the strength.
+         * Bake the effects into the derived copy, in order: hue rotation and
+         * saturation first, then relief - a classic emboss where every pixel is
+         * raised or sunk by the luminance slope of its diagonal neighbors, so
+         * texture detail reads as carved ridges - and finally the color
+         * overlay, which mixes every pixel toward its color, alpha being the
+         * strength. All of it works under any pipeline, shader packs or not.
          */
-        private void upload(Link link, Texture base, Color overlay, float relief)
+        private void upload(Link link, Texture base, Color overlay, float relief, float hue, float saturation)
         {
             if (relief > 0F && this.luminance == null)
             {
@@ -274,6 +284,12 @@ public class FormMaterials
             float ob = overlay.b * 255F;
             float carve = relief * RELIEF_STRENGTH;
 
+            /* Hue rotation around the grayscale axis, same math as the film filter's hue shift */
+            float angle = MathUtils.toRad(hue);
+            float cos = (float) Math.cos(angle);
+            float sin = (float) Math.sin(angle);
+            float k = 0.57735F;
+
             for (int y = 0; y < h; y++)
             {
                 for (int x = 0; x < w; x++)
@@ -282,6 +298,31 @@ public class FormMaterials
                     float r = src.get(i) & 0xFF;
                     float g = src.get(i + 1) & 0xFF;
                     float b = src.get(i + 2) & 0xFF;
+
+                    if (hue != 0F)
+                    {
+                        float crossR = k * (b - g);
+                        float crossG = k * (r - b);
+                        float crossB = k * (g - r);
+                        float dot = k * (r + g + b) * (1F - cos);
+
+                        float newR = r * cos + crossR * sin + k * dot;
+                        float newG = g * cos + crossG * sin + k * dot;
+                        float newB = b * cos + crossB * sin + k * dot;
+
+                        r = newR;
+                        g = newG;
+                        b = newB;
+                    }
+
+                    if (saturation != 1F)
+                    {
+                        float luma = 0.2126F * r + 0.7152F * g + 0.0722F * b;
+
+                        r = luma + (r - luma) * saturation;
+                        g = luma + (g - luma) * saturation;
+                        b = luma + (b - luma) * saturation;
+                    }
 
                     if (carve > 0F)
                     {
