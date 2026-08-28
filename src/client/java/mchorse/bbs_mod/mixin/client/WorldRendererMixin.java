@@ -8,8 +8,10 @@ import mchorse.bbs_mod.forms.FormTranslucentQueue;
 import mchorse.bbs_mod.utils.colors.Color;
 import net.minecraft.client.gl.Framebuffer;
 import net.minecraft.client.render.RenderLayer;
+import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.render.WorldRenderer;
 import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.entity.Entity;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.spongepowered.asm.mixin.Mixin;
@@ -54,6 +56,19 @@ public class WorldRendererMixin
             GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
             RenderSystem.setShaderFogColor(color.r, color.g, color.b, 1F);
 
+            info.cancel();
+        }
+    }
+
+    @Inject(method = "renderEntity", at = @At("HEAD"), cancellable = true)
+    private void onRenderWorldEntity(Entity entity, double cameraX, double cameraY, double cameraZ, float tickDelta, MatrixStack matrices, VertexConsumerProvider vertexConsumers, CallbackInfo info)
+    {
+        /* Ordinary entities are emitted before AFTER_ENTITIES, so the photo's depth
+         * fence cannot undo a mob that has already been rasterized. Cancel the whole
+         * world-entity pass here; the film renderer and model-block replay still run
+         * through their own paths and are therefore unaffected. */
+        if (FilmEffects.shouldHideWorldEntity(entity))
+        {
             info.cancel();
         }
     }

@@ -22,16 +22,17 @@ import mchorse.bbs_mod.resources.Link;
 import mchorse.bbs_mod.settings.values.numeric.ValueFloat;
 import mchorse.bbs_mod.utils.MathUtils;
 import mchorse.bbs_mod.utils.clips.ClipContext;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.BufferRenderer;
 import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.Tessellator;
+import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.entity.Entity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
@@ -968,6 +969,14 @@ public class FilmEffects
         return false;
     }
 
+    /** Whether a photo needs an explicit world ordering pass instead of the final overlay. */
+    private static boolean hasOrderedWorldPhotos()
+    {
+        return hasWorldPhoto(LAYER_BEHIND_ACTORS)
+            || hasWorldPhoto(LAYER_BEHIND_BLOCKS)
+            || hasWorldPhoto(LAYER_BEHIND_MODELS);
+    }
+
     /** Whether the post pass has any photos left to draw: the over-frame layers and clip layers. */
     private static boolean hasPostPhoto()
     {
@@ -999,8 +1008,36 @@ public class FilmEffects
     public static boolean shouldHideModelBlocks()
     {
         return !preRenderingModelBlocks && !broken && !showNoPhoto
-            && !BBSRendering.isIrisShadowPass() && isEffectsActive()
-            && (hasWorldPhoto(LAYER_BEHIND_ACTORS) || hasWorldPhoto(LAYER_BEHIND_BLOCKS) || hasWorldPhoto(LAYER_BEHIND_MODELS));
+            && !BBSRendering.isIrisShadowPass() && isEffectsActive() && hasOrderedWorldPhotos();
+    }
+
+    /**
+     * Whether vanilla's entity renderer should leave an entity out of the film preview's
+     * photo composition. The world renderer visits ordinary entities before the AFTER_ENTITIES
+     * callback where this mod places the photo, so a depth fence cannot remove their already
+     * rasterized pixels. Selected film actors are the only exception: their real entities are
+     * the actor replays' visible bodies and must remain available for the chosen layer mode.
+     */
+    public static boolean shouldHideWorldEntity(Entity entity)
+    {
+        if (broken || showNoPhoto || BBSRendering.isIrisShadowPass() || !isEffectsActive())
+        {
+            return false;
+        }
+
+        if (!hasOrderedWorldPhotos())
+        {
+            return false;
+        }
+
+        if (currentFilm == null)
+        {
+            return true;
+        }
+
+        Map<String, Integer> actors = BBSModClient.getFilms().actors.get(currentFilm.getId());
+
+        return actors == null || !actors.containsValue(entity.getId());
     }
 
     /**
