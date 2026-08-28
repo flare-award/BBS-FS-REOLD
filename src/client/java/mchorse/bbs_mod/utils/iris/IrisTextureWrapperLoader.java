@@ -31,19 +31,11 @@ public class IrisTextureWrapperLoader implements PBRTextureLoader
             Link normalKey = this.createPrefixedCopy(key, "_n.png");
             Link specularKey = this.createPrefixedCopy(key, "_s.png");
 
-            /* The Material tab's sliders win over the file-based companions: when a
-             * form rendered with this texture has them set, FormMaterials serves a
-             * synthesized LabPBR map for it; otherwise the _n/_s files apply as usual. */
-            pbrTextureConsumer.acceptNormalTexture(new IrisTextureWrapper(normalKey, this.defaultNormalTexture, wrapper.index)
-            {
-                @Override
-                public int getGlId()
-                {
-                    int id = FormMaterials.getNormalId(key);
+            pbrTextureConsumer.acceptNormalTexture(new IrisTextureWrapper(normalKey, this.defaultNormalTexture, wrapper.index));
 
-                    return id >= 0 ? id : super.getGlId();
-                }
-            });
+            /* The Material tab's sliders win over the file-based companion: when a
+             * form rendered with this texture has them set, FormMaterials serves a
+             * synthesized LabPBR map for it; otherwise the _s file applies as usual. */
             pbrTextureConsumer.acceptSpecularTexture(new IrisTextureWrapper(specularKey, this.defaultSpecularTexture, wrapper.index)
             {
                 @Override

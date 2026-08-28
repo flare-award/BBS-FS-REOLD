@@ -119,10 +119,10 @@ public class BillboardFormRenderer extends FormRenderer<BillboardForm>
         Texture texture = BBSModClient.getTextures().getTexture(t);
 
         /* Feed the Material tab's PBR sliders to the shader pack; the quad binds a
-         * copy recolored toward the color overlay when one is set. */
+         * copy processed with the relief emboss and color overlay when set. */
         FormMaterials.update(t, this.form);
 
-        Texture bound = FormMaterials.getOverlayed(t, texture, this.form.colorOverlay.get());
+        Texture bound = FormMaterials.getProcessed(t, texture, this.form);
 
         float w = texture.width;
         float h = texture.height;

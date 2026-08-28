@@ -2,7 +2,6 @@ package mchorse.bbs_mod.ui.framework.elements.input;
 
 import mchorse.bbs_mod.BBSMod;
 import mchorse.bbs_mod.BBSModClient;
-import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.data.DataToString;
 import mchorse.bbs_mod.data.types.BaseType;
 import mchorse.bbs_mod.data.types.MapType;
@@ -1156,7 +1155,7 @@ public class UITexturePicker extends UIElement implements IImportPathProvider, I
 
             if (this.editor.isVisible())
             {
-                this.edit.area.render(context.batcher, Colors.A50 | BBSSettings.primaryColor.get());
+                context.batcher.primaryBox(this.edit.area.x, this.edit.area.y, this.edit.area.ex(), this.edit.area.ey(), Colors.A50);
             }
         }
 
@@ -1181,7 +1180,7 @@ public class UITexturePicker extends UIElement implements IImportPathProvider, I
                 int x = this.text.area.x;
                 int y = this.text.area.ey();
 
-                context.batcher.box(x, y, x + w + 4, y + 4 + font.getHeight(), Colors.A50 | BBSSettings.primaryColor.get());
+                context.batcher.primaryBox(x, y, x + w + 4, y + 4 + font.getHeight(), Colors.A50);
                 context.batcher.textShadow(this.typed, x + 2, y + 2);
             }
 

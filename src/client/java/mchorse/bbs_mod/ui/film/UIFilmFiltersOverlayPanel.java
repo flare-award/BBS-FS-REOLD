@@ -35,7 +35,7 @@ public class UIFilmFiltersOverlayPanel extends UIFilmEffectsOverlayPanel
 
         UIExportPreview preview = new UIExportPreview();
         UIIcon presets = new UIIcon(Icons.MORE, (b) -> this.openPresets());
-        UIIcon compare = new UICompareIcon();
+        UIIcon compare = new UIHoldCompareIcon(FilmEffects::setShowOriginal);
         UIIcon reset = new UIIcon(Icons.REFRESH, (b) -> this.reset());
 
         presets.tooltip(UIKeys.FILM_FILTERS_PRESETS, Direction.LEFT);
@@ -50,7 +50,7 @@ public class UIFilmFiltersOverlayPanel extends UIFilmEffectsOverlayPanel
             this.createRow(UIKeys.FILM_FILTERS_TEMPERATURE, BBSSettings.filmFilterTemperature, -100D, 100D, 100D),
             this.createRow(UIKeys.FILM_FILTERS_GAMMA, BBSSettings.filmFilterGamma, BBSSettings.MIN_FILM_GAMMA, BBSSettings.MAX_FILM_GAMMA, 1D),
             this.createRow(UIKeys.FILM_FILTERS_SHARPNESS, BBSSettings.filmFilterSharpness, 0D, 100D, 100D),
-            this.createRow(UIKeys.FILM_FILTERS_VIGNETTE, BBSSettings.filmFilterVignette, 0D, 100D, 100D),
+            this.createRow(UIKeys.FILM_FILTERS_VIGNETTE, BBSSettings.filmFilterVignette, -100D, 100D, 100D),
             this.createRow(UIKeys.FILM_FILTERS_SEPIA, BBSSettings.filmFilterSepia, 0D, 100D, 100D),
             this.createRow(UIKeys.FILM_FILTERS_GRAIN, BBSSettings.filmFilterGrain, 0D, 100D, 100D),
             this.createRow(UIKeys.FILM_FILTERS_ABERRATION, BBSSettings.filmFilterAberration, 0D, 100D, 100D),
@@ -60,7 +60,9 @@ public class UIFilmFiltersOverlayPanel extends UIFilmEffectsOverlayPanel
             this.createRow(UIKeys.FILM_FILTERS_DISTORTION, BBSSettings.filmFilterDistortion, -100D, 100D, 100D),
             this.createRow(UIKeys.FILM_FILTERS_BLOOM, BBSSettings.filmFilterBloom, 0D, 100D, 100D),
             this.createRow(UIKeys.FILM_FILTERS_RADIAL, BBSSettings.filmFilterRadial, 0D, 100D, 100D),
-            this.createRow(UIKeys.FILM_FILTERS_VHS, BBSSettings.filmFilterVhs, 0D, 100D, 100D)
+            this.createRow(UIKeys.FILM_FILTERS_VHS, BBSSettings.filmFilterVhs, 0D, 100D, 100D),
+            this.createRow(UIKeys.FILM_FILTERS_FISHEYE, BBSSettings.filmFilterFisheye, -100D, 100D, 100D),
+            this.createOptionsRow(UIKeys.FILM_FILTERS_FLIP, BBSSettings.filmFilterFlip, UIKeys.FILM_FILTERS_FLIP_NONE, UIKeys.FILM_FILTERS_FLIP_VERTICAL, UIKeys.FILM_FILTERS_FLIP_HORIZONTAL)
         );
 
         preview.relative(this.content).xy(PADDING, PADDING).wh(PREVIEW_W, PREVIEW_H);
@@ -110,6 +112,8 @@ public class UIFilmFiltersOverlayPanel extends UIFilmEffectsOverlayPanel
         data.putFloat("bloom", BBSSettings.filmFilterBloom.get());
         data.putFloat("radial", BBSSettings.filmFilterRadial.get());
         data.putFloat("vhs", BBSSettings.filmFilterVhs.get());
+        data.putFloat("flip", BBSSettings.filmFilterFlip.get());
+        data.putFloat("fisheye", BBSSettings.filmFilterFisheye.get());
 
         return data;
     }
@@ -140,6 +144,8 @@ public class UIFilmFiltersOverlayPanel extends UIFilmEffectsOverlayPanel
         BBSSettings.filmFilterBloom.set(data.getFloat("bloom", 0F));
         BBSSettings.filmFilterRadial.set(data.getFloat("radial", 0F));
         BBSSettings.filmFilterVhs.set(data.getFloat("vhs", 0F));
+        BBSSettings.filmFilterFlip.set(data.getFloat("flip", 0F));
+        BBSSettings.filmFilterFisheye.set(data.getFloat("fisheye", 0F));
 
         this.updateFields();
     }
@@ -150,26 +156,4 @@ public class UIFilmFiltersOverlayPanel extends UIFilmEffectsOverlayPanel
         UIUtils.playClick();
     }
 
-    /** Shows the untouched frame while held down, and the filtered one again on release. */
-    private static class UICompareIcon extends UIIcon
-    {
-        public UICompareIcon()
-        {
-            super(Icons.VISIBLE, null);
-        }
-
-        @Override
-        protected void click(int mouseButton)
-        {
-            FilmEffects.setShowOriginal(true);
-        }
-
-        @Override
-        public boolean subMouseReleased(UIContext context)
-        {
-            FilmEffects.setShowOriginal(false);
-
-            return super.subMouseReleased(context);
-        }
-    }
 }

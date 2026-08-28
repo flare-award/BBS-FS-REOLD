@@ -124,9 +124,9 @@ public class ExtrudedFormRenderer extends FormRenderer<ExtrudedForm>
             Texture textureObject = BBSModClient.getTextures().getTexture(texture);
 
             /* Feed the Material tab's PBR sliders to the shader pack and bind the
-             * texture - recolored toward the color overlay when one is set. */
+             * texture - processed with the relief emboss and color overlay when set. */
             FormMaterials.update(texture, this.form);
-            BBSModClient.getTextures().bindTexture(FormMaterials.getOverlayed(texture, textureObject, this.form.colorOverlay.get()));
+            BBSModClient.getTextures().bindTexture(FormMaterials.getProcessed(texture, textureObject, this.form));
 
             RenderSystem.enableBlend();
             RenderSystem.defaultBlendFunc();

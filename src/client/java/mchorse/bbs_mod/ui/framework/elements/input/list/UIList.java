@@ -1,6 +1,5 @@
 package mchorse.bbs_mod.ui.framework.elements.input.list;
 
-import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.graphics.window.Window;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
@@ -740,7 +739,7 @@ public abstract class UIList <T> extends UIElement
     {
         if (selected)
         {
-            context.batcher.box(x, y, x + this.area.w, y + this.scroll.scrollItemSize, Colors.A50 | BBSSettings.primaryColor.get());
+            context.batcher.primaryBox(x, y, x + this.area.w, y + this.scroll.scrollItemSize, Colors.A50);
         }
 
         this.renderElementPart(context, element, i, x, y, hover, selected);

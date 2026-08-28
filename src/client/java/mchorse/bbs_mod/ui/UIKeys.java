@@ -289,6 +289,11 @@ public class UIKeys
     public static final IKey FILM_FILTERS_ABERRATION = L10n.lang("bbs.ui.film.filters.aberration");
     public static final IKey FILM_FILTERS_BLOOM = L10n.lang("bbs.ui.film.filters.bloom");
     public static final IKey FILM_FILTERS_RADIAL = L10n.lang("bbs.ui.film.filters.radial");
+    public static final IKey FILM_FILTERS_FLIP = L10n.lang("bbs.ui.film.filters.flip");
+    public static final IKey FILM_FILTERS_FLIP_NONE = L10n.lang("bbs.ui.film.filters.flip_none");
+    public static final IKey FILM_FILTERS_FLIP_VERTICAL = L10n.lang("bbs.ui.film.filters.flip_vertical");
+    public static final IKey FILM_FILTERS_FLIP_HORIZONTAL = L10n.lang("bbs.ui.film.filters.flip_horizontal");
+    public static final IKey FILM_FILTERS_FISHEYE = L10n.lang("bbs.ui.film.filters.fisheye");
     public static final IKey FILM_FILTERS_VHS = L10n.lang("bbs.ui.film.filters.vhs");
     public static final IKey FILM_FILTERS_CLIP_ADD = L10n.lang("bbs.ui.film.filters.clip_add");
     public static final IKey FILM_FILTERS_CLIP_PICK = L10n.lang("bbs.ui.film.filters.clip_pick");
@@ -345,6 +350,9 @@ public class UIKeys
     public static final IKey FILM_PANELS_EDIT_AREA = L10n.lang("bbs.ui.film.panels.edit_area");
     public static final IKey FILM_PANELS_REPLAYS_LIST = L10n.lang("bbs.ui.film.panels.replays_list");
     public static final IKey FILM_PANELS_REPLAY_PROPS = L10n.lang("bbs.ui.film.panels.replay_props");
+    public static final IKey FILM_PHOTO_BEHIND_MODELS = L10n.lang("bbs.ui.film.photo.behind_models");
+    public static final IKey FILM_PHOTO_BEHIND_MODELS_TOOLTIP = L10n.lang("bbs.ui.film.photo.behind_models-tooltip");
+    public static final IKey FILM_PHOTO_COMPARE = L10n.lang("bbs.ui.film.photo.compare");
     public static final IKey FILM_PHOTO_COVER = L10n.lang("bbs.ui.film.photo.cover");
     public static final IKey FILM_PHOTO_HINT = L10n.lang("bbs.ui.film.photo.hint");
     public static final IKey FILM_PHOTO_LAYER_ADD = L10n.lang("bbs.ui.film.photo.layer_add");

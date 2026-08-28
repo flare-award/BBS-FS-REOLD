@@ -64,6 +64,8 @@ public class UIFilterClip extends UIClip<FilterClip>
             case "bloom": return UIKeys.FILM_FILTERS_BLOOM;
             case "radial": return UIKeys.FILM_FILTERS_RADIAL;
             case "vhs": return UIKeys.FILM_FILTERS_VHS;
+            case "flip": return UIKeys.FILM_FILTERS_FLIP;
+            case "fisheye": return UIKeys.FILM_FILTERS_FISHEYE;
         }
 
         return IKey.constant(id);

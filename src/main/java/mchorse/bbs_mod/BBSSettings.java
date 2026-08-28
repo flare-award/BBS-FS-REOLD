@@ -216,6 +216,8 @@ public class BBSSettings {
 	public static ValueFloat filmFilterBloom;
 	public static ValueFloat filmFilterRadial;
 	public static ValueFloat filmFilterVhs;
+	public static ValueFloat filmFilterFlip;
+	public static ValueFloat filmFilterFisheye;
 
 	/* A photo laid over the film preview and export - PNG transparency respected.
 	 * Position is in NDC-like units (0 centered, positive X right, positive Y down),
@@ -231,6 +233,10 @@ public class BBSSettings {
 
 	/* Serialized list of photo overlay layers (see the client's PhotoLayer class). */
 	public static ValueString filmPhotoLayers;
+
+	/* When enabled, photo layers draw under the film's forms instead of over the
+	 * whole frame: the models cover the photo, the rest of the world sits behind it. */
+	public static ValueBoolean filmPhotoBehindModels;
 
 	public static ValueBoolean shaderCurvesEnabled;
 	public static ValueBoolean translucencyQueue;
@@ -740,7 +746,7 @@ public class BBSSettings {
 		filmFilterGamma.invisible();
 		filmFilterSharpness = builder.getFloat("film_filter_sharpness", 0F, 0F, 1F);
 		filmFilterSharpness.invisible();
-		filmFilterVignette = builder.getFloat("film_filter_vignette", 0F, 0F, 1F);
+		filmFilterVignette = builder.getFloat("film_filter_vignette", 0F, -1F, 1F);
 		filmFilterVignette.invisible();
 		filmFilterSepia = builder.getFloat("film_filter_sepia", 0F, 0F, 1F);
 		filmFilterSepia.invisible();
@@ -762,6 +768,10 @@ public class BBSSettings {
 		filmFilterRadial.invisible();
 		filmFilterVhs = builder.getFloat("film_filter_vhs", 0F, 0F, 1F);
 		filmFilterVhs.invisible();
+		filmFilterFlip = builder.getFloat("film_filter_flip", 0F, 0F, 2F);
+		filmFilterFlip.invisible();
+		filmFilterFisheye = builder.getFloat("film_filter_fisheye", 0F, -1F, 1F);
+		filmFilterFisheye.invisible();
 		filmPhotoTexture = builder.getString("film_photo_texture", "");
 		filmPhotoTexture.invisible();
 		filmPhotoOpacity = builder.getFloat("film_photo_opacity", 1F, 0F, 1F);
@@ -778,6 +788,8 @@ public class BBSSettings {
 		filmPhotoStretchY.invisible();
 		filmPhotoLayers = builder.getString("film_photo_layers", "");
 		filmPhotoLayers.invisible();
+		filmPhotoBehindModels = builder.getBoolean("film_photo_behind_models", false);
+		filmPhotoBehindModels.invisible();
 		primaryColor = builder.getInt("primary_color", DEFAULT_PRIMARY_COLOR).color();
 		primaryColorGradient = builder.getBoolean("primary_color_gradient", false);
 		primaryColorEnd = builder.getInt("primary_color_end", DEFAULT_PRIMARY_COLOR_END).color();

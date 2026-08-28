@@ -310,6 +310,39 @@ public class Batcher2D
 
     /* Gradients */
 
+    /**
+     * Fill with the user's accent color: flat primary normally, or the primary
+     * gradient flowing in the configured direction when it's enabled. The alpha
+     * mask (e.g. {@link Colors#A50}) applies to both ends, so accent highlights
+     * all over the UI follow the theme the same way buttons do.
+     */
+    public void primaryBox(float x1, float y1, float x2, float y2, int alpha)
+    {
+        int start = (BBSSettings.primaryColor.get() & Colors.RGB) | alpha;
+
+        if (!BBSSettings.isPrimaryGradient())
+        {
+            this.box(x1, y1, x2, y2, start);
+
+            return;
+        }
+
+        int end = (BBSSettings.primaryColorEnd() & Colors.RGB) | alpha;
+        int direction = BBSSettings.primaryGradientDirection();
+        int c1 = start;
+        int c2 = direction == BBSSettings.GRADIENT_VERTICAL ? start : end;
+        int c3 = direction == BBSSettings.GRADIENT_HORIZONTAL ? start : end;
+        int c4 = end;
+
+        if (direction == BBSSettings.GRADIENT_DIAGONAL)
+        {
+            c2 = Colors.lerp(start, end, 0.5F);
+            c3 = c2;
+        }
+
+        this.box(x1, y1, x2 - x1, y2 - y1, c1, c2, c3, c4);
+    }
+
     public void gradientHBox(float x1, float y1, float x2, float y2, int leftColor, int rightColor)
     {
         this.box(x1, y1, x2 - x1, y2 - y1, leftColor, rightColor, leftColor, rightColor);

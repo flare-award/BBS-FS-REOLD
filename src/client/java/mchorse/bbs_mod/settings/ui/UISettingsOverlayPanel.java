@@ -417,7 +417,7 @@ public class UISettingsOverlayPanel extends UIOverlayPanel
 
         if (this.currentModule != null)
         {
-            this.currentModule.area.render(context.batcher, BBSSettings.primaryColor(Colors.A100));
+            context.batcher.primaryBox(this.currentModule.area.x, this.currentModule.area.y, this.currentModule.area.ex(), this.currentModule.area.ey(), Colors.A100);
         }
     }
 

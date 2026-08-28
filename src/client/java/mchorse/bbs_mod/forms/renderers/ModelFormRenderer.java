@@ -303,7 +303,7 @@ public class ModelFormRenderer extends FormRenderer<ModelForm> implements ITicka
             /* The editor preview shows the color overlay too */
             Texture textureObject = BBSModClient.getTextures().getTexture(texture);
 
-            BBSModClient.getTextures().bindTexture(FormMaterials.getOverlayed(texture, textureObject, this.form.colorOverlay.get()));
+            BBSModClient.getTextures().bindTexture(FormMaterials.getProcessed(texture, textureObject, this.form));
             RenderSystem.depthFunc(GL11.GL_LEQUAL);
 
             Supplier<ShaderProgram> mainShader = (BBSRendering.isIrisShadersEnabled() && BBSRendering.isRenderingWorld()) || !model.isVAORendered()
@@ -692,7 +692,7 @@ public class ModelFormRenderer extends FormRenderer<ModelForm> implements ITicka
             /* First person arm shows the color overlay too */
             Texture textureObject = BBSModClient.getTextures().getTexture(texture);
 
-            BBSModClient.getTextures().bindTexture(FormMaterials.getOverlayed(texture, textureObject, this.form.colorOverlay.get()));
+            BBSModClient.getTextures().bindTexture(FormMaterials.getProcessed(texture, textureObject, this.form));
 
             Supplier<ShaderProgram> mainShader = (BBSRendering.isIrisShadersEnabled() && BBSRendering.isRenderingWorld()) || !model.isVAORendered()
                 ? GameRenderer::getRenderTypeEntityTranslucentCullProgram
@@ -766,9 +766,9 @@ public class ModelFormRenderer extends FormRenderer<ModelForm> implements ITicka
             boolean shadowPass = BBSRendering.isIrisShadowPass();
 
             /* Feed the Material tab's PBR sliders to the shader pack and bind the
-             * texture - recolored toward the color overlay when one is set. */
+             * texture - processed with the relief emboss and color overlay when set. */
             FormMaterials.update(texture, this.form);
-            BBSModClient.getTextures().bindTexture(FormMaterials.getOverlayed(texture, textureObject, this.form.colorOverlay.get()));
+            BBSModClient.getTextures().bindTexture(FormMaterials.getProcessed(texture, textureObject, this.form));
 
             /* Under shaders we can't split opaque/translucent per pixel (Iris strips our PassMode),
              * so a texture with semi-transparent texels would either hide what's behind it or drop

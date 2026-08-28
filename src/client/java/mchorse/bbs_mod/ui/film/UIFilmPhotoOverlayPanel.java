@@ -14,6 +14,7 @@ import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.UIScrollView;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
+import mchorse.bbs_mod.ui.framework.elements.buttons.UIToggle;
 import mchorse.bbs_mod.ui.framework.elements.input.UITexturePicker;
 import mchorse.bbs_mod.ui.framework.elements.input.list.UIStringList;
 import mchorse.bbs_mod.ui.utils.UI;
@@ -68,6 +69,7 @@ public class UIFilmPhotoOverlayPanel extends UIFilmEffectsOverlayPanel
         UIIcon moveDown = new UIIcon(Icons.ARROW_DOWN, (b) -> this.moveLayer(1));
         UIButton pick = new UIButton(UIKeys.FILM_PHOTO_PICK, (b) -> this.pickTexture());
         UIIcon presets = new UIIcon(Icons.MORE, (b) -> this.openPresets());
+        UIIcon compare = new UIHoldCompareIcon(FilmEffects::setShowNoPhoto);
         UIIcon cover = new UIIcon(Icons.FULLSCREEN, (b) -> this.coverFrame());
         UIIcon reset = new UIIcon(Icons.REFRESH, (b) -> this.reset());
 
@@ -78,14 +80,22 @@ public class UIFilmPhotoOverlayPanel extends UIFilmEffectsOverlayPanel
         moveUp.tooltip(UIKeys.FILM_PHOTO_MOVE_UP, Direction.BOTTOM);
         moveDown.tooltip(UIKeys.FILM_PHOTO_MOVE_DOWN, Direction.BOTTOM);
         presets.tooltip(UIKeys.FILM_PHOTO_PRESETS, Direction.LEFT);
+        compare.tooltip(UIKeys.FILM_PHOTO_COMPARE, Direction.LEFT);
         cover.tooltip(UIKeys.FILM_PHOTO_COVER, Direction.LEFT);
         reset.tooltip(UIKeys.FILM_PHOTO_RESET, Direction.LEFT);
         pick.h(20);
 
         UIElement actions = UI.row(0, add, dupe, remove, moveUp, moveDown);
 
+        UIToggle behindModels = new UIToggle(UIKeys.FILM_PHOTO_BEHIND_MODELS, (b) -> BBSSettings.filmPhotoBehindModels.set(b.getValue()));
+
+        behindModels.setValue(BBSSettings.filmPhotoBehindModels.get());
+        behindModels.tooltip(UIKeys.FILM_PHOTO_BEHIND_MODELS_TOOLTIP, Direction.BOTTOM);
+        behindModels.h(20);
+
         UIScrollView column = UI.scrollView(4, PADDING,
             pick,
+            behindModels,
             this.createLayerRow(UIKeys.FILM_PHOTO_OPACITY, (layer) -> layer.opacity, (layer, v) -> layer.opacity = v, 0D, 100D, 100D),
             this.createLayerRow(UIKeys.FILM_PHOTO_SCALE, (layer) -> layer.scale, (layer, v) -> layer.scale = v, BBSSettings.MIN_FILM_PHOTO_SCALE * 100D, BBSSettings.MAX_FILM_PHOTO_SCALE * 100D, 100D),
             this.createLayerRow(UIKeys.FILM_PHOTO_STRETCH_X, (layer) -> layer.stretchX, (layer, v) -> layer.stretchX = v, BBSSettings.MIN_FILM_PHOTO_STRETCH * 100D, BBSSettings.MAX_FILM_PHOTO_STRETCH * 100D, 100D),
@@ -101,11 +111,21 @@ public class UIFilmPhotoOverlayPanel extends UIFilmEffectsOverlayPanel
         column.relative(this.content).x(PREVIEW_W + PADDING).y(PADDING + LIST_H + ACTIONS_H + 2).w(1F, -(PREVIEW_W + PADDING)).h(1F, -(PADDING + LIST_H + ACTIONS_H + 2));
 
         this.icons.add(presets);
+        this.icons.add(compare);
         this.icons.add(cover);
         this.icons.add(reset);
         this.content.add(preview, this.layerList, actions, column);
 
         this.fillList();
+    }
+
+    @Override
+    public void onClose()
+    {
+        /* Never leave the compare bypass stuck on when the overlay goes away */
+        FilmEffects.setShowNoPhoto(false);
+
+        super.onClose();
     }
 
     /** A slider row that edits a field of whichever layer is selected. */

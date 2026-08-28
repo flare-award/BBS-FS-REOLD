@@ -3,6 +3,7 @@ package mchorse.bbs_mod.ui.film;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.settings.values.numeric.ValueFloat;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
+import mchorse.bbs_mod.ui.framework.elements.buttons.UICirculate;
 import mchorse.bbs_mod.ui.framework.elements.input.UISliderTrackpad;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlayPanel;
 import mchorse.bbs_mod.ui.utils.UI;
@@ -74,6 +75,34 @@ public abstract class UIFilmEffectsOverlayPanel extends UIOverlayPanel
         row.h(20);
 
         return row;
+    }
+
+    /**
+     * A row of label and options button bound to a setting that stores a small
+     * whole number - the button cycles through the given option labels.
+     */
+    protected UIElement createOptionsRow(IKey label, ValueFloat value, IKey... options)
+    {
+        UICirculate button = new UICirculate((b) -> value.set((float) b.getValue()));
+
+        for (IKey option : options)
+        {
+            button.addLabel(option);
+        }
+
+        button.setValue(this.optionIndex(value, options.length));
+        this.updaters.add(() -> button.setValue(this.optionIndex(value, options.length)));
+
+        UIElement row = UI.row(4, UI.label(label).labelAnchor(0, 0.5F), button);
+
+        row.h(20);
+
+        return row;
+    }
+
+    private int optionIndex(ValueFloat value, int count)
+    {
+        return Math.max(0, Math.min(count - 1, Math.round(value.get())));
     }
 
     protected void updateFields()

@@ -1,6 +1,5 @@
 package mchorse.bbs_mod.graphics.texture;
 
-import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.client.BBSRendering;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.resources.Link;
@@ -17,15 +16,15 @@ import java.util.Map;
 /**
  * Per-form material data baked into textures at render time.
  *
- * <p>Two things live here. The LabPBR side: the Material tab's five sliders are
- * flushed into this registry by the form renderers every frame, and when a shader
- * pack asks Iris for a texture's {@code _s}/{@code _n} companions, the loader
- * checks here first - a synthesized specular map carries the slider values
- * (smoothness, F0, subsurface scattering, emission), and a normal map embossed
- * from the texture's own luminance carries the relief. The color overlay side:
- * {@link #getOverlayed(Link, Texture, Color)} serves a copy of a texture with
- * every pixel mixed toward the overlay color, which recolors the form the same
- * way under any pipeline, shader packs included.</p>
+ * <p>Two things live here. The LabPBR side: four of the Material tab's sliders
+ * (gloss, metallic, scattering, emission) are flushed into this registry by the
+ * form renderers every frame, and when a shader pack asks Iris for a texture's
+ * {@code _s} companion, the loader checks here first - a synthesized specular
+ * map carries the slider values in LabPBR encoding. The processed-texture side:
+ * {@link #getProcessed(Link, Texture, Form)} serves a copy of a texture with
+ * the relief slider embossed into the pixels (bright texels ridge up, dark ones
+ * sink - visible under any pipeline) and every pixel mixed toward the color
+ * overlay, which recolors the form the same way with or without shader packs.</p>
  */
 public class FormMaterials
 {
@@ -36,13 +35,13 @@ public class FormMaterials
     /* LabPBR specular blue channel: subsurface scattering occupies 65..255 */
     private static final int LAB_PBR_SSS_MIN = 65;
 
-    /* How steep the relief slider's full swing tilts the embossed normals */
-    private static final float RELIEF_NORMAL_STRENGTH = 4F;
+    /* How hard the relief slider's full swing carves the emboss into the pixels */
+    private static final float RELIEF_STRENGTH = 220F;
 
     private static final int SPECULAR_SIZE = 16;
 
     private static final Map<Link, PBREntry> pbr = new HashMap<>();
-    private static final Map<Link, OverlayEntry> overlays = new HashMap<>();
+    private static final Map<Link, ProcessedEntry> processed = new HashMap<>();
 
     /**
      * Record the form's material sliders for its texture. Called by the form
@@ -60,9 +59,8 @@ public class FormMaterials
         float metalic = form.metalic.get();
         float sss = form.sss.get();
         float emission = form.pixelEmission.get();
-        float relief = form.relief.get();
 
-        if (smoothness <= 0F && metalic <= 0F && sss <= 0F && emission <= 0F && relief <= 0F)
+        if (smoothness <= 0F && metalic <= 0F && sss <= 0F && emission <= 0F)
         {
             PBREntry entry = pbr.remove(texture);
 
@@ -74,7 +72,7 @@ public class FormMaterials
             return;
         }
 
-        pbr.computeIfAbsent(texture, (key) -> new PBREntry()).set(smoothness, metalic, sss, emission, relief);
+        pbr.computeIfAbsent(texture, (key) -> new PBREntry()).set(smoothness, metalic, sss, emission);
     }
 
     /**
@@ -90,77 +88,59 @@ public class FormMaterials
     }
 
     /**
-     * GL id of the relief normal map embossed from the texture's luminance, or
-     * -1 when relief is off (the file-based {@code _n} companion applies then).
+     * The texture to actually bind for the form: a cached copy with the relief
+     * emboss carved in and the pixels mixed toward the color overlay. With both
+     * effects off (or a broken texture) the base texture comes back untouched.
      */
-    public static int getNormalId(Link texture)
+    public static Texture getProcessed(Link link, Texture base, Form form)
     {
-        PBREntry entry = pbr.get(texture);
-
-        return entry == null ? -1 : entry.getNormalId(texture);
-    }
-
-    /**
-     * The texture to actually bind for a form with a color overlay: a cached
-     * copy whose pixels are mixed toward the overlay color by its alpha. With
-     * no overlay (or a broken texture) the base texture comes back untouched.
-     */
-    public static Texture getOverlayed(Link link, Texture base, Color overlay)
-    {
-        if (link == null || base == null || overlay == null || overlay.a <= 0F || !base.isValid())
+        if (link == null || base == null || form == null || !base.isValid())
         {
             return base;
         }
 
-        return overlays.computeIfAbsent(link, (key) -> new OverlayEntry()).get(link, base, overlay);
+        Color overlay = form.colorOverlay.get();
+        float relief = form.relief.get();
+
+        if (overlay.a <= 0F && relief <= 0F)
+        {
+            return base;
+        }
+
+        return processed.computeIfAbsent(link, (key) -> new ProcessedEntry()).get(link, base, overlay, relief);
     }
 
-    /** The five slider values and the GL textures they bake into. */
+    /** The four LabPBR slider values and the specular texture they bake into. */
     private static class PBREntry
     {
         private float smoothness;
         private float metalic;
         private float sss;
         private float emission;
-        private float relief;
 
-        private boolean specularDirty = true;
-        private boolean normalDirty = true;
+        private boolean dirty = true;
 
         private Texture specular;
-        private Texture normal;
 
-        /* The base texture's cached luminance for the relief emboss */
-        private float[] luminance;
-        private int luminanceId = -1;
-        private int luminanceWidth;
-        private int luminanceHeight;
-
-        public void set(float smoothness, float metalic, float sss, float emission, float relief)
+        public void set(float smoothness, float metalic, float sss, float emission)
         {
             if (this.smoothness != smoothness || this.metalic != metalic || this.sss != sss || this.emission != emission)
             {
-                this.specularDirty = true;
-            }
-
-            if (this.relief != relief)
-            {
-                this.normalDirty = true;
+                this.dirty = true;
             }
 
             this.smoothness = smoothness;
             this.metalic = metalic;
             this.sss = sss;
             this.emission = emission;
-            this.relief = relief;
         }
 
         public int getSpecularId()
         {
-            if (this.specularDirty)
+            if (this.dirty)
             {
                 this.uploadSpecular();
-                this.specularDirty = false;
+                this.dirty = false;
             }
 
             return this.specular == null ? -1 : this.specular.id;
@@ -199,120 +179,6 @@ public class FormMaterials
             }
         }
 
-        public int getNormalId(Link texture)
-        {
-            if (this.relief <= 0F)
-            {
-                return -1;
-            }
-
-            Texture base = BBSModClient.getTextures().getTexture(texture);
-
-            if (base == null || !base.isValid() || base == BBSModClient.getTextures().getError())
-            {
-                return -1;
-            }
-
-            if (this.luminance == null || this.luminanceId != base.id)
-            {
-                this.cacheLuminance(base);
-                this.normalDirty = true;
-            }
-
-            if (this.normalDirty)
-            {
-                this.uploadNormal();
-                this.normalDirty = false;
-            }
-
-            return this.normal == null ? -1 : this.normal.id;
-        }
-
-        private void cacheLuminance(Texture base)
-        {
-            Pixels pixels = Texture.pixelsFromTexture(base);
-
-            if (pixels == null)
-            {
-                return;
-            }
-
-            ByteBuffer buffer = pixels.getBuffer();
-
-            this.luminance = new float[pixels.getCount()];
-            this.luminanceId = base.id;
-            this.luminanceWidth = pixels.width;
-            this.luminanceHeight = pixels.height;
-
-            for (int i = 0; i < this.luminance.length; i++)
-            {
-                int r = buffer.get(i * 4) & 0xFF;
-                int g = buffer.get(i * 4 + 1) & 0xFF;
-                int b = buffer.get(i * 4 + 2) & 0xFF;
-
-                this.luminance[i] = (0.2126F * r + 0.7152F * g + 0.0722F * b) / 255F;
-            }
-
-            pixels.delete();
-        }
-
-        /**
-         * Emboss a LabPBR normal map out of the texture's luminance: bright
-         * pixels sit at the surface, dark ones sink by up to the relief depth,
-         * and the normals tilt along that height field's slope. That gives the
-         * slider a real, visible effect - normal-mapped shading in any LabPBR
-         * pack, parallax where the pack supports it.
-         */
-        private void uploadNormal()
-        {
-            if (this.luminance == null)
-            {
-                return;
-            }
-
-            int w = this.luminanceWidth;
-            int h = this.luminanceHeight;
-            float strength = this.relief * RELIEF_NORMAL_STRENGTH;
-            Pixels pixels = Pixels.fromSize(w, h);
-            Color color = new Color();
-
-            for (int y = 0; y < h; y++)
-            {
-                for (int x = 0; x < w; x++)
-                {
-                    float left = this.luminance[y * w + Math.max(x - 1, 0)];
-                    float right = this.luminance[y * w + Math.min(x + 1, w - 1)];
-                    float up = this.luminance[Math.max(y - 1, 0) * w + x];
-                    float down = this.luminance[Math.min(y + 1, h - 1) * w + x];
-                    float dx = (right - left) * strength;
-                    float dy = (down - up) * strength;
-                    float invLength = 1F / (float) Math.sqrt(dx * dx + dy * dy + 1F);
-
-                    float nx = -dx * invLength * 0.5F + 0.5F;
-                    float ny = -dy * invLength * 0.5F + 0.5F;
-                    float height = 1F - this.relief * (1F - this.luminance[y * w + x]);
-
-                    color.set(nx, ny, 1F, MathUtils.clamp(height, 0F, 1F));
-                    pixels.setColor(x, y, color);
-                }
-            }
-
-            pixels.rewindBuffer();
-
-            if (this.normal == null)
-            {
-                /* textureFromPixels frees the pixels itself */
-                this.normal = Texture.textureFromPixels(pixels, GL11.GL_NEAREST);
-            }
-            else
-            {
-                this.normal.bind();
-                this.normal.updateTexture(pixels);
-                this.normal.unbind();
-                pixels.delete();
-            }
-        }
-
         public void delete()
         {
             if (this.specular != null)
@@ -320,29 +186,22 @@ public class FormMaterials
                 this.specular.delete();
                 this.specular = null;
             }
-
-            if (this.normal != null)
-            {
-                this.normal.delete();
-                this.normal = null;
-            }
-
-            this.luminance = null;
-            this.luminanceId = -1;
         }
     }
 
-    /** A texture copy with the pixels mixed toward the overlay color. */
-    private static class OverlayEntry
+    /** A texture copy with the relief embossed in and the pixels mixed toward the overlay. */
+    private static class ProcessedEntry
     {
         private Texture derived;
         private Pixels basePixels;
+        private float[] luminance;
         private int baseId = -1;
         private int lastColor;
+        private float lastRelief = -1F;
 
-        public Texture get(Link link, Texture base, Color overlay)
+        public Texture get(Link link, Texture base, Color overlay, float relief)
         {
-            int color = overlay.getARGBColor();
+            int color = overlay.a <= 0F ? 0 : overlay.getARGBColor();
 
             if (this.basePixels == null || this.baseId != base.id)
             {
@@ -354,6 +213,8 @@ public class FormMaterials
                 this.basePixels = Texture.pixelsFromTexture(base);
                 this.baseId = base.id;
                 this.lastColor = 0;
+                this.lastRelief = -1F;
+                this.luminance = null;
 
                 if (this.basePixels == null)
                 {
@@ -361,31 +222,90 @@ public class FormMaterials
                 }
             }
 
-            if (this.derived == null || this.lastColor != color)
+            if (this.derived == null || this.lastColor != color || this.lastRelief != relief)
             {
-                this.upload(link, base, overlay);
+                this.upload(link, base, overlay, relief);
                 this.lastColor = color;
+                this.lastRelief = relief;
             }
 
             return this.derived == null ? base : this.derived;
         }
 
-        private void upload(Link link, Texture base, Color overlay)
+        /** The base texture's luminance, for the relief emboss. */
+        private void cacheLuminance()
         {
+            ByteBuffer buffer = this.basePixels.getBuffer();
+
+            this.luminance = new float[this.basePixels.getCount()];
+
+            for (int i = 0; i < this.luminance.length; i++)
+            {
+                int r = buffer.get(i * 4) & 0xFF;
+                int g = buffer.get(i * 4 + 1) & 0xFF;
+                int b = buffer.get(i * 4 + 2) & 0xFF;
+
+                this.luminance[i] = (0.2126F * r + 0.7152F * g + 0.0722F * b) / 255F;
+            }
+        }
+
+        /**
+         * Bake the effects into the derived copy. Relief is a classic emboss:
+         * every pixel is raised or sunk by the luminance slope of its diagonal
+         * neighbors, so texture detail reads as carved ridges - a visible
+         * effect under any pipeline, shader packs or not. The color overlay
+         * then mixes every pixel toward its color, alpha being the strength.
+         */
+        private void upload(Link link, Texture base, Color overlay, float relief)
+        {
+            if (relief > 0F && this.luminance == null)
+            {
+                this.cacheLuminance();
+            }
+
             Pixels mixed = Pixels.fromSize(this.basePixels.width, this.basePixels.height);
             ByteBuffer src = this.basePixels.getBuffer();
             ByteBuffer dst = mixed.getBuffer();
-            float a = MathUtils.clamp(overlay.a, 0F, 1F);
-            float r = overlay.r * 255F;
-            float g = overlay.g * 255F;
-            float b = overlay.b * 255F;
+            int w = this.basePixels.width;
+            int h = this.basePixels.height;
+            float a = overlay.a <= 0F ? 0F : MathUtils.clamp(overlay.a, 0F, 1F);
+            float or = overlay.r * 255F;
+            float og = overlay.g * 255F;
+            float ob = overlay.b * 255F;
+            float carve = relief * RELIEF_STRENGTH;
 
-            for (int i = 0, c = mixed.getCount() * 4; i < c; i += 4)
+            for (int y = 0; y < h; y++)
             {
-                dst.put(i, (byte) ((int) ((src.get(i) & 0xFF) * (1F - a) + r * a)));
-                dst.put(i + 1, (byte) ((int) ((src.get(i + 1) & 0xFF) * (1F - a) + g * a)));
-                dst.put(i + 2, (byte) ((int) ((src.get(i + 2) & 0xFF) * (1F - a) + b * a)));
-                dst.put(i + 3, src.get(i + 3));
+                for (int x = 0; x < w; x++)
+                {
+                    int i = (y * w + x) * 4;
+                    float r = src.get(i) & 0xFF;
+                    float g = src.get(i + 1) & 0xFF;
+                    float b = src.get(i + 2) & 0xFF;
+
+                    if (carve > 0F)
+                    {
+                        int i1 = Math.max(y - 1, 0) * w + Math.max(x - 1, 0);
+                        int i2 = Math.min(y + 1, h - 1) * w + Math.min(x + 1, w - 1);
+                        float delta = (this.luminance[i1] - this.luminance[i2]) * carve;
+
+                        r += delta;
+                        g += delta;
+                        b += delta;
+                    }
+
+                    if (a > 0F)
+                    {
+                        r = r * (1F - a) + or * a;
+                        g = g * (1F - a) + og * a;
+                        b = b * (1F - a) + ob * a;
+                    }
+
+                    dst.put(i, (byte) (int) MathUtils.clamp(r, 0F, 255F));
+                    dst.put(i + 1, (byte) (int) MathUtils.clamp(g, 0F, 255F));
+                    dst.put(i + 2, (byte) (int) MathUtils.clamp(b, 0F, 255F));
+                    dst.put(i + 3, src.get(i + 3));
+                }
             }
 
             boolean fresh = this.derived == null;
@@ -408,7 +328,7 @@ public class FormMaterials
             if (fresh && BBSRendering.isIrisShadersEnabled())
             {
                 /* Registered under the base texture's link, so Iris resolves the same
-                 * PBR companions (file-based or synthesized) for the recolored copy */
+                 * PBR companions (file-based or synthesized) for the processed copy */
                 IrisUtils.trackSynthetic(this.derived.id, link);
             }
         }

@@ -164,12 +164,12 @@ public class TrailFormRenderer extends FormRenderer<TrailForm> implements ITicka
         }
 
         /* Feed the Material tab's PBR sliders to the shader pack and bind the
-         * trail's texture - recolored toward the color overlay when one is set. */
+         * trail's texture - processed with the relief emboss and color overlay when set. */
         Link textureLink = this.form.texture.get();
         Texture textureObject = BBSModClient.getTextures().getTexture(textureLink);
 
         FormMaterials.update(textureLink, this.form);
-        BBSModClient.getTextures().bindTexture(FormMaterials.getOverlayed(textureLink, textureObject, this.form.colorOverlay.get()));
+        BBSModClient.getTextures().bindTexture(FormMaterials.getProcessed(textureLink, textureObject, this.form));
 
         stack.push();
 

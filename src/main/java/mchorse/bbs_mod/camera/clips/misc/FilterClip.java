@@ -30,7 +30,7 @@ public class FilterClip extends CameraClip
         "temperature", "gamma", "sharpness", "vignette",
         "sepia", "grain", "aberration", "invert",
         "posterize", "pixelate", "distortion", "bloom",
-        "radial", "vhs"
+        "radial", "vhs", "flip", "fisheye"
     );
 
     public final ValueChannels channels = new ValueChannels("channels");

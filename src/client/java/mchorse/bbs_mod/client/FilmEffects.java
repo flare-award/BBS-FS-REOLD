@@ -87,6 +87,8 @@ public class FilmEffects
         uniform float u_bloom_strength;
         uniform float u_radial;
         uniform float u_vhs;
+        uniform float u_flip;
+        uniform float u_fisheye;
         uniform float u_seed;
 
         in vec2 v_uv;
@@ -121,6 +123,15 @@ public class FilmEffects
         {
             vec2 uv = v_uv;
 
+            if (u_flip == 1.0)
+            {
+                uv.y = 1.0 - uv.y;
+            }
+            else if (u_flip == 2.0)
+            {
+                uv.x = 1.0 - uv.x;
+            }
+
             if (u_distortion != 0.0)
             {
                 /* Barrel (positive) or pincushion (negative) lens warp,
@@ -130,6 +141,25 @@ public class FilmEffects
 
                 d.x *= aspect;
                 d *= 1.0 + u_distortion * dot(d, d) * 1.5;
+                d.x /= aspect;
+                uv = clamp(d + 0.5, 0.0, 1.0);
+            }
+
+            if (u_fisheye != 0.0)
+            {
+                /* Positive bulges the center out like a fisheye lens, negative pinches it in */
+                float aspect = u_texel.y / u_texel.x;
+                vec2 d = uv - 0.5;
+
+                d.x *= aspect;
+
+                float r = length(d) * 1.4142;
+
+                if (r > 0.0001)
+                {
+                    d *= pow(r, 1.0 + u_fisheye * 0.75) / r;
+                }
+
                 d.x /= aspect;
                 uv = clamp(d + 0.5, 0.0, 1.0);
             }
@@ -217,11 +247,13 @@ public class FilmEffects
                 color += texture(u_bloom, uv).rgb * u_bloom_strength;
             }
 
-            if (u_vignette > 0.0)
+            if (u_vignette != 0.0)
             {
+                /* Negative darkens the corners, positive washes them out white */
                 float dist = distance(v_uv, vec2(0.5)) * 1.4142;
+                float mask = abs(u_vignette) * smoothstep(0.35, 1.1, dist);
 
-                color *= 1.0 - u_vignette * smoothstep(0.35, 1.1, dist);
+                color = mix(color, u_vignette > 0.0 ? vec3(1.0) : vec3(0.0), mask);
             }
 
             if (u_grain > 0.0)
@@ -335,6 +367,9 @@ public class FilmEffects
     /* While held down by the filters overlay's compare button, filters are skipped */
     private static boolean showOriginal;
 
+    /* While held down by the photo overlay's compare button, photo layers are skipped */
+    private static boolean showNoPhoto;
+
     private static int vao;
     private static int vbo;
     private static int filterProgram;
@@ -365,6 +400,8 @@ public class FilmEffects
     private static int uniformBloomStrength;
     private static int uniformRadial;
     private static int uniformVhs;
+    private static int uniformFlip;
+    private static int uniformFisheye;
     private static int uniformSeed;
     private static int uniformBloomCutTexel;
     private static int uniformBlurDirection;
@@ -391,6 +428,20 @@ public class FilmEffects
         showOriginal = original;
     }
 
+    /**
+     * Whether the compare button in the photo overlay is held down right now,
+     * which shows the frame without any photo layers (filters stay applied).
+     */
+    public static boolean isShowingNoPhoto()
+    {
+        return showNoPhoto;
+    }
+
+    public static void setShowNoPhoto(boolean noPhoto)
+    {
+        showNoPhoto = noPhoto;
+    }
+
     public static boolean hasFilters()
     {
         return hasFilters(getFilterState());
@@ -415,7 +466,9 @@ public class FilmEffects
             || isActive(state.distortion, 0F)
             || isActive(state.bloom, 0F)
             || isActive(state.radial, 0F)
-            || isActive(state.vhs, 0F);
+            || isActive(state.vhs, 0F)
+            || state.flip >= 1F
+            || isActive(state.fisheye, 0F);
     }
 
     public static boolean hasPhoto()
@@ -536,7 +589,7 @@ public class FilmEffects
     {
         FilterState state = getFilterState();
         boolean filters = hasFilters(state) && !showOriginal;
-        boolean photo = hasPhoto();
+        boolean photo = hasPhoto() && !showNoPhoto && !BBSSettings.filmPhotoBehindModels.get();
 
         if (broken || (!filters && !photo) || width <= 0 || height <= 0)
         {
@@ -647,6 +700,8 @@ public class FilmEffects
         GL20.glUniform1f(uniformBloomStrength, bloom ? state.bloom : 0F);
         GL20.glUniform1f(uniformRadial, state.radial);
         GL20.glUniform1f(uniformVhs, state.vhs);
+        GL20.glUniform1f(uniformFlip, Math.round(state.flip));
+        GL20.glUniform1f(uniformFisheye, state.fisheye);
         GL20.glUniform1f(uniformSeed, getGrainSeed());
 
         if (bloom)
@@ -696,6 +751,70 @@ public class FilmEffects
 
         GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, framebuffer.id);
         GL11.glViewport(0, 0, width, height);
+    }
+
+    /**
+     * Draw the photo layers into the world framebuffer, before the film's forms
+     * render: the photos cover everything drawn so far (terrain, sky, entities),
+     * and the forms drawn right after cover the photos. Runs only when the photo
+     * overlay's behind-models mode is on; the post pass skips photos then.
+     */
+    public static void renderPhotosInWorld()
+    {
+        if (broken || showNoPhoto || !BBSSettings.filmPhotoBehindModels.get() || !hasPhoto())
+        {
+            return;
+        }
+
+        int[] viewport = new int[4];
+
+        GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport);
+
+        int width = viewport[2];
+        int height = viewport[3];
+
+        if (width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        int prevProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
+        int prevVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
+        int prevArrayBuffer = GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING);
+        int prevActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+
+        GL13.glActiveTexture(GL13.GL_TEXTURE0);
+
+        int prevTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+
+        try
+        {
+            ensureGeometry();
+            GL30.glBindVertexArray(vao);
+
+            RenderSystem.disableDepthTest();
+            RenderSystem.depthMask(false);
+
+            applyPhotos(width, height);
+        }
+        catch (Exception e)
+        {
+            broken = true;
+
+            e.printStackTrace();
+        }
+        finally
+        {
+            RenderSystem.depthMask(true);
+            RenderSystem.enableDepthTest();
+            RenderSystem.disableBlend();
+
+            GL30.glBindVertexArray(prevVao);
+            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, prevArrayBuffer);
+            GL20.glUseProgram(prevProgram);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTexture);
+            GL13.glActiveTexture(prevActiveTexture);
+        }
     }
 
     /**
@@ -789,6 +908,8 @@ public class FilmEffects
         state.bloom = filterValue(overrides, "bloom", BBSSettings.filmFilterBloom, 0F);
         state.radial = filterValue(overrides, "radial", BBSSettings.filmFilterRadial, 0F);
         state.vhs = filterValue(overrides, "vhs", BBSSettings.filmFilterVhs, 0F);
+        state.flip = filterValue(overrides, "flip", BBSSettings.filmFilterFlip, 0F);
+        state.fisheye = filterValue(overrides, "fisheye", BBSSettings.filmFilterFisheye, 0F);
 
         return state;
     }
@@ -868,6 +989,8 @@ public class FilmEffects
         uniformBloomStrength = GL20.glGetUniformLocation(filterProgram, "u_bloom_strength");
         uniformRadial = GL20.glGetUniformLocation(filterProgram, "u_radial");
         uniformVhs = GL20.glGetUniformLocation(filterProgram, "u_vhs");
+        uniformFlip = GL20.glGetUniformLocation(filterProgram, "u_flip");
+        uniformFisheye = GL20.glGetUniformLocation(filterProgram, "u_fisheye");
         uniformSeed = GL20.glGetUniformLocation(filterProgram, "u_seed");
 
         /* The blurred highlights always sit on texture unit 1 */
@@ -1009,5 +1132,7 @@ public class FilmEffects
         public float bloom;
         public float radial;
         public float vhs;
+        public float flip;
+        public float fisheye;
     }
 }

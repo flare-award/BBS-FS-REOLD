@@ -118,6 +118,12 @@ public abstract class FormRenderer <T extends Form>
         }
 
         float lf = 1F - MathUtils.clamp(this.form.lighting.get(), 0F, 1F);
+
+        /* The color overlay lays the color OVER the form: as its strength grows the
+         * form goes fullbright, so at full opacity it reads as one flat solid color
+         * instead of a shaded repaint of the texture. */
+        lf = Math.max(lf, MathUtils.clamp(this.form.colorOverlay.get().a, 0F, 1F));
+
         int u = context.light & '\uffff';
         int v = context.light >> 16 & '\uffff';
 
