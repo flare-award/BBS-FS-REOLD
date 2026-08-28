@@ -44,6 +44,36 @@ public class FormMaterials
     private static final Map<Link, ProcessedEntry> processed = new HashMap<>();
 
     /**
+     * The form whose model is being drawn right now. Per-material texture
+     * binds happen deep inside the model renderers, which don't know the
+     * form - this hands it to them so multi-material models get the same
+     * material treatment as single-texture ones.
+     */
+    private static Form currentForm;
+
+    public static void setCurrentForm(Form form)
+    {
+        currentForm = form;
+    }
+
+    /**
+     * Run a per-material texture through the current form's material pipeline:
+     * feed the PBR sliders and serve the processed copy. Without a current
+     * form (or anything to process) the texture passes through untouched.
+     */
+    public static Texture processCurrent(Link link, Texture texture)
+    {
+        if (currentForm == null || link == null || texture == null)
+        {
+            return texture;
+        }
+
+        update(link, currentForm);
+
+        return getProcessed(link, texture, currentForm);
+    }
+
+    /**
      * Record the form's material sliders for its texture. Called by the form
      * renderers right before they bind, so by the time Iris resolves the
      * texture's PBR companions the values of the form drawing it are in.

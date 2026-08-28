@@ -9,6 +9,7 @@ import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
+import mchorse.bbs_mod.utils.MathUtils;
 import mchorse.bbs_mod.utils.colors.Colors;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.ShaderProgram;
@@ -148,7 +149,39 @@ public class Batcher2D
 
     public void box(float x1, float y1, float x2, float y2, int color)
     {
+        /* Under the custom gradient background, flat surface fills flow across
+         * the screen: every box picks its corner colors from where it sits, so
+         * the whole interface reads as one gradient assembled from its parts. */
+        if (BBSSettings.isBackgroundGradient())
+        {
+            int end = BBSSettings.backgroundGradientEnd(color);
+
+            if (end != 0)
+            {
+                float w = Math.max(1, this.context.getScaledWindowWidth());
+                float h = Math.max(1, this.context.getScaledWindowHeight());
+
+                this.box(x1, y1, x2 - x1, y2 - y1,
+                    this.backgroundCorner(color, end, x1 / w, y1 / h),
+                    this.backgroundCorner(color, end, x2 / w, y1 / h),
+                    this.backgroundCorner(color, end, x1 / w, y2 / h),
+                    this.backgroundCorner(color, end, x2 / w, y2 / h));
+
+                return;
+            }
+        }
+
         this.box(x1, y1, x2 - x1, y2 - y1, color, color, color, color);
+    }
+
+    private int backgroundCorner(int start, int end, float tx, float ty)
+    {
+        int direction = BBSSettings.backgroundGradientDirection();
+        float t = direction == BBSSettings.GRADIENT_HORIZONTAL ? tx
+            : direction == BBSSettings.GRADIENT_VERTICAL ? ty
+            : (tx + ty) * 0.5F;
+
+        return Colors.lerp(start, end, MathUtils.clamp(t, 0F, 1F));
     }
 
     public void box(float x, float y, float w, float h, int color1, int color2, int color3, int color4)

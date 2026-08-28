@@ -236,6 +236,28 @@ public class UISettingsOverlayPanel extends UIOverlayPanel
         this.refresh();
     }
 
+    /**
+     * The background color settings come and go with the picked mode (solid
+     * shows the main color, gradient adds the second color and the direction),
+     * so the list watches the mode and rebuilds itself when it flips.
+     */
+    private int lastBackgroundMode = -1;
+
+    @Override
+    public void render(UIContext context)
+    {
+        int mode = BBSSettings.backgroundColorMode();
+
+        if (mode != this.lastBackgroundMode)
+        {
+            this.lastBackgroundMode = mode;
+            BBSSettings.updateBackgroundSettingsVisibility();
+            this.refresh();
+        }
+
+        super.render(context);
+    }
+
     public void refresh()
     {
         if (this.settings == null)

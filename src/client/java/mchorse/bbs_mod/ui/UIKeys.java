@@ -235,6 +235,9 @@ public class UIKeys
     public static final IKey ENGINE_ROTATE_3D_SPHERE_MODE_ARCBALL = L10n.lang("bbs.rotate_3d_sphere_mode.arcball");
     public static final IKey ENGINE_THEME_DARK = L10n.lang("bbs.theme.dark");
     public static final IKey ENGINE_THEME_LIGHT = L10n.lang("bbs.theme.light");
+    public static final IKey ENGINE_BACKGROUND_MODE_DEFAULT = L10n.lang("bbs.background_mode.default");
+    public static final IKey ENGINE_BACKGROUND_MODE_SOLID = L10n.lang("bbs.background_mode.solid");
+    public static final IKey ENGINE_BACKGROUND_MODE_GRADIENT = L10n.lang("bbs.background_mode.gradient");
     public static final IKey ENGINE_GRADIENT_DIRECTION_HORIZONTAL = L10n.lang("bbs.gradient_direction.horizontal");
     public static final IKey ENGINE_GRADIENT_DIRECTION_VERTICAL = L10n.lang("bbs.gradient_direction.vertical");
     public static final IKey ENGINE_GRADIENT_DIRECTION_DIAGONAL = L10n.lang("bbs.gradient_direction.diagonal");
@@ -352,9 +355,10 @@ public class UIKeys
     public static final IKey FILM_PANELS_REPLAY_PROPS = L10n.lang("bbs.ui.film.panels.replay_props");
     public static final IKey FILM_PHOTO_LAYER_MODE = L10n.lang("bbs.ui.film.photo.layer_mode");
     public static final IKey FILM_PHOTO_LAYER_MODE_TOOLTIP = L10n.lang("bbs.ui.film.photo.layer_mode-tooltip");
-    public static final IKey FILM_PHOTO_LAYER_MODE_NORMAL = L10n.lang("bbs.ui.film.photo.layer_mode_normal");
+    public static final IKey FILM_PHOTO_LAYER_MODE_NONE = L10n.lang("bbs.ui.film.photo.layer_mode_none");
+    public static final IKey FILM_PHOTO_LAYER_MODE_ACTORS = L10n.lang("bbs.ui.film.photo.layer_mode_actors");
+    public static final IKey FILM_PHOTO_LAYER_MODE_BLOCKS = L10n.lang("bbs.ui.film.photo.layer_mode_blocks");
     public static final IKey FILM_PHOTO_LAYER_MODE_MODELS = L10n.lang("bbs.ui.film.photo.layer_mode_models");
-    public static final IKey FILM_PHOTO_LAYER_MODE_WORLD = L10n.lang("bbs.ui.film.photo.layer_mode_world");
     public static final IKey FILM_PHOTO_COMPARE = L10n.lang("bbs.ui.film.photo.compare");
     public static final IKey FILM_PHOTO_COVER = L10n.lang("bbs.ui.film.photo.cover");
     public static final IKey FILM_PHOTO_HINT = L10n.lang("bbs.ui.film.photo.hint");

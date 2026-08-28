@@ -184,6 +184,14 @@ public class BBSSettings {
 	public static ValueBoolean damageControl;
 
 	public static ValueFloat backgroundBrightness;
+
+	/* Custom background color: 0 keeps the theme's own surfaces, 1 recolors them
+	 * with backgroundColor, 2 flows them from backgroundColor into
+	 * backgroundColorEnd across the screen in the chosen direction. */
+	public static ValueInt backgroundColorMode;
+	public static ValueInt backgroundColor;
+	public static ValueInt backgroundColorEnd;
+	public static ValueInt backgroundGradientDirection;
 	public static ValueBoolean interfaceShadows;
 	public static ValueBoolean interfaceHighlights;
 	public static ValueFloat overlayBackgroundOpacity;
@@ -234,10 +242,6 @@ public class BBSSettings {
 	/* Serialized list of photo overlay layers (see the client's PhotoLayer class). */
 	public static ValueString filmPhotoLayers;
 
-	/* Where photo layers draw: 0 - over the whole frame (post), 1 - under the film's
-	 * models, 2 - under every BBS-placed model (world model blocks included). In
-	 * modes 1 and 2 the models cover the photo while the world sits behind it. */
-	public static ValueFloat filmPhotoLayerMode;
 
 	public static ValueBoolean shaderCurvesEnabled;
 	public static ValueBoolean translucencyQueue;
@@ -284,6 +288,13 @@ public class BBSSettings {
 	public static final int GRADIENT_HORIZONTAL = 0;
 	public static final int GRADIENT_VERTICAL = 1;
 	public static final int GRADIENT_DIAGONAL = 2;
+
+	/* Background color modes */
+	public static final int BACKGROUND_DEFAULT = 0;
+	public static final int BACKGROUND_SOLID = 1;
+	public static final int BACKGROUND_GRADIENT = 2;
+	private static final int DEFAULT_BACKGROUND_COLOR = 0x1d1d1d;
+	private static final int DEFAULT_BACKGROUND_COLOR_END = 0x101a26;
 	/**
 	 * Tonal map of the interface's surfaces, four levels deep: deep sits under
 	 * the content (fields, timeline wells), chrome frames everything, base is
@@ -424,7 +435,80 @@ public class BBSSettings {
 
 	private static int getThemeSurface(int lightColor, int darkColor)
 	{
+		if (backgroundColorMode() != BACKGROUND_DEFAULT)
+		{
+			return customSurface(backgroundColor.get(), darkColor);
+		}
+
 		return applySurfaceTransparency(applyBackgroundBrightness(getThemeColor(lightColor, darkColor)));
+	}
+
+	public static int backgroundColorMode()
+	{
+		return backgroundColorMode == null ? BACKGROUND_DEFAULT : MathUtils.clamp(backgroundColorMode.get(), BACKGROUND_DEFAULT, BACKGROUND_GRADIENT);
+	}
+
+	public static boolean isBackgroundGradient()
+	{
+		return backgroundColorMode() == BACKGROUND_GRADIENT;
+	}
+
+	public static int backgroundGradientDirection()
+	{
+		return backgroundGradientDirection == null ? GRADIENT_HORIZONTAL : backgroundGradientDirection.get();
+	}
+
+	/**
+	 * A surface level of the custom background: the user's color scaled by the
+	 * level's share of the dark ramp, so the depth ladder (deep under content,
+	 * chrome frames, base working area, raised cards) survives any base color.
+	 * Brightness and transparency apply the same way they do to the themes.
+	 */
+	private static int customSurface(int base, int darkColor)
+	{
+		float factor = (darkColor & 0xff) / (float) (DARK_BASE_SURFACE & 0xff);
+		int r = MathUtils.clamp(Math.round(((base >> 16) & 0xff) * factor), 0, 255);
+		int g = MathUtils.clamp(Math.round(((base >> 8) & 0xff) * factor), 0, 255);
+		int b = MathUtils.clamp(Math.round((base & 0xff) * factor), 0, 255);
+
+		return applySurfaceTransparency(applyBackgroundBrightness(Colors.A100 | (r << 16) | (g << 8) | b));
+	}
+
+	/**
+	 * The gradient's far-end twin of a surface fill color, or 0 when the given
+	 * color isn't one of the current background surfaces (or the background
+	 * isn't in gradient mode). The UI batcher asks this to know which flat
+	 * fills should flow across the screen instead.
+	 */
+	public static int backgroundGradientEnd(int surfaceColor)
+	{
+		if (!isBackgroundGradient())
+		{
+			return 0;
+		}
+
+		int start = backgroundColor.get();
+		int end = backgroundColorEnd.get();
+
+		if (surfaceColor == customSurface(start, DARK_DEEP_SURFACE)) return customSurface(end, DARK_DEEP_SURFACE);
+		if (surfaceColor == customSurface(start, DARK_CHROME_SURFACE)) return customSurface(end, DARK_CHROME_SURFACE);
+		if (surfaceColor == customSurface(start, DARK_BASE_SURFACE)) return customSurface(end, DARK_BASE_SURFACE);
+		if (surfaceColor == customSurface(start, DARK_RAISED_SURFACE)) return customSurface(end, DARK_RAISED_SURFACE);
+
+		return 0;
+	}
+
+	/** Show only the background color settings the current mode makes use of. */
+	public static void updateBackgroundSettingsVisibility()
+	{
+		int mode = backgroundColorMode();
+
+		if (backgroundColor != null)
+		{
+			backgroundColor.visible(mode != BACKGROUND_DEFAULT);
+			backgroundColorEnd.visible(mode == BACKGROUND_GRADIENT);
+			backgroundGradientDirection.visible(mode == BACKGROUND_GRADIENT);
+		}
 	}
 
 	public static int chromeSurface()
@@ -716,6 +800,10 @@ public class BBSSettings {
 
 		builder.category("personalization", Icons.COLOR);
 		backgroundBrightness = builder.getFloat("background_brightness", DEFAULT_BACKGROUND_BRIGHTNESS, MIN_BACKGROUND_BRIGHTNESS, MAX_BACKGROUND_BRIGHTNESS).slider();
+		backgroundColorMode = builder.getInt("background_color_mode", BACKGROUND_DEFAULT, BACKGROUND_DEFAULT, BACKGROUND_GRADIENT);
+		backgroundColor = builder.getInt("background_color", DEFAULT_BACKGROUND_COLOR).color();
+		backgroundColorEnd = builder.getInt("background_color_end", DEFAULT_BACKGROUND_COLOR_END).color();
+		backgroundGradientDirection = builder.getInt("background_gradient_direction", GRADIENT_HORIZONTAL, GRADIENT_HORIZONTAL, GRADIENT_DIAGONAL);
 		interfaceShadows = builder.getBoolean("interface_shadows", true);
 		interfaceHighlights = builder.getBoolean("interface_highlights", false);
 		overlayBackgroundOpacity = builder.getFloat("overlay_background_opacity", DEFAULT_OVERLAY_BACKGROUND_OPACITY, 0F, 1F).slider();
@@ -789,8 +877,6 @@ public class BBSSettings {
 		filmPhotoStretchY.invisible();
 		filmPhotoLayers = builder.getString("film_photo_layers", "");
 		filmPhotoLayers.invisible();
-		filmPhotoLayerMode = builder.getFloat("film_photo_layer_mode", 0F, 0F, 2F);
-		filmPhotoLayerMode.invisible();
 		primaryColor = builder.getInt("primary_color", DEFAULT_PRIMARY_COLOR).color();
 		primaryColorGradient = builder.getBoolean("primary_color_gradient", false);
 		primaryColorEnd = builder.getInt("primary_color_end", DEFAULT_PRIMARY_COLOR_END).color();

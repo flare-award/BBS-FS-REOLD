@@ -563,12 +563,12 @@ public class BBSRendering
 
     public static void renderCoolStuff(WorldRenderContext worldRenderContext)
     {
-        /* Photo layers in a behind-models mode go down first, so the film's forms
-         * rendered right below land on top of them - and the shadow pass never
-         * sees the photos at all. */
+        /* In-world photo layers draw around the film's forms: before them for the
+         * layers the actors should cover, after them for the layers that cover the
+         * actors - and the shadow pass never sees the photos at all. */
         if (!isIrisShadowPass())
         {
-            FilmEffects.renderPhotosInWorld(false);
+            FilmEffects.renderPhotosInWorld(worldRenderContext, false);
         }
 
         if (MinecraftClient.getInstance().currentScreen instanceof UIScreen screen)
@@ -577,6 +577,11 @@ public class BBSRendering
         }
 
         BBSModClient.getFilms().render(worldRenderContext);
+
+        if (!isIrisShadowPass())
+        {
+            FilmEffects.renderPhotosInWorld(worldRenderContext, true);
+        }
     }
 
     public static boolean isOptifinePresent()

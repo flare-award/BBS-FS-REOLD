@@ -48,7 +48,7 @@ public class UIMaterialFormPanel extends UIFormPanel
         this.lighting.tooltip(UIKeys.FORMS_EDITORS_MATERIAL_LIGHTING_TOOLTIP);
         this.hue = this.createSlider((form, v) -> form.hue.set(v), -180D, 180D, 1D);
         this.hue.tooltip(UIKeys.FORMS_EDITORS_MATERIAL_HUE_TOOLTIP);
-        this.saturation = this.createSlider((form, v) -> form.saturation.set(v), 0D, 2D, 0.01D);
+        this.saturation = this.createSlider((form, v) -> form.saturation.set(v), 0D, 2D, 0.05D);
         this.saturation.tooltip(UIKeys.FORMS_EDITORS_MATERIAL_SATURATION_TOOLTIP);
 
         this.layer = new UICirculate((b) -> this.form.renderLayer.set(b.getValue()));

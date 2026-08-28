@@ -86,8 +86,8 @@ public class UIFilmPhotoOverlayPanel extends UIFilmEffectsOverlayPanel
 
         UIElement actions = UI.row(0, add, dupe, remove, moveUp, moveDown);
 
-        UIElement layerMode = this.createOptionsRow(UIKeys.FILM_PHOTO_LAYER_MODE, BBSSettings.filmPhotoLayerMode,
-            UIKeys.FILM_PHOTO_LAYER_MODE_NORMAL, UIKeys.FILM_PHOTO_LAYER_MODE_MODELS, UIKeys.FILM_PHOTO_LAYER_MODE_WORLD);
+        UIElement layerMode = this.createOptionsRow(UIKeys.FILM_PHOTO_LAYER_MODE, this::getLayerLayerMode, this::setLayerLayerMode,
+            UIKeys.FILM_PHOTO_LAYER_MODE_NONE, UIKeys.FILM_PHOTO_LAYER_MODE_ACTORS, UIKeys.FILM_PHOTO_LAYER_MODE_BLOCKS, UIKeys.FILM_PHOTO_LAYER_MODE_MODELS);
 
         layerMode.tooltip(UIKeys.FILM_PHOTO_LAYER_MODE_TOOLTIP, Direction.BOTTOM);
 
@@ -146,6 +146,24 @@ public class UIFilmPhotoOverlayPanel extends UIFilmEffectsOverlayPanel
                 this.save();
             }
         }, min, max, uiScale, false);
+    }
+
+    private int getLayerLayerMode()
+    {
+        PhotoLayer layer = this.getLayer();
+
+        return layer == null ? 0 : Math.round(layer.layerMode);
+    }
+
+    private void setLayerLayerMode(int mode)
+    {
+        PhotoLayer layer = this.getLayer();
+
+        if (layer != null)
+        {
+            layer.layerMode = mode;
+            this.save();
+        }
     }
 
     private int getLayerFlip()

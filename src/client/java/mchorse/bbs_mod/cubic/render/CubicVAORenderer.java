@@ -8,6 +8,7 @@ import mchorse.bbs_mod.cubic.render.vao.ModelVAO;
 import mchorse.bbs_mod.cubic.render.vao.ModelVAORenderer;
 import mchorse.bbs_mod.cubic.weld.WeldBinding;
 import mchorse.bbs_mod.forms.FormTranslucentQueue;
+import mchorse.bbs_mod.graphics.texture.FormMaterials;
 import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.obj.shapes.ShapeKeys;
 import mchorse.bbs_mod.resources.Link;
@@ -104,7 +105,7 @@ public class CubicVAORenderer extends CubicCubeRenderer
 
                 if (link != null)
                 {
-                    texture = BBSModClient.getTextures().getTexture(link);
+                    texture = FormMaterials.processCurrent(link, BBSModClient.getTextures().getTexture(link));
                     BBSModClient.getTextures().bindTexture(texture);
                 }
             }

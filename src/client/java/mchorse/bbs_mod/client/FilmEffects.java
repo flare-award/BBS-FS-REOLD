@@ -3,6 +3,7 @@ package mchorse.bbs_mod.client;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.systems.VertexSorter;
 import mchorse.bbs_mod.BBSModClient;
+import mchorse.bbs_mod.blocks.entities.ModelBlockEntity;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.camera.clips.misc.FilterClip;
 import mchorse.bbs_mod.camera.clips.misc.PhotoClip;
@@ -20,7 +21,12 @@ import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.Tessellator;
 import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
@@ -47,6 +53,13 @@ import java.util.Map;
  */
 public class FilmEffects
 {
+    /* Photo layer modes: over the whole frame, behind the film's actors,
+     * behind world-placed model blocks, or behind both. */
+    public static final int LAYER_OVER = 0;
+    public static final int LAYER_BEHIND_ACTORS = 1;
+    public static final int LAYER_BEHIND_BLOCKS = 2;
+    public static final int LAYER_BEHIND_MODELS = 3;
+
     /** Below this distance from its neutral value a filter is considered off. */
     private static final float NEUTRAL_EPSILON = 0.0001F;
 
@@ -390,6 +403,9 @@ public class FilmEffects
     /* While held down by the photo overlay's compare button, photo layers are skipped */
     private static boolean showNoPhoto;
 
+    /* Up while this class itself replays model blocks, so the dispatcher hide-out steps aside */
+    private static boolean preRenderingModelBlocks;
+
     private static int vao;
     private static int vbo;
     private static int filterProgram;
@@ -610,7 +626,7 @@ public class FilmEffects
     {
         FilterState state = getFilterState();
         boolean filters = hasFilters(state) && !showOriginal;
-        boolean photo = hasPhoto() && !showNoPhoto && getLayerMode() == 0;
+        boolean photo = hasPostPhoto() && !showNoPhoto;
 
         if (broken || (!filters && !photo) || width <= 0 || height <= 0)
         {
@@ -774,49 +790,87 @@ public class FilmEffects
         GL11.glViewport(0, 0, width, height);
     }
 
-    /**
-     * Which layer mode the photo overlay is in: 0 draws photos over the whole
-     * frame in the post pass, 1 and 2 draw them into the world instead.
-     */
-    private static int getLayerMode()
+    private static int layerMode(PhotoLayer layer)
     {
-        if (BBSSettings.filmPhotoLayerMode == null)
+        return Math.max(0, Math.min(3, Math.round(layer.layerMode)));
+    }
+
+    /** Whether any layer with a photo sits in the given layer mode. */
+    private static boolean hasWorldPhoto(int mode)
+    {
+        for (PhotoLayer layer : getPhotoLayers())
         {
-            return 0;
+            if (!layer.texture.isEmpty() && layerMode(layer) == mode)
+            {
+                return true;
+            }
         }
 
-        return Math.max(0, Math.min(2, Math.round(BBSSettings.filmPhotoLayerMode.get())));
+        return false;
+    }
+
+    /** Whether the post pass has any photos left to draw: over-frame layers and clip layers. */
+    private static boolean hasPostPhoto()
+    {
+        for (PhotoLayer layer : getPhotoLayers())
+        {
+            if (!layer.texture.isEmpty() && layerMode(layer) == LAYER_OVER)
+            {
+                return true;
+            }
+        }
+
+        for (PhotoClip.State state : getClipPhotoStates())
+        {
+            if (!state.texture.isEmpty())
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
-     * Draw the photo layers into the world, so everything rendered after them
-     * covers the photos while everything before stays behind. Drawn with the
-     * vanilla textured program, which Iris redirects into the shader pack's
-     * own pipeline - the photos survive deferred packs that way.
-     *
-     * <p>Called from two hooks. Without shaders, mode 1 (behind the film's
-     * models) draws after the world and its entities, right before the film's
-     * forms; mode 2 (behind every BBS model) draws before the entity phase, so
-     * world-placed model blocks land on top too. With shaders both modes draw
-     * where the forms do - right after the solid terrain layer.</p>
+     * Whether the block entity dispatcher should skip model blocks this frame:
+     * a behind-the-actors photo replays them earlier itself, so the regular
+     * draw would put them back on top of the photo. Never in the shadow pass -
+     * the blocks must keep casting shadows.
      */
-    public static void renderPhotosInWorld(boolean beforeEntities)
+    public static boolean shouldHideModelBlocks()
     {
-        int mode = getLayerMode();
+        return !preRenderingModelBlocks && !broken && !showNoPhoto
+            && !BBSRendering.isIrisShadowPass() && hasWorldPhoto(LAYER_BEHIND_ACTORS);
+    }
 
-        if (broken || mode == 0 || showNoPhoto || !hasPhoto())
+    /**
+     * Draw the in-world photo layers, so everything rendered after them covers
+     * the photos while everything before stays behind. Runs twice around the
+     * film's forms: before them it replays world model blocks (mode 1 wants
+     * them under the photo) and draws the layers the actors should cover;
+     * after them it draws the layers that cover the actors, which the model
+     * blocks - rendered later in the frame - then land on top of.
+     *
+     * <p>Photos draw through the vanilla textured program, which Iris redirects
+     * into the shader pack's own pipeline - they survive deferred packs.</p>
+     */
+    public static void renderPhotosInWorld(WorldRenderContext context, boolean afterForms)
+    {
+        if (broken || showNoPhoto)
         {
             return;
         }
 
-        if (BBSRendering.isIrisShadersEnabled())
+        if (!afterForms && hasWorldPhoto(LAYER_BEHIND_ACTORS))
         {
-            if (beforeEntities)
-            {
-                return;
-            }
+            renderModelBlocksEarly(context);
         }
-        else if (mode == 2 ? !beforeEntities : beforeEntities)
+
+        boolean draws = afterForms
+            ? hasWorldPhoto(LAYER_BEHIND_BLOCKS)
+            : hasWorldPhoto(LAYER_BEHIND_ACTORS) || hasWorldPhoto(LAYER_BEHIND_MODELS);
+
+        if (!draws)
         {
             return;
         }
@@ -853,12 +907,15 @@ public class FilmEffects
         {
             for (PhotoLayer layer : getPhotoLayers())
             {
-                drawPhotoInWorld(getPhotoTexture(layer.texture), layer.opacity, layer.x, layer.y, layer.scale, layer.stretchX, layer.stretchY, layer.rotate, layer.flip, width, height);
-            }
+                int mode = layerMode(layer);
+                boolean drawsNow = afterForms
+                    ? mode == LAYER_BEHIND_BLOCKS
+                    : mode == LAYER_BEHIND_ACTORS || mode == LAYER_BEHIND_MODELS;
 
-            for (PhotoClip.State state : getClipPhotoStates())
-            {
-                drawPhotoInWorld(getPhotoTexture(state.texture), state.opacity, state.x, state.y, state.scale, state.stretchX, state.stretchY, state.rotate, state.flip, width, height);
+                if (drawsNow)
+                {
+                    drawPhotoInWorld(getPhotoTexture(layer.texture), layer.opacity, layer.x, layer.y, layer.scale, layer.stretchX, layer.stretchY, layer.rotate, layer.flip, width, height);
+                }
             }
         }
         catch (Exception e)
@@ -876,6 +933,52 @@ public class FilmEffects
             modelViewStack.pop();
             RenderSystem.applyModelViewMatrix();
             RenderSystem.setProjectionMatrix(previousProjection, previousSorter);
+        }
+    }
+
+    /**
+     * Replay every ticking model block through the regular dispatcher, before
+     * the behind-the-actors photos draw; the dispatcher's own pass then skips
+     * them (see {@link #shouldHideModelBlocks()}), so they end up under the
+     * photo instead of on top of it.
+     */
+    private static void renderModelBlocksEarly(WorldRenderContext context)
+    {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        VertexConsumerProvider.Immediate immediate = mc.getBufferBuilders().getEntityVertexConsumers();
+        Vec3d cameraPos = context.camera().getPos();
+        MatrixStack matrices = context.matrixStack();
+
+        preRenderingModelBlocks = true;
+
+        try
+        {
+            for (ModelBlockEntity entity : new ArrayList<>(BBSRendering.capturedModelBlocks))
+            {
+                if (entity.isRemoved() || entity.getWorld() != mc.world)
+                {
+                    continue;
+                }
+
+                BlockPos pos = entity.getPos();
+
+                matrices.push();
+                matrices.translate(pos.getX() - cameraPos.x, pos.getY() - cameraPos.y, pos.getZ() - cameraPos.z);
+                mc.getBlockEntityRenderDispatcher().render(entity, context.tickDelta(), matrices, immediate);
+                matrices.pop();
+            }
+
+            immediate.draw();
+        }
+        catch (Exception e)
+        {
+            broken = true;
+
+            e.printStackTrace();
+        }
+        finally
+        {
+            preRenderingModelBlocks = false;
         }
     }
 
@@ -947,7 +1050,10 @@ public class FilmEffects
 
         for (PhotoLayer layer : getPhotoLayers())
         {
-            drawPhoto(getPhotoTexture(layer.texture), layer.opacity, layer.x, layer.y, layer.scale, layer.stretchX, layer.stretchY, layer.rotate, layer.flip, width, height);
+            if (layerMode(layer) == LAYER_OVER)
+            {
+                drawPhoto(getPhotoTexture(layer.texture), layer.opacity, layer.x, layer.y, layer.scale, layer.stretchX, layer.stretchY, layer.rotate, layer.flip, width, height);
+            }
         }
 
         /* Layers animated by playing photo clips draw on top of the static stack */

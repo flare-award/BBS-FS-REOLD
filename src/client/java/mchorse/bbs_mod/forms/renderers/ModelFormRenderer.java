@@ -393,31 +393,42 @@ public class ModelFormRenderer extends FormRenderer<ModelForm> implements ITicka
         final boolean ignoreMaterials = model.materials.size() <= 1;
         final Link materialFallback = ignoreMaterials ? resolvedDefault : model.getTexture();
 
-        model.render(newStack, program, finalColor, light, overlay, stencilMap, this.form.shapeKeys.get(), (material) ->
+        /* Per-material binds happen inside the model renderers - hand them the
+         * form so multi-material models get the material treatment too. */
+        FormMaterials.setCurrentForm(this.form);
+
+        try
         {
-            if (ignoreMaterials)
+            model.render(newStack, program, finalColor, light, overlay, stencilMap, this.form.shapeKeys.get(), (material) ->
             {
-                return resolvedDefault;
-            }
+                if (ignoreMaterials)
+                {
+                    return resolvedDefault;
+                }
 
-            /* Resolution order: animated per-material track > editor-picked static per-material
-             * texture > the material's loaded default (folder/Kd) > the model base texture. */
-            Link override = this.form.materialTextureOverrides.get(material);
+                /* Resolution order: animated per-material track > editor-picked static per-material
+                 * texture > the material's loaded default (folder/Kd) > the model base texture. */
+                Link override = this.form.materialTextureOverrides.get(material);
 
-            if (override != null)
-            {
-                return override;
-            }
+                if (override != null)
+                {
+                    return override;
+                }
 
-            Link picked = this.form.materialTextures.getLink(material);
+                Link picked = this.form.materialTextures.getLink(material);
 
-            if (picked != null)
-            {
-                return picked;
-            }
+                if (picked != null)
+                {
+                    return picked;
+                }
 
-            return model.getMaterialTexture(material, materialFallback);
-        });
+                return model.getMaterialTexture(material, materialFallback);
+            });
+        }
+        finally
+        {
+            FormMaterials.setCurrentForm(null);
+        }
 
         if (stencilMap == null && !this.renderingArm && this.form != null && this.form.ik.get() instanceof MapType ikMap)
         {
