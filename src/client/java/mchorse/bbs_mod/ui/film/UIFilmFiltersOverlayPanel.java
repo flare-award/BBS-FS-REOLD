@@ -92,30 +92,7 @@ public class UIFilmFiltersOverlayPanel extends UIFilmEffectsOverlayPanel
 
     private MapType serializeFilters()
     {
-        MapType data = new MapType();
-
-        data.putFloat("brightness", BBSSettings.filmFilterBrightness.get());
-        data.putFloat("contrast", BBSSettings.filmFilterContrast.get());
-        data.putFloat("saturation", BBSSettings.filmFilterSaturation.get());
-        data.putFloat("hue", BBSSettings.filmFilterHue.get());
-        data.putFloat("temperature", BBSSettings.filmFilterTemperature.get());
-        data.putFloat("gamma", BBSSettings.filmFilterGamma.get());
-        data.putFloat("sharpness", BBSSettings.filmFilterSharpness.get());
-        data.putFloat("vignette", BBSSettings.filmFilterVignette.get());
-        data.putFloat("sepia", BBSSettings.filmFilterSepia.get());
-        data.putFloat("grain", BBSSettings.filmFilterGrain.get());
-        data.putFloat("aberration", BBSSettings.filmFilterAberration.get());
-        data.putFloat("invert", BBSSettings.filmFilterInvert.get());
-        data.putFloat("posterize", BBSSettings.filmFilterPosterize.get());
-        data.putFloat("pixelate", BBSSettings.filmFilterPixelate.get());
-        data.putFloat("distortion", BBSSettings.filmFilterDistortion.get());
-        data.putFloat("bloom", BBSSettings.filmFilterBloom.get());
-        data.putFloat("radial", BBSSettings.filmFilterRadial.get());
-        data.putFloat("vhs", BBSSettings.filmFilterVhs.get());
-        data.putFloat("flip", BBSSettings.filmFilterFlip.get());
-        data.putFloat("fisheye", BBSSettings.filmFilterFisheye.get());
-
-        return data;
+        return FilmEffects.serializeFilters();
     }
 
     /** Settings clamp on set, so a hand-edited preset can't push values out of range. */
@@ -126,27 +103,8 @@ public class UIFilmFiltersOverlayPanel extends UIFilmEffectsOverlayPanel
             return;
         }
 
-        BBSSettings.filmFilterBrightness.set(data.getFloat("brightness", 0F));
-        BBSSettings.filmFilterContrast.set(data.getFloat("contrast", 0F));
-        BBSSettings.filmFilterSaturation.set(data.getFloat("saturation", 0F));
-        BBSSettings.filmFilterHue.set(data.getFloat("hue", 0F));
-        BBSSettings.filmFilterTemperature.set(data.getFloat("temperature", 0F));
-        BBSSettings.filmFilterGamma.set(data.getFloat("gamma", 1F));
-        BBSSettings.filmFilterSharpness.set(data.getFloat("sharpness", 0F));
-        BBSSettings.filmFilterVignette.set(data.getFloat("vignette", 0F));
-        BBSSettings.filmFilterSepia.set(data.getFloat("sepia", 0F));
-        BBSSettings.filmFilterGrain.set(data.getFloat("grain", 0F));
-        BBSSettings.filmFilterAberration.set(data.getFloat("aberration", 0F));
-        BBSSettings.filmFilterInvert.set(data.getFloat("invert", 0F));
-        BBSSettings.filmFilterPosterize.set(data.getFloat("posterize", 0F));
-        BBSSettings.filmFilterPixelate.set(data.getFloat("pixelate", 0F));
-        BBSSettings.filmFilterDistortion.set(data.getFloat("distortion", 0F));
-        BBSSettings.filmFilterBloom.set(data.getFloat("bloom", 0F));
-        BBSSettings.filmFilterRadial.set(data.getFloat("radial", 0F));
-        BBSSettings.filmFilterVhs.set(data.getFloat("vhs", 0F));
-        BBSSettings.filmFilterFlip.set(data.getFloat("flip", 0F));
-        BBSSettings.filmFilterFisheye.set(data.getFloat("fisheye", 0F));
-
+        FilmEffects.applyFilterData(data);
+        FilmEffects.storeToFilm();
         this.updateFields();
     }
 

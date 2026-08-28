@@ -3,6 +3,7 @@ package mchorse.bbs_mod.mixin.client;
 import com.mojang.blaze3d.systems.RenderSystem;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.client.BBSRendering;
+import mchorse.bbs_mod.client.FilmEffects;
 import mchorse.bbs_mod.forms.FormTranslucentQueue;
 import mchorse.bbs_mod.utils.colors.Color;
 import net.minecraft.client.gl.Framebuffer;
@@ -37,6 +38,7 @@ public class WorldRendererMixin
     public void onRenderWorldEnd(CallbackInfo info)
     {
         FormTranslucentQueue.flush();
+        FilmEffects.stampPhotoDepthIfPending();
     }
 
     @Inject(method = "renderSky(Lnet/minecraft/client/util/math/MatrixStack;Lorg/joml/Matrix4f;FLnet/minecraft/client/render/Camera;ZLjava/lang/Runnable;)V", at = @At("HEAD"), cancellable = true)
@@ -65,6 +67,11 @@ public class WorldRendererMixin
         if (renderLayer == RenderLayer.getTranslucent() && !BBSRendering.isIrisShadowPass())
         {
             FormTranslucentQueue.flush();
+
+            /* The photo depth fence goes down after the deferred translucent forms
+             * land, and before the translucent terrain - water can't cover the
+             * in-world photos, while the forms' translucent parts still can. */
+            FilmEffects.stampPhotoDepthIfPending();
         }
 
         if (BBSSettings.chromaSkyEnabled.get() && !BBSSettings.chromaSkyTerrain.get())

@@ -40,6 +40,9 @@ public class Film extends ValueGroup
      */
     public final ValueFloat mobRecordingRadius = new ValueFloat("mob_recording_radius", 0F);
 
+    /** Serialized film effects (color grading filters and photo layers), edited from the film panel's overlays. */
+    public final ValueString effects = new ValueString("effects", "");
+
     public final ValueString description = new ValueString("description", "");
     /** UTC instant as ISO-8601 ({@link Instant#toString()}), set when the film is first created. */
     public final ValueString createdAt = new ValueString("created_at", "");
@@ -60,6 +63,7 @@ public class Film extends ValueGroup
         this.add(this.xpProgress);
         this.add(this.mobRecordingRadius);
 
+        this.add(this.effects);
         this.add(this.description);
         this.add(this.createdAt);
         this.add(this.timeSpentActive);

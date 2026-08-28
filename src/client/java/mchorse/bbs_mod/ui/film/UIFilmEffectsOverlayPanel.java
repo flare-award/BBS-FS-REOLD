@@ -1,5 +1,6 @@
 package mchorse.bbs_mod.ui.film;
 
+import mchorse.bbs_mod.client.FilmEffects;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.settings.values.numeric.ValueFloat;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
@@ -60,7 +61,13 @@ public abstract class UIFilmEffectsOverlayPanel extends UIOverlayPanel
      */
     protected UIElement createRow(IKey label, DoubleSupplier getter, DoubleConsumer setter, double min, double max, double uiScale, boolean integer)
     {
-        UISliderTrackpad slider = new UISliderTrackpad((v) -> setter.accept(v / uiScale));
+        UISliderTrackpad slider = new UISliderTrackpad((v) ->
+        {
+            setter.accept(v / uiScale);
+
+            /* Filters and photo layers are per-film state - every edit lands in the film */
+            FilmEffects.storeToFilm();
+        });
 
         slider.limit(min, max);
 
@@ -91,7 +98,11 @@ public abstract class UIFilmEffectsOverlayPanel extends UIOverlayPanel
     /** Same as {@link #createOptionsRow(IKey, ValueFloat, IKey...)}, bound to arbitrary get/set functions. */
     protected UIElement createOptionsRow(IKey label, IntSupplier getter, IntConsumer setter, IKey... options)
     {
-        UICirculate button = new UICirculate((b) -> setter.accept(b.getValue()));
+        UICirculate button = new UICirculate((b) ->
+        {
+            setter.accept(b.getValue());
+            FilmEffects.storeToFilm();
+        });
 
         for (IKey option : options)
         {

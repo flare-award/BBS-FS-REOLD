@@ -46,6 +46,7 @@ public class UIPhotoClip extends UIClip<PhotoClip>
             case "stretch_y": return UIKeys.FILM_PHOTO_STRETCH_Y;
             case "rotate": return UIKeys.FILM_PHOTO_ROTATE;
             case "flip": return UIKeys.FILM_FILTERS_FLIP;
+            case "layer_mode": return UIKeys.FILM_PHOTO_LAYER_MODE;
         }
 
         return IKey.constant(id);
@@ -103,6 +104,7 @@ public class UIPhotoClip extends UIClip<PhotoClip>
         this.addKeyframeSheet(this.clip.stretchY);
         this.addKeyframeSheet(this.clip.rotate);
         this.addKeyframeSheet(this.clip.flip);
+        this.addKeyframeSheet(this.clip.layerMode);
     }
 
     @Override

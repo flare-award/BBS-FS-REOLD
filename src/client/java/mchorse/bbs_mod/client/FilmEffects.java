@@ -8,6 +8,13 @@ import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.camera.clips.misc.FilterClip;
 import mchorse.bbs_mod.camera.clips.misc.PhotoClip;
 import mchorse.bbs_mod.camera.controller.CameraWorkCameraController;
+import mchorse.bbs_mod.data.DataToString;
+import mchorse.bbs_mod.data.types.MapType;
+import mchorse.bbs_mod.film.Film;
+import mchorse.bbs_mod.ui.framework.UIScreen;
+import mchorse.bbs_mod.ui.dashboard.UIDashboard;
+import mchorse.bbs_mod.ui.film.UIFilmPanel;
+import mchorse.bbs_mod.ui.framework.UIBaseMenu;
 import mchorse.bbs_mod.graphics.Framebuffer;
 import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.graphics.texture.TextureFormat;
@@ -406,6 +413,17 @@ public class FilmEffects
     /* Up while this class itself replays model blocks, so the dispatcher hide-out steps aside */
     private static boolean preRenderingModelBlocks;
 
+    /* Whether model blocks were already replayed this frame (for the in-world photo modes) */
+    private static boolean modelBlocksReplayed;
+
+    /* A world-mode photo was drawn this frame: everything the world draws after it
+     * gets fenced off with a near-plane depth stamp, so water, mobs and particles
+     * can't land on top of the photo. */
+    private static boolean stampPending;
+
+    /* The film whose effects are currently loaded into the working sliders */
+    private static Film currentFilm;
+
     private static int vao;
     private static int vbo;
     private static int filterProgram;
@@ -450,6 +468,128 @@ public class FilmEffects
     /* The photo layer list is reparsed only when the serialized setting changes */
     private static String cachedLayersString;
     private static List<PhotoLayer> cachedLayers = new ArrayList<>();
+
+    /**
+     * Load the given film's effects into the working sliders, putting the
+     * previous film's state away first. Filters and photo layers are per-film:
+     * they live in the film's data and follow it around.
+     */
+    public static void setCurrentFilm(Film film)
+    {
+        if (currentFilm == film)
+        {
+            return;
+        }
+
+        storeToFilm();
+        currentFilm = film;
+        loadFromFilm();
+    }
+
+    /**
+     * Whether the film effects should show at all right now: only while the
+     * film panel previews its film, or while a film camera plays or records.
+     * Anywhere else (other dashboard panels, plain gameplay) the frame stays
+     * untouched.
+     */
+    public static boolean isEffectsActive()
+    {
+        if (currentFilm == null)
+        {
+            return false;
+        }
+
+        if (BBSModClient.getCameraController().getCurrent() instanceof CameraWorkCameraController)
+        {
+            return true;
+        }
+
+        UIBaseMenu menu = UIScreen.getCurrentMenu();
+
+        return menu instanceof UIDashboard dashboard && dashboard.getPanels().panel instanceof UIFilmPanel;
+    }
+
+    /** Push the working sliders and photo layers into the current film's data. */
+    public static void storeToFilm()
+    {
+        if (currentFilm == null || BBSSettings.filmFilterBrightness == null)
+        {
+            return;
+        }
+
+        MapType data = new MapType();
+
+        data.put("filters", serializeFilters());
+        data.putString("photo_layers", BBSSettings.filmPhotoLayers.get());
+        currentFilm.effects.set(DataToString.toString(data));
+    }
+
+    private static void loadFromFilm()
+    {
+        MapType data = currentFilm == null ? null : DataToString.mapFromString(currentFilm.effects.get());
+
+        applyFilterData(data == null ? new MapType() : data.getMap("filters"));
+        BBSSettings.filmPhotoLayers.set(data == null ? "" : data.getString("photo_layers", ""));
+    }
+
+    /** The film filter sliders as one map - the canonical format for presets and film data alike. */
+    public static MapType serializeFilters()
+    {
+        MapType data = new MapType();
+
+        data.putFloat("brightness", BBSSettings.filmFilterBrightness.get());
+        data.putFloat("contrast", BBSSettings.filmFilterContrast.get());
+        data.putFloat("saturation", BBSSettings.filmFilterSaturation.get());
+        data.putFloat("hue", BBSSettings.filmFilterHue.get());
+        data.putFloat("temperature", BBSSettings.filmFilterTemperature.get());
+        data.putFloat("gamma", BBSSettings.filmFilterGamma.get());
+        data.putFloat("sharpness", BBSSettings.filmFilterSharpness.get());
+        data.putFloat("vignette", BBSSettings.filmFilterVignette.get());
+        data.putFloat("sepia", BBSSettings.filmFilterSepia.get());
+        data.putFloat("grain", BBSSettings.filmFilterGrain.get());
+        data.putFloat("aberration", BBSSettings.filmFilterAberration.get());
+        data.putFloat("invert", BBSSettings.filmFilterInvert.get());
+        data.putFloat("posterize", BBSSettings.filmFilterPosterize.get());
+        data.putFloat("pixelate", BBSSettings.filmFilterPixelate.get());
+        data.putFloat("distortion", BBSSettings.filmFilterDistortion.get());
+        data.putFloat("bloom", BBSSettings.filmFilterBloom.get());
+        data.putFloat("radial", BBSSettings.filmFilterRadial.get());
+        data.putFloat("vhs", BBSSettings.filmFilterVhs.get());
+        data.putFloat("flip", BBSSettings.filmFilterFlip.get());
+        data.putFloat("fisheye", BBSSettings.filmFilterFisheye.get());
+
+        return data;
+    }
+
+    /** Settings clamp on set, so hand-edited data can't push values out of range. */
+    public static void applyFilterData(MapType data)
+    {
+        if (data == null)
+        {
+            data = new MapType();
+        }
+
+        BBSSettings.filmFilterBrightness.set(data.getFloat("brightness", 0F));
+        BBSSettings.filmFilterContrast.set(data.getFloat("contrast", 0F));
+        BBSSettings.filmFilterSaturation.set(data.getFloat("saturation", 0F));
+        BBSSettings.filmFilterHue.set(data.getFloat("hue", 0F));
+        BBSSettings.filmFilterTemperature.set(data.getFloat("temperature", 0F));
+        BBSSettings.filmFilterGamma.set(data.getFloat("gamma", 1F));
+        BBSSettings.filmFilterSharpness.set(data.getFloat("sharpness", 0F));
+        BBSSettings.filmFilterVignette.set(data.getFloat("vignette", 0F));
+        BBSSettings.filmFilterSepia.set(data.getFloat("sepia", 0F));
+        BBSSettings.filmFilterGrain.set(data.getFloat("grain", 0F));
+        BBSSettings.filmFilterAberration.set(data.getFloat("aberration", 0F));
+        BBSSettings.filmFilterInvert.set(data.getFloat("invert", 0F));
+        BBSSettings.filmFilterPosterize.set(data.getFloat("posterize", 0F));
+        BBSSettings.filmFilterPixelate.set(data.getFloat("pixelate", 0F));
+        BBSSettings.filmFilterDistortion.set(data.getFloat("distortion", 0F));
+        BBSSettings.filmFilterBloom.set(data.getFloat("bloom", 0F));
+        BBSSettings.filmFilterRadial.set(data.getFloat("radial", 0F));
+        BBSSettings.filmFilterVhs.set(data.getFloat("vhs", 0F));
+        BBSSettings.filmFilterFlip.set(data.getFloat("flip", 0F));
+        BBSSettings.filmFilterFisheye.set(data.getFloat("fisheye", 0F));
+    }
 
     /**
      * Whether the compare button in the filters overlay is held down right now,
@@ -561,6 +701,7 @@ public class FilmEffects
         cachedLayers = layers;
         cachedLayersString = serialized;
         BBSSettings.filmPhotoLayers.set(serialized);
+        storeToFilm();
     }
 
     /**
@@ -624,11 +765,16 @@ public class FilmEffects
      */
     public static void apply(Framebuffer framebuffer, int width, int height)
     {
+        if (broken || !isEffectsActive() || width <= 0 || height <= 0)
+        {
+            return;
+        }
+
         FilterState state = getFilterState();
         boolean filters = hasFilters(state) && !showOriginal;
         boolean photo = hasPostPhoto() && !showNoPhoto;
 
-        if (broken || (!filters && !photo) || width <= 0 || height <= 0)
+        if (!filters && !photo)
         {
             return;
         }
@@ -792,10 +938,15 @@ public class FilmEffects
 
     private static int layerMode(PhotoLayer layer)
     {
-        return Math.max(0, Math.min(3, Math.round(layer.layerMode)));
+        return clampLayerMode(layer.layerMode);
     }
 
-    /** Whether any layer with a photo sits in the given layer mode. */
+    private static int clampLayerMode(float mode)
+    {
+        return Math.max(0, Math.min(3, Math.round(mode)));
+    }
+
+    /** Whether any layer or clip photo sits in the given layer mode. */
     private static boolean hasWorldPhoto(int mode)
     {
         for (PhotoLayer layer : getPhotoLayers())
@@ -806,10 +957,18 @@ public class FilmEffects
             }
         }
 
+        for (PhotoClip.State state : getClipPhotoStates())
+        {
+            if (!state.texture.isEmpty() && clampLayerMode(state.layerMode) == mode)
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 
-    /** Whether the post pass has any photos left to draw: over-frame layers and clip layers. */
+    /** Whether the post pass has any photos left to draw: the over-frame layers and clip layers. */
     private static boolean hasPostPhoto()
     {
         for (PhotoLayer layer : getPhotoLayers())
@@ -822,7 +981,7 @@ public class FilmEffects
 
         for (PhotoClip.State state : getClipPhotoStates())
         {
-            if (!state.texture.isEmpty())
+            if (!state.texture.isEmpty() && clampLayerMode(state.layerMode) == LAYER_OVER)
             {
                 return true;
             }
@@ -833,48 +992,91 @@ public class FilmEffects
 
     /**
      * Whether the block entity dispatcher should skip model blocks this frame:
-     * a behind-the-actors photo replays them earlier itself, so the regular
-     * draw would put them back on top of the photo. Never in the shadow pass -
-     * the blocks must keep casting shadows.
+     * any in-world photo mode replays them itself at the ordering point the
+     * mode calls for, so the regular draw would put them in the wrong place.
+     * Never in the shadow pass - the blocks must keep casting shadows.
      */
     public static boolean shouldHideModelBlocks()
     {
         return !preRenderingModelBlocks && !broken && !showNoPhoto
-            && !BBSRendering.isIrisShadowPass() && hasWorldPhoto(LAYER_BEHIND_ACTORS);
+            && !BBSRendering.isIrisShadowPass() && isEffectsActive()
+            && (hasWorldPhoto(LAYER_BEHIND_ACTORS) || hasWorldPhoto(LAYER_BEHIND_BLOCKS) || hasWorldPhoto(LAYER_BEHIND_MODELS));
     }
 
     /**
      * Draw the in-world photo layers, so everything rendered after them covers
      * the photos while everything before stays behind. Runs twice around the
-     * film's forms: before them it replays world model blocks (mode 1 wants
-     * them under the photo) and draws the layers the actors should cover;
-     * after them it draws the layers that cover the actors, which the model
-     * blocks - rendered later in the frame - then land on top of.
+     * film's forms. Model blocks are replayed at the point each mode calls for
+     * (their regular draw is skipped), and once any in-world photo is down, a
+     * near-plane depth stamp fences the rest of the world pass off - water,
+     * mobs, particles and the like can't land on top of the photo.
      *
      * <p>Photos draw through the vanilla textured program, which Iris redirects
      * into the shader pack's own pipeline - they survive deferred packs.</p>
      */
     public static void renderPhotosInWorld(WorldRenderContext context, boolean afterForms)
     {
-        if (broken || showNoPhoto)
+        if (broken || showNoPhoto || !isEffectsActive())
         {
             return;
         }
 
-        if (!afterForms && hasWorldPhoto(LAYER_BEHIND_ACTORS))
+        if (!afterForms)
         {
-            renderModelBlocksEarly(context);
+            modelBlocksReplayed = false;
+            stampPending = false;
+
+            /* Behind-the-actors photos want the blocks under themselves */
+            if (hasWorldPhoto(LAYER_BEHIND_ACTORS))
+            {
+                renderModelBlocksEarly(context);
+                modelBlocksReplayed = true;
+            }
         }
 
         boolean draws = afterForms
             ? hasWorldPhoto(LAYER_BEHIND_BLOCKS)
             : hasWorldPhoto(LAYER_BEHIND_ACTORS) || hasWorldPhoto(LAYER_BEHIND_MODELS);
 
-        if (!draws)
+        if (draws)
         {
-            return;
+            drawWorldPhotos(afterForms);
+            stampPending = true;
         }
 
+        if (afterForms)
+        {
+            /* Behind-the-blocks and behind-the-models photos want the blocks above
+             * themselves: replay them now, right after those photos went down */
+            if (!modelBlocksReplayed && (hasWorldPhoto(LAYER_BEHIND_BLOCKS) || hasWorldPhoto(LAYER_BEHIND_MODELS)))
+            {
+                renderModelBlocksEarly(context);
+                modelBlocksReplayed = true;
+            }
+
+            /* With shaders every form draws immediately, so the fence can go down
+             * right here - it also blocks the entities Iris renders later. Without
+             * shaders the deferred translucent form parts still have to land on
+             * top, so the stamp waits for the translucent layer hook. */
+            if (stampPending && BBSRendering.isIrisShadersEnabled())
+            {
+                stampPhotoDepth();
+            }
+        }
+    }
+
+    /** Stamp the near-plane depth fence if an in-world photo went down this frame. */
+    public static void stampPhotoDepthIfPending()
+    {
+        if (stampPending)
+        {
+            stampPhotoDepth();
+        }
+    }
+
+    /** The in-world photos of one stage: layers first, then the clip-driven ones. */
+    private static void drawWorldPhotos(boolean afterForms)
+    {
         int[] viewport = new int[4];
 
         GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport);
@@ -907,14 +1109,17 @@ public class FilmEffects
         {
             for (PhotoLayer layer : getPhotoLayers())
             {
-                int mode = layerMode(layer);
-                boolean drawsNow = afterForms
-                    ? mode == LAYER_BEHIND_BLOCKS
-                    : mode == LAYER_BEHIND_ACTORS || mode == LAYER_BEHIND_MODELS;
-
-                if (drawsNow)
+                if (drawsInStage(layerMode(layer), afterForms))
                 {
                     drawPhotoInWorld(getPhotoTexture(layer.texture), layer.opacity, layer.x, layer.y, layer.scale, layer.stretchX, layer.stretchY, layer.rotate, layer.flip, width, height);
+                }
+            }
+
+            for (PhotoClip.State state : getClipPhotoStates())
+            {
+                if (drawsInStage(clampLayerMode(state.layerMode), afterForms))
+                {
+                    drawPhotoInWorld(getPhotoTexture(state.texture), state.opacity, state.x, state.y, state.scale, state.stretchX, state.stretchY, state.rotate, state.flip, width, height);
                 }
             }
         }
@@ -936,11 +1141,70 @@ public class FilmEffects
         }
     }
 
+    private static boolean drawsInStage(int mode, boolean afterForms)
+    {
+        return afterForms
+            ? mode == LAYER_BEHIND_BLOCKS
+            : mode == LAYER_BEHIND_ACTORS || mode == LAYER_BEHIND_MODELS;
+    }
+
     /**
-     * Replay every ticking model block through the regular dispatcher, before
-     * the behind-the-actors photos draw; the dispatcher's own pass then skips
-     * them (see {@link #shouldHideModelBlocks()}), so they end up under the
-     * photo instead of on top of it.
+     * A depth-only fullscreen quad at the near plane. Everything the world pass
+     * draws after it fails the depth test where the photo is - water, mobs,
+     * vanilla block entities and particles stay behind the photo, exactly like
+     * the sky and the terrain that were drawn before it.
+     */
+    private static void stampPhotoDepth()
+    {
+        stampPending = false;
+
+        Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
+        VertexSorter previousSorter = RenderSystem.getVertexSorting();
+        MatrixStack modelViewStack = RenderSystem.getModelViewStack();
+        Matrix4f identity = new Matrix4f();
+        BufferBuilder builder = Tessellator.getInstance().getBuffer();
+
+        RenderSystem.setProjectionMatrix(identity, VertexSorter.BY_Z);
+        modelViewStack.push();
+        modelViewStack.loadIdentity();
+        RenderSystem.applyModelViewMatrix();
+        RenderSystem.colorMask(false, false, false, false);
+        RenderSystem.enableDepthTest();
+        RenderSystem.depthFunc(GL11.GL_ALWAYS);
+        RenderSystem.depthMask(true);
+        RenderSystem.disableCull();
+        RenderSystem.setShader(GameRenderer::getPositionProgram);
+
+        try
+        {
+            builder.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION);
+            builder.vertex(identity, -1F, 1F, -1F).next();
+            builder.vertex(identity, -1F, -1F, -1F).next();
+            builder.vertex(identity, 1F, -1F, -1F).next();
+            builder.vertex(identity, 1F, 1F, -1F).next();
+            BufferRenderer.drawWithGlobalProgram(builder.end());
+        }
+        catch (Exception e)
+        {
+            broken = true;
+
+            e.printStackTrace();
+        }
+        finally
+        {
+            RenderSystem.colorMask(true, true, true, true);
+            RenderSystem.depthFunc(GL11.GL_LEQUAL);
+            RenderSystem.enableCull();
+            modelViewStack.pop();
+            RenderSystem.applyModelViewMatrix();
+            RenderSystem.setProjectionMatrix(previousProjection, previousSorter);
+        }
+    }
+
+    /**
+     * Replay every ticking model block through the regular dispatcher at the
+     * ordering point the photo modes call for; the dispatcher's own pass skips
+     * them then (see {@link #shouldHideModelBlocks()}).
      */
     private static void renderModelBlocksEarly(WorldRenderContext context)
     {
@@ -1059,7 +1323,10 @@ public class FilmEffects
         /* Layers animated by playing photo clips draw on top of the static stack */
         for (PhotoClip.State state : getClipPhotoStates())
         {
-            drawPhoto(getPhotoTexture(state.texture), state.opacity, state.x, state.y, state.scale, state.stretchX, state.stretchY, state.rotate, state.flip, width, height);
+            if (clampLayerMode(state.layerMode) == LAYER_OVER)
+            {
+                drawPhoto(getPhotoTexture(state.texture), state.opacity, state.x, state.y, state.scale, state.stretchX, state.stretchY, state.rotate, state.flip, width, height);
+            }
         }
     }
 
