@@ -9,6 +9,7 @@ import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
+import mchorse.bbs_mod.utils.MathUtils;
 import mchorse.bbs_mod.utils.colors.Colors;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.ShaderProgram;
@@ -148,7 +149,39 @@ public class Batcher2D
 
     public void box(float x1, float y1, float x2, float y2, int color)
     {
+        /* Under the custom gradient background, flat surface fills flow across
+         * the screen: every box picks its corner colors from where it sits, so
+         * the whole interface reads as one gradient assembled from its parts. */
+        if (BBSSettings.isBackgroundGradient())
+        {
+            int end = BBSSettings.backgroundGradientEnd(color);
+
+            if (end != 0)
+            {
+                float w = Math.max(1, this.context.getScaledWindowWidth());
+                float h = Math.max(1, this.context.getScaledWindowHeight());
+
+                this.box(x1, y1, x2 - x1, y2 - y1,
+                    this.backgroundCorner(color, end, x1 / w, y1 / h),
+                    this.backgroundCorner(color, end, x2 / w, y1 / h),
+                    this.backgroundCorner(color, end, x1 / w, y2 / h),
+                    this.backgroundCorner(color, end, x2 / w, y2 / h));
+
+                return;
+            }
+        }
+
         this.box(x1, y1, x2 - x1, y2 - y1, color, color, color, color);
+    }
+
+    private int backgroundCorner(int start, int end, float tx, float ty)
+    {
+        int direction = BBSSettings.backgroundGradientDirection();
+        float t = direction == BBSSettings.GRADIENT_HORIZONTAL ? tx
+            : direction == BBSSettings.GRADIENT_VERTICAL ? ty
+            : (tx + ty) * 0.5F;
+
+        return Colors.lerp(start, end, MathUtils.clamp(t, 0F, 1F));
     }
 
     public void box(float x, float y, float w, float h, int color1, int color2, int color3, int color4)
@@ -209,6 +242,58 @@ public class Batcher2D
         }
     }
 
+    /**
+     * {@link #surfaceBox(int, int, int, int, int, boolean, boolean)} whose fill flows
+     * between two colors in the given direction, keeping the same bevel treatment.
+     * The direction is one of the {@link BBSSettings} gradient constants: horizontal
+     * flows left to right, vertical top to bottom, diagonal top-left to bottom-right.
+     */
+    public void gradientSurfaceBox(int x1, int y1, int x2, int y2, int startFill, int endFill, boolean shadow, boolean border, int direction)
+    {
+        if (border)
+        {
+            this.box(x1, y1, x2, y2, Colors.A100);
+
+            x1++;
+            y1++;
+            x2--;
+            y2--;
+        }
+
+        /* Corner colors, laid out as c1 (top-left), c2 (top-right), c3 (bottom-left),
+         * c4 (bottom-right) - matching the box() vertex order */
+        int c1 = startFill;
+        int c2 = direction == BBSSettings.GRADIENT_VERTICAL ? startFill : endFill;
+        int c3 = direction == BBSSettings.GRADIENT_HORIZONTAL ? startFill : endFill;
+        int c4 = endFill;
+
+        if (direction == BBSSettings.GRADIENT_DIAGONAL)
+        {
+            c2 = Colors.lerp(startFill, endFill, 0.5F);
+            c3 = c2;
+        }
+
+        this.box(x1, y1, x2 - x1, y2 - y1, c1, c2, c3, c4);
+
+        if (BBSSettings.interfaceHighlights.get())
+        {
+            int light1 = Colors.lerp(c1, Colors.WHITE, HIGHLIGHT_STRENGTH);
+            int light2 = Colors.lerp(c2, Colors.WHITE, HIGHLIGHT_STRENGTH);
+            int light3 = Colors.lerp(c3, Colors.WHITE, HIGHLIGHT_STRENGTH);
+
+            this.box(x1, y1, x2 - x1, 1, light1, light2, light1, light2);
+            this.box(x1, y1, 1, y2 - y1, light1, light1, light3, light3);
+        }
+
+        if (shadow && BBSSettings.interfaceShadows.get())
+        {
+            int dark3 = Colors.lerp(c3, Colors.A100, 0.4F);
+            int dark4 = Colors.lerp(c4, Colors.A100, 0.4F);
+
+            this.box(x1, y2 - 2, x2 - x1, 2, dark3, dark4, dark3, dark4);
+        }
+    }
+
     public void dropShadow(int left, int top, int right, int bottom, int offset, int opaque, int shadow)
     {
         left -= offset;
@@ -257,6 +342,39 @@ public class Batcher2D
     }
 
     /* Gradients */
+
+    /**
+     * Fill with the user's accent color: flat primary normally, or the primary
+     * gradient flowing in the configured direction when it's enabled. The alpha
+     * mask (e.g. {@link Colors#A50}) applies to both ends, so accent highlights
+     * all over the UI follow the theme the same way buttons do.
+     */
+    public void primaryBox(float x1, float y1, float x2, float y2, int alpha)
+    {
+        int start = (BBSSettings.primaryColor.get() & Colors.RGB) | alpha;
+
+        if (!BBSSettings.isPrimaryGradient())
+        {
+            this.box(x1, y1, x2, y2, start);
+
+            return;
+        }
+
+        int end = (BBSSettings.primaryColorEnd() & Colors.RGB) | alpha;
+        int direction = BBSSettings.primaryGradientDirection();
+        int c1 = start;
+        int c2 = direction == BBSSettings.GRADIENT_VERTICAL ? start : end;
+        int c3 = direction == BBSSettings.GRADIENT_HORIZONTAL ? start : end;
+        int c4 = end;
+
+        if (direction == BBSSettings.GRADIENT_DIAGONAL)
+        {
+            c2 = Colors.lerp(start, end, 0.5F);
+            c3 = c2;
+        }
+
+        this.box(x1, y1, x2 - x1, y2 - y1, c1, c2, c3, c4);
+    }
 
     public void gradientHBox(float x1, float y1, float x2, float y2, int leftColor, int rightColor)
     {

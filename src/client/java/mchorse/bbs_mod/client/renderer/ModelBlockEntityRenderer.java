@@ -5,11 +5,13 @@ import mchorse.bbs_mod.BBSMod;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.blocks.entities.ModelBlockEntity;
 import mchorse.bbs_mod.blocks.entities.ModelProperties;
+import mchorse.bbs_mod.client.BBSRendering;
 import mchorse.bbs_mod.cubic.ModelInstance;
 import mchorse.bbs_mod.cubic.model.View;
 import mchorse.bbs_mod.entity.ActorEntity;
 import mchorse.bbs_mod.forms.FormUtilsClient;
 import mchorse.bbs_mod.forms.entities.IEntity;
+import mchorse.bbs_mod.forms.forms.FilterBoardForm;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.forms.forms.MobForm;
 import mchorse.bbs_mod.forms.forms.ModelForm;
@@ -109,6 +111,14 @@ public class ModelBlockEntityRenderer implements BlockEntityRenderer<ModelBlockE
     {
         MinecraftClient mc = MinecraftClient.getInstance();
         ModelProperties properties = entity.getProperties();
+
+        if (properties.getForm() instanceof FilterBoardForm && BBSRendering.shouldDeferFilterBoard(entity))
+        {
+            BBSRendering.deferFilterBoard(entity);
+
+            return;
+        }
+
         Transform transform = properties.getTransform();
         BlockPos pos = entity.getPos();
 
@@ -343,7 +353,11 @@ public class ModelBlockEntityRenderer implements BlockEntityRenderer<ModelBlockE
         {
             if (dashboard.getPanels().panel instanceof UIModelBlockPanel modelBlockPanel)
             {
-                return !modelBlockPanel.isEditing(entity) || UIModelBlockPanel.toggleRendering;
+                /* The FilterBoard has no visible billboard in the editor: keep the
+                 * actual world composition visible instead of requiring F7. */
+                return !modelBlockPanel.isEditing(entity)
+                    || UIModelBlockPanel.toggleRendering
+                    || entity.getProperties().getForm() instanceof FilterBoardForm;
             }
         }
 

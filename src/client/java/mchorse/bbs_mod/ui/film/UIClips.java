@@ -124,7 +124,7 @@ public class UIClips extends UIElement
         int width = font.getWidth(label) + 3;
         int color = BBSSettings.primaryColor.get();
 
-        context.batcher.box(x, area.y, x + 1, area.ey(), color | Colors.A100);
+        context.batcher.primaryBox(x, area.y, x + 1, area.ey(), Colors.A100);
 
         /* Move the tick line left, so it won't overflow the timeline */
         if (x + 1 + width > area.ex())

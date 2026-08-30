@@ -133,7 +133,23 @@ public class UICirculate extends UIClickable<UICirculate>
             color = Colors.mulRGB(color, 0.85F);
         }
 
-        context.batcher.surfaceBox(this.area.x, this.area.y, this.area.ex(), this.area.ey(), color, true, false);
+        if (!this.custom && BBSSettings.isPrimaryGradient())
+        {
+            /* The accent flows into the second color; hovering dims both ends the
+             * same way the flat fill dims, so the gradient darkens as one piece. */
+            int end = BBSSettings.primaryColorEnd() | Colors.A100;
+
+            if (this.hover)
+            {
+                end = Colors.mulRGB(end, 0.85F);
+            }
+
+            context.batcher.gradientSurfaceBox(this.area.x, this.area.y, this.area.ex(), this.area.ey(), color, end, true, false, BBSSettings.primaryGradientDirection());
+        }
+        else
+        {
+            context.batcher.surfaceBox(this.area.x, this.area.y, this.area.ex(), this.area.ey(), color, true, false);
+        }
 
         FontRenderer font = context.batcher.getFont();
         String label = font.limitToWidth(this.label.get(), this.area.w - 4);

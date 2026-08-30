@@ -37,8 +37,11 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.VertexConsumer;
+import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.util.Window;
 import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
@@ -62,6 +65,12 @@ public class BBSRendering
      * Cached rendered model blocks
      */
     public static final Set<ModelBlockEntity> capturedModelBlocks = new HashSet<>();
+
+    /* FilterBoard model blocks are composited after vanilla entities, because their
+     * lens snapshot must include mobs, players and other world forms. */
+    private static final Set<ModelBlockEntity> deferredFilterBoards = new HashSet<>();
+    private static boolean renderingDeferredFilterBoards;
+    private static boolean deferredFilterBoardsRendered;
 
     public static boolean canRender;
 
@@ -367,8 +376,13 @@ public class BBSRendering
 
         orthoDistance = -1F;
 
+        deferredFilterBoards.clear();
+        deferredFilterBoardsRendered = false;
+        FilmEffects.clearQueuedFilterBoards();
+
         MinecraftClient mc = MinecraftClient.getInstance();
         BBSModClient.getFilms().startRenderFrame(mc.getTickDelta());
+        FilmEffects.beginFilterBoardFrame();
 
         UIBaseMenu menu = UIScreen.getCurrentMenu();
 
@@ -385,6 +399,74 @@ public class BBSRendering
         }
 
         toggleFramebuffer(true);
+    }
+
+    public static boolean shouldDeferFilterBoard(ModelBlockEntity entity)
+    {
+        return entity != null && renderingWorld && !renderingDeferredFilterBoards;
+    }
+
+    public static void deferFilterBoard(ModelBlockEntity entity)
+    {
+        if (entity != null)
+        {
+            deferredFilterBoards.add(entity);
+        }
+    }
+
+    /**
+     * Replay FilterBoard model blocks after vanilla has rendered its entities.
+     * A billboard lens rendered during the block-entity pass would snapshot an
+     * incomplete frame, so only this form type is moved to the late world pass.
+     */
+    public static void renderDeferredFilterBoards(WorldRenderContext context)
+    {
+        if (deferredFilterBoardsRendered || deferredFilterBoards.isEmpty())
+        {
+            return;
+        }
+
+        deferredFilterBoardsRendered = true;
+
+        MinecraftClient mc = MinecraftClient.getInstance();
+        MatrixStack matrices = context.matrixStack();
+        Vec3d cameraPos = context.camera().getPos();
+        VertexConsumerProvider consumers = context.consumers();
+
+        if (consumers == null)
+        {
+            consumers = mc.getBufferBuilders().getEntityVertexConsumers();
+        }
+
+        renderingDeferredFilterBoards = true;
+
+        try
+        {
+            for (ModelBlockEntity entity : new HashSet<>(deferredFilterBoards))
+            {
+                if (entity.isRemoved() || entity.getWorld() != mc.world)
+                {
+                    continue;
+                }
+
+                BlockPos pos = entity.getPos();
+
+                matrices.push();
+                matrices.translate(pos.getX() - cameraPos.x, pos.getY() - cameraPos.y, pos.getZ() - cameraPos.z);
+                mc.getBlockEntityRenderDispatcher().render(entity, context.tickDelta(), matrices, consumers);
+                matrices.pop();
+            }
+        }
+        finally
+        {
+            renderingDeferredFilterBoards = false;
+            deferredFilterBoards.clear();
+        }
+    }
+
+    public static void flushDeferredFilterBoards()
+    {
+        FilmEffects.renderQueuedFilterBoards();
     }
 
     public static void onWorldRenderEnd()
@@ -458,6 +540,12 @@ public class BBSRendering
 
         GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
         GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevDraw);
+
+        /* Color grading and the photo overlay are baked right into the export texture:
+         * the film preview, the video recorder and the screenshot all read it, so the
+         * effects land in everything the user sees and exports at once. The recording
+         * overlay below stays out on purpose - it's screen-only feedback. */
+        FilmEffects.apply(exportFramebuffer, targetWidth, targetHeight);
 
         renderRecordingOverlay();
 
@@ -557,12 +645,28 @@ public class BBSRendering
 
     public static void renderCoolStuff(WorldRenderContext worldRenderContext)
     {
+        /* In-world photo layers draw around the film's forms: before them for the
+         * layers the actors should cover, after them for the layers that cover the
+         * actors - and the shadow pass never sees the photos at all. */
+        if (!isIrisShadowPass())
+        {
+            FilmEffects.renderPhotosInWorld(worldRenderContext, false);
+        }
+
         if (MinecraftClient.getInstance().currentScreen instanceof UIScreen screen)
         {
             screen.renderInWorld(worldRenderContext);
         }
 
+        /* FilterBoard lenses must all read the scene before any film form draws;
+         * this also makes separate boards independent instead of recursively stacking. */
+        FilmEffects.beginFilterBoardFrame();
         BBSModClient.getFilms().render(worldRenderContext);
+
+        if (!isIrisShadowPass())
+        {
+            FilmEffects.renderPhotosInWorld(worldRenderContext, true);
+        }
     }
 
     public static boolean isOptifinePresent()

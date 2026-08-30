@@ -525,14 +525,14 @@ public class UISliderTrackpad extends UINumericInput<UISliderTrackpad>
         {
             int primary = BBSSettings.primaryColor.get();
             int fillX = MathUtils.clamp(this.getHandleCenter(), this.area.x, this.area.ex());
-            int fillColor = Colors.setA(primary, this.dragging ? DRAG_VALUE_ALPHA : VALUE_ALPHA);
+            int fillAlpha = (int) ((this.dragging ? DRAG_VALUE_ALPHA : VALUE_ALPHA) * 255F) << 24;
             int handleColor = this.dragging ? Colors.WHITE : Colors.setA(Colors.WHITE, this.handleArea.isInside(context) ? HANDLE_HOVER_ALPHA : HANDLE_ALPHA);
 
             this.area.render(context.batcher, BBSSettings.inputSurface());
 
             if (this.hasSliderRange())
             {
-                context.batcher.box(this.area.x, this.area.y, fillX, this.area.ey(), fillColor);
+                context.batcher.primaryBox(this.area.x, this.area.y, fillX, this.area.ey(), fillAlpha);
                 context.batcher.box(fillX - 1, this.area.y, fillX + 1, this.area.ey(), Colors.setA(primary, MARKER_ALPHA));
 
                 context.batcher.box(this.handleArea.x, this.handleArea.y, this.handleArea.ex(), this.handleArea.ey(), handleColor);

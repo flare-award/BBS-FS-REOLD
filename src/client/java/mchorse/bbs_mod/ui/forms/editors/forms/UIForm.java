@@ -245,7 +245,9 @@ public abstract class UIForm <T extends Form> extends UIPanelBase<UIFormPanel<T>
     @Override
     protected void renderBackground(UIContext context, int x, int y, int w, int h)
     {
-        context.batcher.box(x, y, x + w, y + h, BBSSettings.deepSurface());
+        /* The tab strip keeps a solid backdrop even while the editor's other surfaces are
+         * see-through, so its buttons always sit on something readable. */
+        context.batcher.box(x, y, x + w, y + h, Colors.opaque(BBSSettings.deepSurface()));
     }
 
     @Override

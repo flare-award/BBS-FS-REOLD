@@ -34,6 +34,7 @@ public class ModelForm extends Form
     public final ValuePose poseOverlay = new ValuePose("pose_overlay", new Pose());
     public final ValueActionsConfig actions = new ValueActionsConfig("actions", new ActionsConfig());
     public final ValueColor color = new ValueColor("color", Color.white());
+
     public final ValueShapeKeys shapeKeys = new ValueShapeKeys("shape_keys", new ShapeKeys());
     public final ValueBoolean boneTracks = new ValueBoolean("bone_tracks", true);
     public final ValueData ik = new ValueData("ik");
