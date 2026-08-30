@@ -11,6 +11,7 @@ import mchorse.bbs_mod.camera.controller.CameraWorkCameraController;
 import mchorse.bbs_mod.data.DataToString;
 import mchorse.bbs_mod.data.types.MapType;
 import mchorse.bbs_mod.film.Film;
+import mchorse.bbs_mod.forms.forms.FilterBoardForm;
 import mchorse.bbs_mod.ui.framework.UIScreen;
 import mchorse.bbs_mod.ui.dashboard.UIDashboard;
 import mchorse.bbs_mod.ui.film.UIFilmPanel;
@@ -86,11 +87,32 @@ public class FilmEffects
         in vec2 a_position;
 
         out vec2 v_uv;
+        out vec2 v_mask_uv;
+        out vec2 v_filter_uv;
 
         void main()
         {
             v_uv = a_position * 0.5 + 0.5;
+            v_mask_uv = v_uv;
+            v_filter_uv = v_uv;
             gl_Position = vec4(a_position, 0.0, 1.0);
+        }""";
+
+    private static final String BOARD_VERTEX = """
+        #version 150
+
+        in vec4 a_position;
+        in vec2 a_mask_uv;
+        in vec2 a_filter_uv;
+
+        out vec2 v_mask_uv;
+        out vec2 v_filter_uv;
+
+        void main()
+        {
+            v_mask_uv = a_mask_uv;
+            v_filter_uv = a_filter_uv;
+            gl_Position = a_position;
         }""";
 
     private static final String FILTER_FRAGMENT = """
@@ -98,6 +120,9 @@ public class FilmEffects
 
         uniform sampler2D u_texture;
         uniform sampler2D u_bloom;
+        uniform sampler2D u_mask;
+        uniform float u_mask_enabled;
+        uniform float u_mask_opacity;
         uniform vec2 u_texel;
         uniform float u_brightness;
         uniform float u_contrast;
@@ -120,8 +145,17 @@ public class FilmEffects
         uniform float u_flip;
         uniform float u_fisheye;
         uniform float u_seed;
+        uniform float u_board_mode;
+        uniform vec2 u_board_origin;
+        uniform vec2 u_board_axis_x;
+        uniform vec2 u_board_axis_y;
+        uniform vec2 u_board_viewport_origin;
+        uniform vec3 u_board_homography_0;
+        uniform vec3 u_board_homography_1;
+        uniform vec3 u_board_homography_2;
 
-        in vec2 v_uv;
+        in vec2 v_mask_uv;
+        in vec2 v_filter_uv;
 
         out vec4 fragColor;
 
@@ -133,12 +167,28 @@ public class FilmEffects
             return color * c + cross(k, color) * sin(angle) + k * dot(k, color) * (1.0 - c);
         }
 
+        vec2 mapBoardUv(vec2 localUv)
+        {
+            if (u_board_mode > 0.5)
+            {
+                vec3 projected = vec3(
+                    dot(u_board_homography_0, vec3(localUv, 1.0)),
+                    dot(u_board_homography_1, vec3(localUv, 1.0)),
+                    dot(u_board_homography_2, vec3(localUv, 1.0)));
+
+                return projected.xy / projected.z;
+            }
+
+            return localUv;
+        }
+
         vec3 sampleFrame(vec2 uv)
         {
             if (u_aberration > 0.0)
             {
                 /* Radial fringing: red samples outward, blue inward */
-                vec2 shift = (uv - 0.5) * u_aberration * 0.03;
+                vec2 center = u_board_mode > 0.5 ? mapBoardUv(vec2(0.5)) : vec2(0.5);
+                vec2 shift = (uv - center) * u_aberration * 0.03;
 
                 return vec3(
                     texture(u_texture, uv + shift).r,
@@ -151,35 +201,51 @@ public class FilmEffects
 
         void main()
         {
-            vec2 uv = v_uv;
+            vec2 effectUv = v_filter_uv;
+            vec2 uv = (gl_FragCoord.xy - u_board_viewport_origin) * u_texel;
 
             if (u_flip == 1.0)
             {
-                uv.y = 1.0 - uv.y;
+                effectUv.y = 1.0 - effectUv.y;
+                uv = u_board_mode > 0.5 ? mapBoardUv(effectUv) : vec2(uv.x, 1.0 - uv.y);
             }
             else if (u_flip == 2.0)
             {
-                uv.x = 1.0 - uv.x;
+                effectUv.x = 1.0 - effectUv.x;
+                uv = u_board_mode > 0.5 ? mapBoardUv(effectUv) : vec2(1.0 - uv.x, uv.y);
+            }
+
+            float aspect = u_texel.y / u_texel.x;
+            vec2 filterTexel = u_texel;
+
+            if (u_board_mode > 0.5)
+            {
+                vec2 pixelsX = u_board_axis_x / u_texel;
+                vec2 pixelsY = u_board_axis_y / u_texel;
+                float pixelsWidth = max(length(pixelsX), 1.0);
+                float pixelsHeight = max(length(pixelsY), 1.0);
+
+                filterTexel = vec2(1.0 / pixelsWidth, 1.0 / pixelsHeight);
+                aspect = pixelsWidth / pixelsHeight;
             }
 
             if (u_distortion != 0.0)
             {
                 /* Barrel (positive) or pincushion (negative) lens warp,
                  * aspect-corrected so the bulge stays circular */
-                float aspect = u_texel.y / u_texel.x;
-                vec2 d = uv - 0.5;
+                vec2 d = effectUv - 0.5;
 
                 d.x *= aspect;
                 d *= 1.0 + u_distortion * dot(d, d) * 1.5;
                 d.x /= aspect;
-                uv = clamp(d + 0.5, 0.0, 1.0);
+                effectUv = clamp(d + 0.5, 0.0, 1.0);
+                uv = u_board_mode > 0.5 ? mapBoardUv(effectUv) : effectUv;
             }
 
             if (u_fisheye != 0.0)
             {
                 /* Positive bulges the center out like a fisheye lens, negative pinches it in */
-                float aspect = u_texel.y / u_texel.x;
-                vec2 d = uv - 0.5;
+                vec2 d = effectUv - 0.5;
 
                 d.x *= aspect;
 
@@ -191,25 +257,34 @@ public class FilmEffects
                 }
 
                 d.x /= aspect;
-                uv = clamp(d + 0.5, 0.0, 1.0);
+                effectUv = clamp(d + 0.5, 0.0, 1.0);
+                uv = u_board_mode > 0.5 ? mapBoardUv(effectUv) : effectUv;
             }
 
             if (u_pixelate >= 1.0)
             {
                 /* Snap the sample point to the center of a u_pixelate-sized cell */
-                vec2 cell = u_texel * u_pixelate;
+                vec2 cell = filterTexel * u_pixelate;
 
-                uv = (floor(uv / cell) + 0.5) * cell;
+                effectUv = (floor(effectUv / cell) + 0.5) * cell;
+                uv = u_board_mode > 0.5 ? mapBoardUv(effectUv) : effectUv;
             }
 
             if (u_vhs > 0.0)
             {
                 /* Per-scanline horizontal jitter, tape-style: a few sines at odd
                  * frequencies, seeded by the film clock so exports are stable */
-                float line = floor(v_uv.y / u_texel.y);
+                float line = floor(effectUv.y / filterTexel.y);
                 float wobble = sin(line * 0.35 + u_seed * 0.63) * sin(line * 0.043 + u_seed * 0.121);
 
-                uv.x += wobble * u_texel.x * u_vhs * 4.0;
+                if (u_board_mode > 0.5)
+                {
+                    uv += u_board_axis_x * wobble * filterTexel.x * u_vhs * 4.0;
+                }
+                else
+                {
+                    uv.x += wobble * u_texel.x * u_vhs * 4.0;
+                }
             }
 
             vec3 color = sampleFrame(uv);
@@ -217,7 +292,8 @@ public class FilmEffects
             if (u_radial > 0.0)
             {
                 /* Zoom blur: smear samples toward the frame's center */
-                vec2 toCenter = (vec2(0.5) - uv) * u_radial * 0.12;
+                vec2 center = u_board_mode > 0.5 ? mapBoardUv(vec2(0.5)) : vec2(0.5);
+                vec2 toCenter = (center - uv) * u_radial * 0.12;
                 vec3 accumulated = color;
 
                 for (int i = 1; i < 8; i++)
@@ -231,9 +307,13 @@ public class FilmEffects
             if (u_vhs > 0.0)
             {
                 /* Chroma bleed to the right and darkened scanlines */
-                color.r = mix(color.r, sampleFrame(uv + vec2(u_texel.x * u_vhs * 2.0, 0.0)).r, 0.75);
-                color.b = mix(color.b, sampleFrame(uv - vec2(u_texel.x * u_vhs * 2.0, 0.0)).b, 0.75);
-                color *= 1.0 - u_vhs * 0.2 * (0.5 + 0.5 * sin(v_uv.y / u_texel.y * 3.14159));
+                vec2 bleed = u_board_mode > 0.5
+                    ? u_board_axis_x * filterTexel.x * u_vhs * 2.0
+                    : vec2(u_texel.x * u_vhs * 2.0, 0.0);
+
+                color.r = mix(color.r, sampleFrame(uv + bleed).r, 0.75);
+                color.b = mix(color.b, sampleFrame(uv - bleed).b, 0.75);
+                color *= 1.0 - u_vhs * 0.2 * (0.5 + 0.5 * sin(effectUv.y / filterTexel.y * 3.14159));
             }
 
             if (u_sharpness > 0.0)
@@ -280,7 +360,7 @@ public class FilmEffects
             if (u_vignette != 0.0)
             {
                 /* Negative darkens the corners, positive washes them out white */
-                float dist = distance(v_uv, vec2(0.5)) * 1.4142;
+                float dist = distance(v_filter_uv, vec2(0.5)) * 1.4142;
                 float mask = abs(u_vignette) * smoothstep(0.35, 1.1, dist);
 
                 color = mix(color, u_vignette > 0.0 ? vec3(1.0) : vec3(0.0), mask);
@@ -289,13 +369,25 @@ public class FilmEffects
             if (u_grain > 0.0)
             {
                 /* Animated monochrome noise, one random value per output pixel */
-                vec2 pixel = floor(v_uv / u_texel) + u_seed;
+                vec2 pixel = floor(effectUv / filterTexel) + u_seed;
                 float noise = fract(sin(dot(pixel, vec2(12.9898, 78.233))) * 43758.5453);
 
                 color += (noise - 0.5) * u_grain * 0.3;
             }
 
-            fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+            float alpha = 1.0;
+
+            if (u_mask_enabled > 0.5)
+            {
+                alpha = texture(u_mask, v_mask_uv).a * u_mask_opacity;
+
+                if (alpha <= 0.001)
+                {
+                    discard;
+                }
+            }
+
+            fragColor = vec4(clamp(color, 0.0, 1.0), alpha);
         }""";
 
     private static final String BLOOM_CUT_FRAGMENT = """
@@ -405,6 +497,19 @@ public class FilmEffects
     /* Once any GL setup fails, the effects stay off instead of failing every frame */
     private static boolean broken;
 
+    /* A board shader failure disables only board lenses; the regular film pass can continue. */
+    private static boolean boardBroken;
+
+    /* Guards the snapshot pass against accidental nested board captures. */
+    private static boolean renderingFilterBoard;
+
+    /* All boards in one world pass sample one immutable pre-board snapshot, so a board
+     * never captures an earlier board and applies its filters a second time. */
+    private static boolean boardSnapshotReady;
+    private static int boardSnapshotFramebuffer = -1;
+    private static int boardSnapshotWidth;
+    private static int boardSnapshotHeight;
+
     /* While held down by the filters overlay's compare button, filters are skipped */
     private static boolean showOriginal;
 
@@ -428,6 +533,11 @@ public class FilmEffects
     private static int vao;
     private static int vbo;
     private static int filterProgram;
+    private static int boardVao;
+    private static int boardVbo;
+    private static int boardProgram;
+    private static FilterUniforms filterUniforms;
+    private static FilterUniforms boardUniforms;
     private static int photoProgram;
     private static int bloomCutProgram;
     private static int bloomBlurProgram;
@@ -436,28 +546,6 @@ public class FilmEffects
     private static Texture bloomTextureA;
     private static Texture bloomTextureB;
 
-    private static int uniformTexel;
-    private static int uniformBrightness;
-    private static int uniformContrast;
-    private static int uniformSaturation;
-    private static int uniformHue;
-    private static int uniformTemperature;
-    private static int uniformGamma;
-    private static int uniformSharpness;
-    private static int uniformVignette;
-    private static int uniformSepia;
-    private static int uniformGrain;
-    private static int uniformAberration;
-    private static int uniformInvert;
-    private static int uniformPosterize;
-    private static int uniformPixelate;
-    private static int uniformDistortion;
-    private static int uniformBloomStrength;
-    private static int uniformRadial;
-    private static int uniformVhs;
-    private static int uniformFlip;
-    private static int uniformFisheye;
-    private static int uniformSeed;
     private static int uniformBloomCutTexel;
     private static int uniformBlurDirection;
     private static int uniformTransform;
@@ -596,6 +684,14 @@ public class FilmEffects
      * Whether the compare button in the filters overlay is held down right now,
      * which shows the frame with every filter bypassed.
      */
+    public static void beginFilterBoardFrame()
+    {
+        boardSnapshotReady = false;
+        boardSnapshotFramebuffer = -1;
+        boardSnapshotWidth = 0;
+        boardSnapshotHeight = 0;
+    }
+
     public static boolean isShowingOriginal()
     {
         return showOriginal;
@@ -849,11 +945,7 @@ public class FilmEffects
     private static void applyFilters(Framebuffer framebuffer, int width, int height, FilterState state)
     {
         ensureFilterProgram();
-        ensurePingTexture(width, height);
-
-        GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, framebuffer.id);
-        pingTexture.bind();
-        GL11.glCopyTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
+        copyFrame(framebuffer.id, width, height);
 
         RenderSystem.disableBlend();
 
@@ -861,32 +953,11 @@ public class FilmEffects
 
         if (bloom)
         {
-            applyBloom(framebuffer, width, height);
+            applyBloom(framebuffer.id, width, height);
         }
 
         GL20.glUseProgram(filterProgram);
-        GL20.glUniform2f(uniformTexel, 1F / width, 1F / height);
-        GL20.glUniform1f(uniformBrightness, 1F + state.brightness);
-        GL20.glUniform1f(uniformContrast, 1F + state.contrast);
-        GL20.glUniform1f(uniformSaturation, 1F + state.saturation);
-        GL20.glUniform1f(uniformHue, MathUtils.toRad(state.hue));
-        GL20.glUniform1f(uniformTemperature, state.temperature * TEMPERATURE_STRENGTH);
-        GL20.glUniform1f(uniformGamma, 1F / state.gamma);
-        GL20.glUniform1f(uniformSharpness, state.sharpness * SHARPNESS_STRENGTH);
-        GL20.glUniform1f(uniformVignette, state.vignette);
-        GL20.glUniform1f(uniformSepia, state.sepia);
-        GL20.glUniform1f(uniformGrain, state.grain);
-        GL20.glUniform1f(uniformAberration, state.aberration);
-        GL20.glUniform1f(uniformInvert, state.invert);
-        GL20.glUniform1f(uniformPosterize, (float) Math.floor(state.posterize));
-        GL20.glUniform1f(uniformPixelate, (float) Math.floor(state.pixelate));
-        GL20.glUniform1f(uniformDistortion, state.distortion);
-        GL20.glUniform1f(uniformBloomStrength, bloom ? state.bloom : 0F);
-        GL20.glUniform1f(uniformRadial, state.radial);
-        GL20.glUniform1f(uniformVhs, state.vhs);
-        GL20.glUniform1f(uniformFlip, Math.round(state.flip));
-        GL20.glUniform1f(uniformFisheye, state.fisheye);
-        GL20.glUniform1f(uniformSeed, getGrainSeed());
+        setFilterUniforms(filterUniforms, state, width, height, bloom);
 
         if (bloom)
         {
@@ -900,10 +971,260 @@ public class FilmEffects
     }
 
     /**
+     * Draw a FilterBoard from the immutable pre-board snapshot for this world
+     * pass. The positions are already in clip space, which preserves the normal
+     * world depth test while keeping the filter itself screen-local.
+     */
+    public static void renderFilterBoard(FilterBoardForm form, Texture mask, float[] positions, float[] maskUV, float[] filterUV, float opacity, boolean linear, boolean mipmap)
+    {
+        if (broken || boardBroken || renderingFilterBoard || form == null || mask == null || positions == null || maskUV == null || filterUV == null)
+        {
+            return;
+        }
+
+        int framebufferId = GL30.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+        int[] viewport = new int[4];
+
+        GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport);
+
+        int width = viewport[2];
+        int height = viewport[3];
+
+        if (framebufferId == 0 || width <= 0 || height <= 0 || opacity <= 0F)
+        {
+            return;
+        }
+
+        int previousProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
+        int previousVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
+        int previousArrayBuffer = GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING);
+        int previousActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+        int previousTexture0 = getTextureBinding(GL13.GL_TEXTURE0);
+        int previousTexture1 = getTextureBinding(GL13.GL_TEXTURE1);
+        int previousTexture2 = getTextureBinding(GL13.GL_TEXTURE2);
+        int previousRead = GL30.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
+        int previousDraw = GL30.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+
+        boolean previousBlend = GL11.glIsEnabled(GL11.GL_BLEND);
+        boolean previousDepth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
+        boolean previousCull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
+        boolean previousDepthMask = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
+        int previousDepthFunc = GL11.glGetInteger(GL11.GL_DEPTH_FUNC);
+
+        renderingFilterBoard = true;
+
+        try
+        {
+            ensureBoardProgram();
+            ensureBoardGeometry();
+
+            if (!boardSnapshotReady || boardSnapshotFramebuffer != framebufferId
+                || boardSnapshotWidth != width || boardSnapshotHeight != height)
+            {
+                copyFrame(framebufferId, width, height);
+                boardSnapshotReady = true;
+                boardSnapshotFramebuffer = framebufferId;
+                boardSnapshotWidth = width;
+                boardSnapshotHeight = height;
+            }
+
+            FilterState state = getFilterState(form);
+            boolean bloom = isActive(state.bloom, 0F);
+
+            RenderSystem.disableBlend();
+
+            if (bloom)
+            {
+                applyBloom(framebufferId, width, height);
+            }
+
+            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, framebufferId);
+            GL30.glBindVertexArray(boardVao);
+            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, boardVbo);
+            uploadBoardGeometry(positions, maskUV, filterUV);
+
+            GL20.glUseProgram(boardProgram);
+            setFilterUniforms(boardUniforms, state, width, height, bloom);
+            GL20.glUniform1f(boardUniforms.maskEnabled, 1F);
+            GL20.glUniform1f(boardUniforms.maskOpacity, opacity);
+            setBoardMapping(boardUniforms, positions, viewport[0], viewport[1]);
+
+            RenderSystem.enableDepthTest();
+            RenderSystem.depthFunc(GL11.GL_LEQUAL);
+            RenderSystem.depthMask(false);
+            RenderSystem.disableCull();
+            RenderSystem.enableBlend();
+            RenderSystem.defaultBlendFunc();
+
+            GL13.glActiveTexture(GL13.GL_TEXTURE2);
+            mask.bind();
+            mask.setFilterMipmap(linear, mipmap);
+
+            if (bloom)
+            {
+                GL13.glActiveTexture(GL13.GL_TEXTURE1);
+                bloomTextureA.bind();
+            }
+
+            GL13.glActiveTexture(GL13.GL_TEXTURE0);
+            pingTexture.bind();
+            GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 6);
+        }
+        catch (Exception e)
+        {
+            boardBroken = true;
+
+            e.printStackTrace();
+        }
+        finally
+        {
+            GL13.glActiveTexture(GL13.GL_TEXTURE2);
+            mask.bind();
+            mask.setFilterMipmap(false, false);
+
+            if (previousBlend)
+            {
+                RenderSystem.enableBlend();
+            }
+            else
+            {
+                RenderSystem.disableBlend();
+            }
+
+            if (previousDepth)
+            {
+                RenderSystem.enableDepthTest();
+            }
+            else
+            {
+                RenderSystem.disableDepthTest();
+            }
+
+            if (previousCull)
+            {
+                RenderSystem.enableCull();
+            }
+            else
+            {
+                RenderSystem.disableCull();
+            }
+
+            RenderSystem.depthFunc(previousDepthFunc);
+            RenderSystem.depthMask(previousDepthMask);
+            GL30.glBindVertexArray(previousVao);
+            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, previousArrayBuffer);
+            GL20.glUseProgram(previousProgram);
+            setTextureBinding(GL13.GL_TEXTURE2, previousTexture2);
+            setTextureBinding(GL13.GL_TEXTURE1, previousTexture1);
+            setTextureBinding(GL13.GL_TEXTURE0, previousTexture0);
+            GL13.glActiveTexture(previousActiveTexture);
+            GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, previousRead);
+            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, previousDraw);
+            GL11.glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+            renderingFilterBoard = false;
+        }
+    }
+
+    private static void copyFrame(int framebufferId, int width, int height)
+    {
+        ensurePingTexture(width, height);
+        GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, framebufferId);
+        GL13.glActiveTexture(GL13.GL_TEXTURE0);
+        pingTexture.bind();
+        GL11.glCopyTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
+    }
+
+    private static int getTextureBinding(int texture)
+    {
+        GL13.glActiveTexture(texture);
+
+        return GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+    }
+
+    private static void setTextureBinding(int texture, int binding)
+    {
+        GL13.glActiveTexture(texture);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, binding);
+    }
+
+    private static void uploadBoardGeometry(float[] positions, float[] maskUV, float[] filterUV)
+    {
+        int count = Math.min(positions.length / 4, Math.min(maskUV.length / 2, filterUV.length / 2));
+        float[] data = new float[count * 8];
+
+        for (int i = 0; i < count; i++)
+        {
+            int positionIndex = i * 4;
+            int uvIndex = i * 2;
+            int dataIndex = i * 8;
+
+            data[dataIndex] = positions[positionIndex];
+            data[dataIndex + 1] = positions[positionIndex + 1];
+            data[dataIndex + 2] = positions[positionIndex + 2];
+            data[dataIndex + 3] = positions[positionIndex + 3];
+            data[dataIndex + 4] = maskUV[uvIndex];
+            data[dataIndex + 5] = maskUV[uvIndex + 1];
+            data[dataIndex + 6] = filterUV[uvIndex];
+            data[dataIndex + 7] = filterUV[uvIndex + 1];
+        }
+
+        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, data, GL15.GL_STREAM_DRAW);
+    }
+
+    private static void setBoardMapping(FilterUniforms uniforms, float[] positions, int viewportX, int viewportY)
+    {
+        float[] topLeft = screenPosition(positions, 2);
+        float[] topRight = screenPosition(positions, 1);
+        float[] bottomLeft = screenPosition(positions, 0);
+        float[] bottomRight = screenPosition(positions, 4);
+        float dx1 = topRight[0] - bottomRight[0];
+        float dx2 = bottomLeft[0] - bottomRight[0];
+        float dx3 = topLeft[0] - topRight[0] + bottomRight[0] - bottomLeft[0];
+        float dy1 = topRight[1] - bottomRight[1];
+        float dy2 = bottomLeft[1] - bottomRight[1];
+        float dy3 = topLeft[1] - topRight[1] + bottomRight[1] - bottomLeft[1];
+        float denominator = dx1 * dy2 - dx2 * dy1;
+        float g = 0F;
+        float h = 0F;
+
+        if (Math.abs(denominator) > 0.000001F)
+        {
+            g = (dx3 * dy2 - dx2 * dy3) / denominator;
+            h = (dx1 * dy3 - dx3 * dy1) / denominator;
+        }
+
+        float a = topRight[0] * (g + 1F) - topLeft[0];
+        float b = bottomLeft[0] * (h + 1F) - topLeft[0];
+        float d = topRight[1] * (g + 1F) - topLeft[1];
+        float e = bottomLeft[1] * (h + 1F) - topLeft[1];
+
+        GL20.glUniform1f(uniforms.boardMode, 1F);
+        GL20.glUniform2f(uniforms.boardOrigin, topLeft[0], topLeft[1]);
+        GL20.glUniform2f(uniforms.boardAxisX, topRight[0] - topLeft[0], topRight[1] - topLeft[1]);
+        GL20.glUniform2f(uniforms.boardAxisY, bottomLeft[0] - topLeft[0], bottomLeft[1] - topLeft[1]);
+        GL20.glUniform2f(uniforms.boardViewportOrigin, viewportX, viewportY);
+        GL20.glUniform3f(uniforms.boardHomography0, a, b, topLeft[0]);
+        GL20.glUniform3f(uniforms.boardHomography1, d, e, topLeft[1]);
+        GL20.glUniform3f(uniforms.boardHomography2, g, h, 1F);
+    }
+
+    private static float[] screenPosition(float[] positions, int vertex)
+    {
+        int index = vertex * 4;
+        float w = positions[index + 3];
+        float reciprocalW = 1F / (Math.abs(w) < 0.000001F ? (w < 0F ? -0.000001F : 0.000001F) : w);
+
+        return new float[] {
+            positions[index] * reciprocalW * 0.5F + 0.5F,
+            positions[index + 1] * reciprocalW * 0.5F + 0.5F
+        };
+    }
+
+    /**
      * Fills {@link #bloomTextureA} with the frame's blurred highlights: threshold
      * cut at quarter resolution, then one horizontal and one vertical gaussian pass.
      */
-    private static void applyBloom(Framebuffer framebuffer, int width, int height)
+    private static void applyBloom(int framebufferId, int width, int height)
     {
         int bloomWidth = Math.max(1, width / BLOOM_DOWNSCALE);
         int bloomHeight = Math.max(1, height / BLOOM_DOWNSCALE);
@@ -933,7 +1254,7 @@ public class FilmEffects
         bloomTextureB.bind();
         GL11.glDrawArrays(GL11.GL_TRIANGLE_STRIP, 0, 4);
 
-        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, framebuffer.id);
+        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, framebufferId);
         GL11.glViewport(0, 0, width, height);
     }
 
@@ -1440,6 +1761,34 @@ public class FilmEffects
         return state;
     }
 
+    private static FilterState getFilterState(FilterBoardForm form)
+    {
+        FilterState state = new FilterState();
+
+        state.brightness = form.brightness.get();
+        state.contrast = form.contrast.get();
+        state.saturation = form.filterSaturation.get();
+        state.hue = form.filterHue.get();
+        state.temperature = form.temperature.get();
+        state.gamma = form.gamma.get();
+        state.sharpness = form.sharpness.get();
+        state.vignette = form.vignette.get();
+        state.sepia = form.sepia.get();
+        state.grain = form.grain.get();
+        state.aberration = form.aberration.get();
+        state.invert = form.invert.get();
+        state.posterize = form.posterize.get();
+        state.pixelate = form.pixelate.get();
+        state.distortion = form.distortion.get();
+        state.bloom = form.bloom.get();
+        state.radial = form.radial.get();
+        state.vhs = form.vhs.get();
+        state.flip = form.flip.get();
+        state.fisheye = form.fisheye.get();
+
+        return state;
+    }
+
     private static float filterValue(Map<String, Double> overrides, String id, ValueFloat setting, float fallback)
     {
         if (overrides != null)
@@ -1496,32 +1845,127 @@ public class FilmEffects
         }
 
         filterProgram = compileProgram(FILTER_VERTEX, FILTER_FRAGMENT);
-        uniformTexel = GL20.glGetUniformLocation(filterProgram, "u_texel");
-        uniformBrightness = GL20.glGetUniformLocation(filterProgram, "u_brightness");
-        uniformContrast = GL20.glGetUniformLocation(filterProgram, "u_contrast");
-        uniformSaturation = GL20.glGetUniformLocation(filterProgram, "u_saturation");
-        uniformHue = GL20.glGetUniformLocation(filterProgram, "u_hue");
-        uniformTemperature = GL20.glGetUniformLocation(filterProgram, "u_temperature");
-        uniformGamma = GL20.glGetUniformLocation(filterProgram, "u_gamma");
-        uniformSharpness = GL20.glGetUniformLocation(filterProgram, "u_sharpness");
-        uniformVignette = GL20.glGetUniformLocation(filterProgram, "u_vignette");
-        uniformSepia = GL20.glGetUniformLocation(filterProgram, "u_sepia");
-        uniformGrain = GL20.glGetUniformLocation(filterProgram, "u_grain");
-        uniformAberration = GL20.glGetUniformLocation(filterProgram, "u_aberration");
-        uniformInvert = GL20.glGetUniformLocation(filterProgram, "u_invert");
-        uniformPosterize = GL20.glGetUniformLocation(filterProgram, "u_posterize");
-        uniformPixelate = GL20.glGetUniformLocation(filterProgram, "u_pixelate");
-        uniformDistortion = GL20.glGetUniformLocation(filterProgram, "u_distortion");
-        uniformBloomStrength = GL20.glGetUniformLocation(filterProgram, "u_bloom_strength");
-        uniformRadial = GL20.glGetUniformLocation(filterProgram, "u_radial");
-        uniformVhs = GL20.glGetUniformLocation(filterProgram, "u_vhs");
-        uniformFlip = GL20.glGetUniformLocation(filterProgram, "u_flip");
-        uniformFisheye = GL20.glGetUniformLocation(filterProgram, "u_fisheye");
-        uniformSeed = GL20.glGetUniformLocation(filterProgram, "u_seed");
+        filterUniforms = locateFilterUniforms(filterProgram);
 
-        /* The blurred highlights always sit on texture unit 1 */
+        /* The blurred highlights always sit on texture unit 1; boards use unit 2
+         * for their alpha mask. */
         GL20.glUseProgram(filterProgram);
-        GL20.glUniform1i(GL20.glGetUniformLocation(filterProgram, "u_bloom"), 1);
+        GL20.glUniform1i(filterUniforms.bloomSampler, 1);
+        GL20.glUniform1i(filterUniforms.maskSampler, 2);
+    }
+
+    private static void ensureBoardProgram()
+    {
+        if (boardProgram != 0)
+        {
+            return;
+        }
+
+        boardProgram = compileProgram(BOARD_VERTEX, FILTER_FRAGMENT, true);
+        boardUniforms = locateFilterUniforms(boardProgram);
+
+        GL20.glUseProgram(boardProgram);
+        GL20.glUniform1i(boardUniforms.bloomSampler, 1);
+        GL20.glUniform1i(boardUniforms.maskSampler, 2);
+    }
+
+    private static FilterUniforms locateFilterUniforms(int program)
+    {
+        FilterUniforms uniforms = new FilterUniforms();
+
+        uniforms.texel = GL20.glGetUniformLocation(program, "u_texel");
+        uniforms.brightness = GL20.glGetUniformLocation(program, "u_brightness");
+        uniforms.contrast = GL20.glGetUniformLocation(program, "u_contrast");
+        uniforms.saturation = GL20.glGetUniformLocation(program, "u_saturation");
+        uniforms.hue = GL20.glGetUniformLocation(program, "u_hue");
+        uniforms.temperature = GL20.glGetUniformLocation(program, "u_temperature");
+        uniforms.gamma = GL20.glGetUniformLocation(program, "u_gamma");
+        uniforms.sharpness = GL20.glGetUniformLocation(program, "u_sharpness");
+        uniforms.vignette = GL20.glGetUniformLocation(program, "u_vignette");
+        uniforms.sepia = GL20.glGetUniformLocation(program, "u_sepia");
+        uniforms.grain = GL20.glGetUniformLocation(program, "u_grain");
+        uniforms.aberration = GL20.glGetUniformLocation(program, "u_aberration");
+        uniforms.invert = GL20.glGetUniformLocation(program, "u_invert");
+        uniforms.posterize = GL20.glGetUniformLocation(program, "u_posterize");
+        uniforms.pixelate = GL20.glGetUniformLocation(program, "u_pixelate");
+        uniforms.distortion = GL20.glGetUniformLocation(program, "u_distortion");
+        uniforms.bloomStrength = GL20.glGetUniformLocation(program, "u_bloom_strength");
+        uniforms.radial = GL20.glGetUniformLocation(program, "u_radial");
+        uniforms.vhs = GL20.glGetUniformLocation(program, "u_vhs");
+        uniforms.flip = GL20.glGetUniformLocation(program, "u_flip");
+        uniforms.fisheye = GL20.glGetUniformLocation(program, "u_fisheye");
+        uniforms.seed = GL20.glGetUniformLocation(program, "u_seed");
+        uniforms.bloomSampler = GL20.glGetUniformLocation(program, "u_bloom");
+        uniforms.maskSampler = GL20.glGetUniformLocation(program, "u_mask");
+        uniforms.maskEnabled = GL20.glGetUniformLocation(program, "u_mask_enabled");
+        uniforms.maskOpacity = GL20.glGetUniformLocation(program, "u_mask_opacity");
+        uniforms.boardMode = GL20.glGetUniformLocation(program, "u_board_mode");
+        uniforms.boardOrigin = GL20.glGetUniformLocation(program, "u_board_origin");
+        uniforms.boardAxisX = GL20.glGetUniformLocation(program, "u_board_axis_x");
+        uniforms.boardAxisY = GL20.glGetUniformLocation(program, "u_board_axis_y");
+        uniforms.boardViewportOrigin = GL20.glGetUniformLocation(program, "u_board_viewport_origin");
+        uniforms.boardHomography0 = GL20.glGetUniformLocation(program, "u_board_homography_0");
+        uniforms.boardHomography1 = GL20.glGetUniformLocation(program, "u_board_homography_1");
+        uniforms.boardHomography2 = GL20.glGetUniformLocation(program, "u_board_homography_2");
+
+        return uniforms;
+    }
+
+    private static void setFilterUniforms(FilterUniforms uniforms, FilterState state, int width, int height, boolean bloom)
+    {
+        GL20.glUniform2f(uniforms.texel, 1F / width, 1F / height);
+        GL20.glUniform1f(uniforms.brightness, 1F + state.brightness);
+        GL20.glUniform1f(uniforms.contrast, 1F + state.contrast);
+        GL20.glUniform1f(uniforms.saturation, 1F + state.saturation);
+        GL20.glUniform1f(uniforms.hue, MathUtils.toRad(state.hue));
+        GL20.glUniform1f(uniforms.temperature, state.temperature * TEMPERATURE_STRENGTH);
+        GL20.glUniform1f(uniforms.gamma, 1F / state.gamma);
+        GL20.glUniform1f(uniforms.sharpness, state.sharpness * SHARPNESS_STRENGTH);
+        GL20.glUniform1f(uniforms.vignette, state.vignette);
+        GL20.glUniform1f(uniforms.sepia, state.sepia);
+        GL20.glUniform1f(uniforms.grain, state.grain);
+        GL20.glUniform1f(uniforms.aberration, state.aberration);
+        GL20.glUniform1f(uniforms.invert, state.invert);
+        GL20.glUniform1f(uniforms.posterize, (float) Math.floor(state.posterize));
+        GL20.glUniform1f(uniforms.pixelate, (float) Math.floor(state.pixelate));
+        GL20.glUniform1f(uniforms.distortion, state.distortion);
+        GL20.glUniform1f(uniforms.bloomStrength, bloom ? state.bloom : 0F);
+        GL20.glUniform1f(uniforms.radial, state.radial);
+        GL20.glUniform1f(uniforms.vhs, state.vhs);
+        GL20.glUniform1f(uniforms.flip, Math.round(state.flip));
+        GL20.glUniform1f(uniforms.fisheye, state.fisheye);
+        GL20.glUniform1f(uniforms.seed, getGrainSeed());
+        GL20.glUniform1f(uniforms.maskEnabled, 0F);
+        GL20.glUniform1f(uniforms.maskOpacity, 1F);
+        GL20.glUniform1f(uniforms.boardMode, 0F);
+        GL20.glUniform2f(uniforms.boardOrigin, 0F, 0F);
+        GL20.glUniform2f(uniforms.boardAxisX, 1F, 0F);
+        GL20.glUniform2f(uniforms.boardAxisY, 0F, 1F);
+        GL20.glUniform2f(uniforms.boardViewportOrigin, 0F, 0F);
+        GL20.glUniform3f(uniforms.boardHomography0, 1F, 0F, 0F);
+        GL20.glUniform3f(uniforms.boardHomography1, 0F, 1F, 0F);
+        GL20.glUniform3f(uniforms.boardHomography2, 0F, 0F, 1F);
+    }
+
+    private static void ensureBoardGeometry()
+    {
+        if (boardVao != 0)
+        {
+            return;
+        }
+
+        boardVao = GL30.glGenVertexArrays();
+        boardVbo = GL15.glGenBuffers();
+        GL30.glBindVertexArray(boardVao);
+        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, boardVbo);
+        int stride = 8 * Float.BYTES;
+
+        GL20.glEnableVertexAttribArray(0);
+        GL20.glVertexAttribPointer(0, 4, GL11.GL_FLOAT, false, stride, 0);
+        GL20.glEnableVertexAttribArray(1);
+        GL20.glVertexAttribPointer(1, 2, GL11.GL_FLOAT, false, stride, 4L * Float.BYTES);
+        GL20.glEnableVertexAttribArray(2);
+        GL20.glVertexAttribPointer(2, 2, GL11.GL_FLOAT, false, stride, 6L * Float.BYTES);
     }
 
     private static void ensurePhotoProgram()
@@ -1600,6 +2044,11 @@ public class FilmEffects
 
     private static int compileProgram(String vertexSource, String fragmentSource)
     {
+        return compileProgram(vertexSource, fragmentSource, false);
+    }
+
+    private static int compileProgram(String vertexSource, String fragmentSource, boolean board)
+    {
         int vertex = compileShader(GL20.GL_VERTEX_SHADER, vertexSource);
         int fragment = compileShader(GL20.GL_FRAGMENT_SHADER, fragmentSource);
         int program = GL20.glCreateProgram();
@@ -1607,6 +2056,13 @@ public class FilmEffects
         GL20.glAttachShader(program, vertex);
         GL20.glAttachShader(program, fragment);
         GL20.glBindAttribLocation(program, 0, "a_position");
+
+        if (board)
+        {
+            GL20.glBindAttribLocation(program, 1, "a_mask_uv");
+            GL20.glBindAttribLocation(program, 2, "a_filter_uv");
+        }
+
         GL20.glLinkProgram(program);
         GL20.glDeleteShader(vertex);
         GL20.glDeleteShader(fragment);
@@ -1636,6 +2092,44 @@ public class FilmEffects
         }
 
         return shader;
+    }
+
+    private static class FilterUniforms
+    {
+        public int texel;
+        public int brightness;
+        public int contrast;
+        public int saturation;
+        public int hue;
+        public int temperature;
+        public int gamma;
+        public int sharpness;
+        public int vignette;
+        public int sepia;
+        public int grain;
+        public int aberration;
+        public int invert;
+        public int posterize;
+        public int pixelate;
+        public int distortion;
+        public int bloomStrength;
+        public int radial;
+        public int vhs;
+        public int flip;
+        public int fisheye;
+        public int seed;
+        public int bloomSampler;
+        public int maskSampler;
+        public int maskEnabled;
+        public int maskOpacity;
+        public int boardMode;
+        public int boardOrigin;
+        public int boardAxisX;
+        public int boardAxisY;
+        public int boardViewportOrigin;
+        public int boardHomography0;
+        public int boardHomography1;
+        public int boardHomography2;
     }
 
     /** The film filter values effective this frame, sliders and clip overrides merged. */

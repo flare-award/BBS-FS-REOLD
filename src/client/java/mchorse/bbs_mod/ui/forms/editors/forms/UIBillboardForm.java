@@ -9,13 +9,13 @@ import mchorse.bbs_mod.ui.utils.icons.Icons;
 
 public class UIBillboardForm extends UIForm<BillboardForm>
 {
-    private UIBillboardFormPanel billboardFormPanel;
+    private UIBillboardFormPanel<BillboardForm> billboardFormPanel;
 
     public UIBillboardForm()
     {
         super();
 
-        this.billboardFormPanel = new UIBillboardFormPanel(this);
+        this.billboardFormPanel = new UIBillboardFormPanel<BillboardForm>(this);
         this.defaultPanel = this.billboardFormPanel;
 
         this.registerPanel(this.defaultPanel, UIKeys.FORMS_EDITORS_BILLBOARD_TITLE, Icons.MATERIAL);

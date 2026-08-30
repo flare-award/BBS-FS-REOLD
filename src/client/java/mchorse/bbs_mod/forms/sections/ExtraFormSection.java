@@ -6,6 +6,7 @@ import mchorse.bbs_mod.forms.forms.AnchorForm;
 import mchorse.bbs_mod.forms.forms.BillboardForm;
 import mchorse.bbs_mod.forms.forms.BlockForm;
 import mchorse.bbs_mod.forms.forms.ExtrudedForm;
+import mchorse.bbs_mod.forms.forms.FilterBoardForm;
 import mchorse.bbs_mod.forms.forms.ItemForm;
 import mchorse.bbs_mod.forms.forms.LabelForm;
 import mchorse.bbs_mod.forms.forms.MobForm;
@@ -46,6 +47,7 @@ public class ExtraFormSection extends FormSection
         FormCategory extra = new FormCategory(UIKeys.FORMS_CATEGORIES_EXTRA, this.parent.visibility.get("extra"));
         AnchorForm anchor = new AnchorForm();
         BillboardForm billboard = new BillboardForm();
+        FilterBoardForm filterBoard = new FilterBoardForm();
         LabelForm label = new LabelForm();
         ExtrudedForm extruded = new ExtrudedForm();
         BlockForm block = new BlockForm();
@@ -54,12 +56,14 @@ public class ExtraFormSection extends FormSection
         TrailForm trail = new TrailForm();
 
         billboard.texture.set(Link.assets("textures/error.png"));
+        filterBoard.texture.set(Link.assets("textures/error.png"));
         extruded.texture.set(Link.assets("textures/error.png"));
         block.blockState.set(Blocks.GRASS_BLOCK.getDefaultState());
         item.stack.set(new ItemStack(Items.STICK));
 
         extra.addForm(anchor);
         extra.addForm(billboard);
+        extra.addForm(filterBoard);
         extra.addForm(label);
         extra.addForm(extruded);
         extra.addForm(block);
