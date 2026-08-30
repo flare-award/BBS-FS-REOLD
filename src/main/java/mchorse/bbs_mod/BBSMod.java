@@ -67,6 +67,7 @@ import mchorse.bbs_mod.forms.forms.ParticleForm;
 import mchorse.bbs_mod.forms.forms.StructureForm;
 import mchorse.bbs_mod.forms.forms.TrailForm;
 import mchorse.bbs_mod.forms.forms.VanillaParticleForm;
+import mchorse.bbs_mod.forms.forms.WebForm;
 import mchorse.bbs_mod.items.GunItem;
 import mchorse.bbs_mod.morphing.Morph;
 import mchorse.bbs_mod.network.ServerNetwork;
@@ -417,7 +418,8 @@ public class BBSMod implements ModInitializer
             .register(Link.bbs("vanilla_particles"), VanillaParticleForm.class, null)
             .register(Link.bbs("trail"), TrailForm.class, null)
             .register(Link.bbs("framebuffer"), FramebufferForm.class, null)
-            .register(Link.bbs("structure"), StructureForm.class, null);
+            .register(Link.bbs("structure"), StructureForm.class, null)
+            .register(Link.bbs("web"), WebForm.class, null);
 
         films = new FilmManager(() -> new File(worldFolder, "bbs/films"));
 
