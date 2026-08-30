@@ -294,9 +294,9 @@ public class FilmEffects
 
         float hslHueDistance(float first, float second)
         {
-            float distance = abs(first - second);
+            float hueDistance = abs(first - second);
 
-            return min(distance, 1.0 - distance);
+            return min(hueDistance, 1.0 - hueDistance);
         }
 
         vec3 applyHsl(vec3 color)
@@ -314,8 +314,8 @@ public class FilmEffects
 
             for (int i = 0; i < 8; i++)
             {
-                float distance = hslHueDistance(hsl.x, hslHueCenter(i));
-                float weight = (1.0 - smoothstep(0.02, 0.13, distance)) * colorConfidence;
+                float hueDistance = hslHueDistance(hsl.x, hslHueCenter(i));
+                float weight = (1.0 - smoothstep(0.02, 0.13, hueDistance)) * colorConfidence;
 
                 hueAdjustment += u_hsl[i].x * weight;
                 saturationAdjustment += u_hsl[i].y * weight;
