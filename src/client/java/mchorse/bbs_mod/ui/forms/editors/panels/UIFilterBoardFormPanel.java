@@ -150,6 +150,14 @@ public class UIFilterBoardFormPanel extends UIFormPanel<FilterBoardForm>
         this.updateFields();
     }
 
+    private void updateFields()
+    {
+        for (Runnable updater : this.filterUpdaters)
+        {
+            updater.run();
+        }
+    }
+
     @Override
     public void startEdit(FilterBoardForm form)
     {
@@ -158,9 +166,6 @@ public class UIFilterBoardFormPanel extends UIFormPanel<FilterBoardForm>
         this.hslColorIndex = 0;
         this.hslColor.setValue(0);
 
-        for (Runnable updater : this.filterUpdaters)
-        {
-            updater.run();
-        }
+        this.updateFields();
     }
 }
