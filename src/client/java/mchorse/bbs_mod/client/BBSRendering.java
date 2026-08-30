@@ -577,6 +577,9 @@ public class BBSRendering
             screen.renderInWorld(worldRenderContext);
         }
 
+        /* FilterBoard lenses must all read the scene before any film form draws;
+         * this also makes separate boards independent instead of recursively stacking. */
+        FilmEffects.beginFilterBoardFrame();
         BBSModClient.getFilms().render(worldRenderContext);
 
         if (!isIrisShadowPass())
