@@ -4,6 +4,7 @@ import mchorse.bbs_mod.forms.forms.TrailForm;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.forms.editors.panels.UITrailFormPanel;
+import mchorse.bbs_mod.ui.forms.editors.panels.UIMaterialFormPanel;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 
 public class UITrailForm extends UIForm<TrailForm>
@@ -18,6 +19,7 @@ public class UITrailForm extends UIForm<TrailForm>
         this.defaultPanel = this.trailFormPanel;
 
         this.registerPanel(this.trailFormPanel, UIKeys.FORMS_EDITORS_TRAIL_TITLE, Icons.PLAY);
+        this.registerPanel(new UIMaterialFormPanel(this), UIKeys.FORMS_EDITORS_MATERIAL_TITLE, Icons.MATERIAL);
         this.registerDefaultPanels();
     }
 }

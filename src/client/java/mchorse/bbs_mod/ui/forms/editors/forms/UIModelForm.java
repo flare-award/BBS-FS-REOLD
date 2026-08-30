@@ -10,6 +10,7 @@ import mchorse.bbs_mod.forms.renderers.ModelFormRenderer;
 import mchorse.bbs_mod.ui.Keys;
 import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.forms.editors.panels.UIActionsFormPanel;
+import mchorse.bbs_mod.ui.forms.editors.panels.UIMaterialFormPanel;
 import mchorse.bbs_mod.ui.forms.editors.panels.UIModelConstraintsFormPanel;
 import mchorse.bbs_mod.ui.forms.editors.panels.UIModelFormPanel;
 import mchorse.bbs_mod.ui.forms.editors.panels.UIModelIKFormPanel;
@@ -45,6 +46,7 @@ public class UIModelForm extends UIForm<ModelForm>
         this.registerPanel(new UIModelPhysicsFormPanel(this), UIKeys.FORMS_EDITORS_MODEL_PHYSICS_TITLE, Icons.PHYSICS);
         this.registerPanel(new UIModelConstraintsFormPanel(this), UIKeys.FORMS_EDITORS_MODEL_CONSTRAINTS_TITLE, Icons.LOCKED);
         this.registerPanel(new UIActionsFormPanel(this), UIKeys.FORMS_EDITORS_ACTIONS_TITLE, Icons.MORE);
+        this.registerPanel(new UIMaterialFormPanel(this), UIKeys.FORMS_EDITORS_MATERIAL_TITLE, Icons.MATERIAL);
         this.registerDefaultPanels();
 
         this.defaultPanel.keys().register(Keys.FORMS_PICK_TEXTURE, () ->

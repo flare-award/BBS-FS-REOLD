@@ -1,6 +1,5 @@
 package mchorse.bbs_mod.ui.framework.elements;
 
-import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
@@ -49,7 +48,7 @@ public class UIPanelBase <T extends UIElement> extends UIElement
                 {
                     Area area = ((UIIcon) this.buttons.getChildren().get(i)).area;
 
-                    area.render(context.batcher, Colors.A75 | BBSSettings.primaryColor.get());
+                    context.batcher.primaryBox(area.x, area.y, area.ex(), area.ey(), Colors.A75);
                 }
             }
         });

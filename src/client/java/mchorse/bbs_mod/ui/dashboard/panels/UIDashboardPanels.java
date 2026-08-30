@@ -54,7 +54,14 @@ public class UIDashboardPanels extends UIElement
     public static void renderHighlight(Batcher2D batcher, Area area, Direction direction)
     {
         int color = BBSSettings.primaryColor.get();
-        int bar = Colors.A100 | color;
+
+        /* Under the theme's gradient the highlight blends both accent colors,
+         * so these edge bars follow the theme along with the buttons. */
+        if (BBSSettings.isPrimaryGradient())
+        {
+            color = Colors.lerp(color, BBSSettings.primaryColorEnd(), 0.5F) & Colors.RGB;
+        }
+
         int near = Colors.A75 | color;
         int far = color;
         int t = 2;
@@ -62,19 +69,19 @@ public class UIDashboardPanels extends UIElement
         switch (direction)
         {
             case TOP:
-                batcher.box(area.x, area.y, area.ex(), area.y + t, bar);
+                batcher.primaryBox(area.x, area.y, area.ex(), area.y + t, Colors.A100);
                 batcher.gradientVBox(area.x, area.y + t, area.ex(), area.ey(), near, far);
                 break;
             case BOTTOM:
-                batcher.box(area.x, area.ey() - t, area.ex(), area.ey(), bar);
+                batcher.primaryBox(area.x, area.ey() - t, area.ex(), area.ey(), Colors.A100);
                 batcher.gradientVBox(area.x, area.y, area.ex(), area.ey() - t, far, near);
                 break;
             case LEFT:
-                batcher.box(area.x, area.y, area.x + t, area.ey(), bar);
+                batcher.primaryBox(area.x, area.y, area.x + t, area.ey(), Colors.A100);
                 batcher.gradientHBox(area.x + t, area.y, area.ex(), area.ey(), near, far);
                 break;
             case RIGHT:
-                batcher.box(area.ex() - t, area.y, area.ex(), area.ey(), bar);
+                batcher.primaryBox(area.ex() - t, area.y, area.ex(), area.ey(), Colors.A100);
                 batcher.gradientHBox(area.x, area.y, area.ex() - t, area.ey(), far, near);
                 break;
         }
