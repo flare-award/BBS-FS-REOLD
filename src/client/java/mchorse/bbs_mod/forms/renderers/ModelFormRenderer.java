@@ -53,6 +53,7 @@ import mchorse.bbs_mod.utils.pose.PoseTransform;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.ShaderProgram;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
+import mchorse.bbs_mod.graphics.texture.FormMaterials;
 import mchorse.bbs_mod.graphics.texture.Texture;
 import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.LightmapTextureManager;
@@ -299,7 +300,10 @@ public class ModelFormRenderer extends FormRenderer<ModelForm> implements ITicka
             MatrixStackUtils.multiply(stack, uiMatrix);
             stack.scale(scale, scale, scale);
 
-            BBSModClient.getTextures().bindTexture(texture);
+            /* The editor preview shows the color overlay too */
+            Texture textureObject = BBSModClient.getTextures().getTexture(texture);
+
+            BBSModClient.getTextures().bindTexture(FormMaterials.getProcessed(texture, textureObject, this.form));
             RenderSystem.depthFunc(GL11.GL_LEQUAL);
 
             Supplier<ShaderProgram> mainShader = (BBSRendering.isIrisShadersEnabled() && BBSRendering.isRenderingWorld()) || !model.isVAORendered()
@@ -389,31 +393,42 @@ public class ModelFormRenderer extends FormRenderer<ModelForm> implements ITicka
         final boolean ignoreMaterials = model.materials.size() <= 1;
         final Link materialFallback = ignoreMaterials ? resolvedDefault : model.getTexture();
 
-        model.render(newStack, program, finalColor, light, overlay, stencilMap, this.form.shapeKeys.get(), (material) ->
+        /* Per-material binds happen inside the model renderers - hand them the
+         * form so multi-material models get the material treatment too. */
+        FormMaterials.setCurrentForm(this.form);
+
+        try
         {
-            if (ignoreMaterials)
+            model.render(newStack, program, finalColor, light, overlay, stencilMap, this.form.shapeKeys.get(), (material) ->
             {
-                return resolvedDefault;
-            }
+                if (ignoreMaterials)
+                {
+                    return resolvedDefault;
+                }
 
-            /* Resolution order: animated per-material track > editor-picked static per-material
-             * texture > the material's loaded default (folder/Kd) > the model base texture. */
-            Link override = this.form.materialTextureOverrides.get(material);
+                /* Resolution order: animated per-material track > editor-picked static per-material
+                 * texture > the material's loaded default (folder/Kd) > the model base texture. */
+                Link override = this.form.materialTextureOverrides.get(material);
 
-            if (override != null)
-            {
-                return override;
-            }
+                if (override != null)
+                {
+                    return override;
+                }
 
-            Link picked = this.form.materialTextures.getLink(material);
+                Link picked = this.form.materialTextures.getLink(material);
 
-            if (picked != null)
-            {
-                return picked;
-            }
+                if (picked != null)
+                {
+                    return picked;
+                }
 
-            return model.getMaterialTexture(material, materialFallback);
-        });
+                return model.getMaterialTexture(material, materialFallback);
+            });
+        }
+        finally
+        {
+            FormMaterials.setCurrentForm(null);
+        }
 
         if (stencilMap == null && !this.renderingArm && this.form != null && this.form.ik.get() instanceof MapType ikMap)
         {
@@ -685,7 +700,10 @@ public class ModelFormRenderer extends FormRenderer<ModelForm> implements ITicka
             matrices.multiply(RotationAxis.POSITIVE_Y.rotation(MathUtils.PI));
             MatrixStackUtils.applyTransform(matrices, slot.transform);
 
-            BBSModClient.getTextures().bindTexture(texture);
+            /* First person arm shows the color overlay too */
+            Texture textureObject = BBSModClient.getTextures().getTexture(texture);
+
+            BBSModClient.getTextures().bindTexture(FormMaterials.getProcessed(texture, textureObject, this.form));
 
             Supplier<ShaderProgram> mainShader = (BBSRendering.isIrisShadersEnabled() && BBSRendering.isRenderingWorld()) || !model.isVAORendered()
                 ? GameRenderer::getRenderTypeEntityTranslucentCullProgram
@@ -754,10 +772,14 @@ public class ModelFormRenderer extends FormRenderer<ModelForm> implements ITicka
                 context.world.multiply(RotationAxis.POSITIVE_Y.rotation(MathUtils.PI));
             }
 
-            BBSModClient.getTextures().bindTexture(texture);
-
             Texture textureObject = BBSModClient.getTextures().getTexture(texture);
             boolean irisWorld = BBSRendering.isIrisShadersEnabled() && BBSRendering.isRenderingWorld();
+            boolean shadowPass = BBSRendering.isIrisShadowPass();
+
+            /* Feed the Material tab's PBR sliders to the shader pack and bind the
+             * texture - processed with the relief emboss and color overlay when set. */
+            FormMaterials.update(texture, this.form);
+            BBSModClient.getTextures().bindTexture(FormMaterials.getProcessed(texture, textureObject, this.form));
 
             /* Under shaders we can't split opaque/translucent per pixel (Iris strips our PassMode),
              * so a texture with semi-transparent texels would either hide what's behind it or drop
@@ -766,11 +788,28 @@ public class ModelFormRenderer extends FormRenderer<ModelForm> implements ITicka
              * proper holes and draws the rest as a solid, normally-shaded entity. Only for texture
              * translucency at full colour — a uniform colour fade must stay translucent, or the
              * cutout test would erase the whole faded model. */
-            boolean cutout = irisWorld && textureObject != null && textureObject.hasTranslucency()
+            boolean autoCutout = irisWorld && textureObject != null && textureObject.hasTranslucency()
                 && contextColor.a >= 1F && formColor.a >= 1F && !additive;
 
+            /* The Material tab's Layer option: Auto keeps the degrade above, Translucent
+             * forbids it, Solid and Cutout draw immediately with blending off. The shadow
+             * pass always goes cutout: the shadow map wants alpha-tested opaque depth,
+             * and packs may drop translucent-program geometry from it entirely. */
+            int renderLayer = this.form.renderLayer.get();
+            boolean forcedOpaque = renderLayer == Form.LAYER_SOLID || renderLayer == Form.LAYER_CUTOUT;
+            boolean cutout = renderLayer == Form.LAYER_AUTO ? autoCutout : forcedOpaque;
+
+            if (shadowPass)
+            {
+                cutout = true;
+            }
+
             Supplier<ShaderProgram> mainShader = cutout
-                ? GameRenderer::getRenderTypeEntityCutoutProgram
+                ? (irisWorld || !model.isVAORendered())
+                    ? (renderLayer == Form.LAYER_SOLID && !shadowPass
+                        ? GameRenderer::getRenderTypeEntitySolidProgram
+                        : GameRenderer::getRenderTypeEntityCutoutProgram)
+                    : BBSShaders::getModel
                 : (irisWorld || !model.isVAORendered())
                     ? GameRenderer::getRenderTypeEntityTranslucentCullProgram
                     : BBSShaders::getModel;
@@ -794,6 +833,14 @@ public class ModelFormRenderer extends FormRenderer<ModelForm> implements ITicka
                 /* Blend off to match the vanilla cutout render type: semi-transparent texels
                  * draw solid instead of smearing over the gbuffer. */
                 RenderSystem.disableBlend();
+            }
+
+            if (shadowPass)
+            {
+                /* Iris runs its whole shadow pass with backface culling off (a mirrored
+                 * ortho view can flip winding and cull the lit side away) - match it, in
+                 * case something re-enabled culling since the pass began. */
+                RenderSystem.disableCull();
             }
 
             try

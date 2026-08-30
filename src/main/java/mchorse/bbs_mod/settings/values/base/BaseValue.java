@@ -57,6 +57,13 @@ public abstract class BaseValue implements IDataSerializable<BaseType>, IValueNo
         return this;
     }
 
+    public BaseValue visible(boolean visible)
+    {
+        this.visible = visible;
+
+        return this;
+    }
+
     public BaseValue preCallback(IValueListener callback)
     {
         if (this.preCallbacks == null)

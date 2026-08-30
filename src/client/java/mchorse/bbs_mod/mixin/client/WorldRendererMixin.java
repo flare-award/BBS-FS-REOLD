@@ -3,12 +3,15 @@ package mchorse.bbs_mod.mixin.client;
 import com.mojang.blaze3d.systems.RenderSystem;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.client.BBSRendering;
+import mchorse.bbs_mod.client.FilmEffects;
 import mchorse.bbs_mod.forms.FormTranslucentQueue;
 import mchorse.bbs_mod.utils.colors.Color;
 import net.minecraft.client.gl.Framebuffer;
 import net.minecraft.client.render.RenderLayer;
+import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.render.WorldRenderer;
 import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.entity.Entity;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.spongepowered.asm.mixin.Mixin;
@@ -37,6 +40,11 @@ public class WorldRendererMixin
     public void onRenderWorldEnd(CallbackInfo info)
     {
         FormTranslucentQueue.flush();
+
+        /* FilterBoard commands are delayed until every world entity, particle and
+         * translucent form has landed in the framebuffer they sample. */
+        BBSRendering.flushDeferredFilterBoards();
+        FilmEffects.stampPhotoDepthIfPending();
     }
 
     @Inject(method = "renderSky(Lnet/minecraft/client/util/math/MatrixStack;Lorg/joml/Matrix4f;FLnet/minecraft/client/render/Camera;ZLjava/lang/Runnable;)V", at = @At("HEAD"), cancellable = true)
@@ -56,6 +64,19 @@ public class WorldRendererMixin
         }
     }
 
+    @Inject(method = "renderEntity", at = @At("HEAD"), cancellable = true)
+    private void onRenderWorldEntity(Entity entity, double cameraX, double cameraY, double cameraZ, float tickDelta, MatrixStack matrices, VertexConsumerProvider vertexConsumers, CallbackInfo info)
+    {
+        /* Ordinary entities are emitted before AFTER_ENTITIES, so the photo's depth
+         * fence cannot undo a mob that has already been rasterized. Cancel the whole
+         * world-entity pass here; the film renderer and model-block replay still run
+         * through their own paths and are therefore unaffected. */
+        if (FilmEffects.shouldHideWorldEntity(entity))
+        {
+            info.cancel();
+        }
+    }
+
     @Inject(method = "renderLayer", at = @At("HEAD"), cancellable = true)
     public void onRenderLayer(RenderLayer renderLayer, MatrixStack matrices, double cameraX, double cameraY, double cameraZ, Matrix4f positionMatrix, CallbackInfo info)
     {
@@ -65,6 +86,11 @@ public class WorldRendererMixin
         if (renderLayer == RenderLayer.getTranslucent() && !BBSRendering.isIrisShadowPass())
         {
             FormTranslucentQueue.flush();
+
+            /* The photo depth fence goes down after the deferred translucent forms
+             * land, and before the translucent terrain - water can't cover the
+             * in-world photos, while the forms' translucent parts still can. */
+            FilmEffects.stampPhotoDepthIfPending();
         }
 
         if (BBSSettings.chromaSkyEnabled.get() && !BBSSettings.chromaSkyTerrain.get())

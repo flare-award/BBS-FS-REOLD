@@ -341,7 +341,7 @@ public class UIFormCategory extends UIElement
 
                 if (isSelected)
                 {
-                    context.batcher.box(cx, cy, cx + CELL_WIDTH, cy + CELL_HEIGHT, Colors.A50 | BBSSettings.primaryColor.get());
+                    context.batcher.primaryBox(cx, cy, cx + CELL_WIDTH, cy + CELL_HEIGHT, Colors.A50);
                     context.batcher.outline(cx, cy, cx + CELL_WIDTH, cy + CELL_HEIGHT, Colors.A50 | BBSSettings.primaryColor.get(), 2);
                 }
 

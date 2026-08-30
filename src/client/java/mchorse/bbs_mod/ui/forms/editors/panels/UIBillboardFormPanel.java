@@ -15,7 +15,7 @@ import mchorse.bbs_mod.ui.utils.UI;
 import mchorse.bbs_mod.utils.Direction;
 import mchorse.bbs_mod.utils.colors.Color;
 
-public class UIBillboardFormPanel extends UIFormPanel<BillboardForm>
+public class UIBillboardFormPanel <T extends BillboardForm> extends UIFormPanel<T>
 {
     public UIButton pick;
     public UIToggle billboard;
@@ -65,7 +65,7 @@ public class UIBillboardFormPanel extends UIFormPanel<BillboardForm>
     }
 
     @Override
-    public void startEdit(BillboardForm form)
+    public void startEdit(T form)
     {
         super.startEdit(form);
 

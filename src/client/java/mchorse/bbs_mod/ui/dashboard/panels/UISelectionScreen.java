@@ -20,6 +20,7 @@ import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIPromptOverlayPanel;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
 import mchorse.bbs_mod.ui.framework.elements.utils.UIRenderable;
+import mchorse.bbs_mod.ui.framework.elements.utils.Batcher2D;
 import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.UI;
 import mchorse.bbs_mod.ui.utils.UIUtils;
@@ -27,6 +28,7 @@ import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.ui.utils.keys.KeyCombo;
 import mchorse.bbs_mod.utils.DataPath;
+import mchorse.bbs_mod.utils.MathUtils;
 import mchorse.bbs_mod.utils.colors.Colors;
 import org.lwjgl.glfw.GLFW;
 
@@ -229,6 +231,30 @@ public class UISelectionScreen<T extends ValueGroup> extends UIElement
     protected Link getBannerTexture()
     {
         return BANNER;
+    }
+
+    /** The stock banner art, for screens that let the user swap their banner and need the fallback. */
+    public static Link getStockBanner()
+    {
+        return BANNER;
+    }
+
+    /** Horizontal focus (0..1) picking which slice of the banner image's leftover width is shown. */
+    protected float getBannerFocusX()
+    {
+        return 0.5F;
+    }
+
+    /** Vertical focus (0..1) picking which slice of the banner image's leftover height is shown. */
+    protected float getBannerFocusY()
+    {
+        return 0.5F;
+    }
+
+    /** How much the banner image is zoomed in on top of its cover crop (1 = no extra zoom). */
+    protected float getBannerZoom()
+    {
+        return 1F;
     }
 
     protected void onDuplicateData(T data)
@@ -752,46 +778,34 @@ public class UISelectionScreen<T extends ValueGroup> extends UIElement
     {
         Link bannerLink = this.getBannerTexture();
 
-        if (bannerLink != null)
+        if (bannerLink == null)
         {
-            Texture texture = BBSModClient.getTextures().getTexture(bannerLink);
-
-            if (texture != null)
-            {
-                float texW = texture.width;
-                float texH = texture.height;
-                float areaW = area.w;
-                float areaH = area.h;
-
-                float texAspect = texW / texH;
-                float areaAspect = areaW / areaH;
-
-                float u1;
-                float u2;
-                float v1;
-                float v2;
-
-                if (areaAspect > texAspect)
-                {
-                    float cropH = texW / areaAspect;
-
-                    u1 = 0;
-                    u2 = texW;
-                    v1 = (texH - cropH) * 0.5F;
-                    v2 = v1 + cropH;
-                }
-                else
-                {
-                    float cropW = texH * areaAspect;
-
-                    u1 = (texW - cropW) * 0.5F;
-                    u2 = u1 + cropW;
-                    v1 = 0;
-                    v2 = texH;
-                }
-
-                context.batcher.texturedBox(texture, Colors.WHITE, area.x, area.y, area.w, area.h, u1, v1, u2, v2, texture.width, texture.height);
-            }
+            return;
         }
+
+        Texture texture = BBSModClient.getTextures().getTexture(bannerLink);
+
+        if (texture == null)
+        {
+            return;
+        }
+
+        renderBannerCrop(context.batcher, area, texture, this.getBannerFocusX(), this.getBannerFocusY(), this.getBannerZoom());
+    }
+
+    /**
+     * Draws {@code texture} into {@code area} cover-cropped: scaled so the image fills the area,
+     * zoomed in further by {@code zoom}, and panned so {@code focusX}/{@code focusY} (0..1) pick
+     * which slice of the leftover image is shown. Centered focus at zoom 1 is a plain cover crop.
+     */
+    public static void renderBannerCrop(Batcher2D batcher, Area area, Texture texture, float focusX, float focusY, float zoom)
+    {
+        float scale = Math.max(area.w / (float) texture.width, area.h / (float) texture.height) * Math.max(zoom, 1F);
+        float cropW = area.w / scale;
+        float cropH = area.h / scale;
+        float u1 = (texture.width - cropW) * MathUtils.clamp(focusX, 0F, 1F);
+        float v1 = (texture.height - cropH) * MathUtils.clamp(focusY, 0F, 1F);
+
+        batcher.texturedBox(texture, Colors.WHITE, area.x, area.y, area.w, area.h, u1, v1, u1 + cropW, v1 + cropH, texture.width, texture.height);
     }
 }

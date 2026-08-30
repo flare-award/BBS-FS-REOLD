@@ -189,8 +189,12 @@ public class UIReplaysEditor extends UIElement
         COLORS.put("physics_targets", Colors.MAGENTA);
         COLORS.put("transform_overlay", 0xaaff00);
         COLORS.put("color", Colors.INACTIVE);
+        COLORS.put("color_overlay", Colors.INACTIVE);
         COLORS.put("shape_keys", Colors.PINK);
         COLORS.put("model", MODEL_TRACK);
+
+        /* The Material tab's sliders read as one teal material family */
+        putColors(0x21c0ad, "smoothness", "metalic", "sss", "pixel_emission", "relief", "hue", "saturation");
     }
 
     /**
@@ -264,6 +268,10 @@ public class UIReplaysEditor extends UIElement
         ICONS.put("texture", Icons.MATERIAL);
         ICONS.put("model", Icons.POSE);
         ICONS.put("color", Icons.BUCKET);
+        ICONS.put("color_overlay", Icons.BUCKET);
+
+        /* The Material tab's sliders share the texture track's material icon */
+        putIcons(Icons.MATERIAL, "smoothness", "metalic", "sss", "pixel_emission", "relief", "hue", "saturation");
         ICONS.put("lighting", Icons.LIGHT);
         ICONS.put("actions", Icons.CONVERT);
         ICONS.put("shape_keys", Icons.HEART_ALT);

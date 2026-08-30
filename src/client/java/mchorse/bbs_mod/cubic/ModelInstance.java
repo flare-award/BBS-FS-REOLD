@@ -28,6 +28,7 @@ import mchorse.bbs_mod.data.types.MapType;
 import mchorse.bbs_mod.forms.FormTranslucentQueue;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.forms.forms.ModelForm;
+import mchorse.bbs_mod.graphics.texture.FormMaterials;
 import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.forms.renderers.utils.MatrixCache;
 import mchorse.bbs_mod.obj.shapes.ShapeKeys;
@@ -710,7 +711,7 @@ public class ModelInstance implements IModelInstance
 
                         if (link != null)
                         {
-                            texture = BBSModClient.getTextures().getTexture(link);
+                            texture = FormMaterials.processCurrent(link, BBSModClient.getTextures().getTexture(link));
                             BBSModClient.getTextures().bindTexture(texture);
                         }
                     }
