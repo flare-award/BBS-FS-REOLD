@@ -369,6 +369,7 @@ public class BBSRendering
 
         MinecraftClient mc = MinecraftClient.getInstance();
         BBSModClient.getFilms().startRenderFrame(mc.getTickDelta());
+        FilmEffects.beginFilterBoardFrame();
 
         UIBaseMenu menu = UIScreen.getCurrentMenu();
 
@@ -458,6 +459,12 @@ public class BBSRendering
 
         GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
         GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevDraw);
+
+        /* Color grading and the photo overlay are baked right into the export texture:
+         * the film preview, the video recorder and the screenshot all read it, so the
+         * effects land in everything the user sees and exports at once. The recording
+         * overlay below stays out on purpose - it's screen-only feedback. */
+        FilmEffects.apply(exportFramebuffer, targetWidth, targetHeight);
 
         renderRecordingOverlay();
 
@@ -557,12 +564,25 @@ public class BBSRendering
 
     public static void renderCoolStuff(WorldRenderContext worldRenderContext)
     {
+        /* In-world photo layers draw around the film's forms: before them for the
+         * layers the actors should cover, after them for the layers that cover the
+         * actors - and the shadow pass never sees the photos at all. */
+        if (!isIrisShadowPass())
+        {
+            FilmEffects.renderPhotosInWorld(worldRenderContext, false);
+        }
+
         if (MinecraftClient.getInstance().currentScreen instanceof UIScreen screen)
         {
             screen.renderInWorld(worldRenderContext);
         }
 
         BBSModClient.getFilms().render(worldRenderContext);
+
+        if (!isIrisShadowPass())
+        {
+            FilmEffects.renderPhotosInWorld(worldRenderContext, true);
+        }
     }
 
     public static boolean isOptifinePresent()

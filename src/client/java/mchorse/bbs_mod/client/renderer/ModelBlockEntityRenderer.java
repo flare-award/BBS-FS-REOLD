@@ -10,6 +10,7 @@ import mchorse.bbs_mod.cubic.model.View;
 import mchorse.bbs_mod.entity.ActorEntity;
 import mchorse.bbs_mod.forms.FormUtilsClient;
 import mchorse.bbs_mod.forms.entities.IEntity;
+import mchorse.bbs_mod.forms.forms.FilterBoardForm;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.forms.forms.MobForm;
 import mchorse.bbs_mod.forms.forms.ModelForm;
@@ -343,7 +344,11 @@ public class ModelBlockEntityRenderer implements BlockEntityRenderer<ModelBlockE
         {
             if (dashboard.getPanels().panel instanceof UIModelBlockPanel modelBlockPanel)
             {
-                return !modelBlockPanel.isEditing(entity) || UIModelBlockPanel.toggleRendering;
+                /* The FilterBoard has no visible billboard in the editor: keep the
+                 * actual world composition visible instead of requiring F7. */
+                return !modelBlockPanel.isEditing(entity)
+                    || UIModelBlockPanel.toggleRendering
+                    || entity.getProperties().getForm() instanceof FilterBoardForm;
             }
         }
 

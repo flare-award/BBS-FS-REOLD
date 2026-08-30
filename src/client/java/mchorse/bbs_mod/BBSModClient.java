@@ -453,6 +453,26 @@ public class BBSModClient implements ClientModInitializer
             UIKeys.ENGINE_ROTATE_3D_SPHERE_MODE_ARCBALL
         );
 
+        BBSSettings.primaryColorGradientDirection.modes(
+            UIKeys.ENGINE_GRADIENT_DIRECTION_HORIZONTAL,
+            UIKeys.ENGINE_GRADIENT_DIRECTION_VERTICAL,
+            UIKeys.ENGINE_GRADIENT_DIRECTION_DIAGONAL
+        );
+
+        BBSSettings.backgroundColorMode.modes(
+            UIKeys.ENGINE_BACKGROUND_MODE_DEFAULT,
+            UIKeys.ENGINE_BACKGROUND_MODE_SOLID,
+            UIKeys.ENGINE_BACKGROUND_MODE_GRADIENT
+        );
+
+        BBSSettings.backgroundGradientDirection.modes(
+            UIKeys.ENGINE_GRADIENT_DIRECTION_HORIZONTAL,
+            UIKeys.ENGINE_GRADIENT_DIRECTION_VERTICAL,
+            UIKeys.ENGINE_GRADIENT_DIRECTION_DIAGONAL
+        );
+
+        BBSSettings.updateBackgroundSettingsVisibility();
+
         BBSSettings.translateHotkeyOrder
             .labels(
                 UIKeys.TRANSFORMS_TARGET_SCREEN,

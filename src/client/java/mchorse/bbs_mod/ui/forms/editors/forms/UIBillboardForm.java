@@ -4,20 +4,22 @@ import mchorse.bbs_mod.forms.forms.BillboardForm;
 import mchorse.bbs_mod.ui.Keys;
 import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.forms.editors.panels.UIBillboardFormPanel;
+import mchorse.bbs_mod.ui.forms.editors.panels.UIMaterialFormPanel;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 
 public class UIBillboardForm extends UIForm<BillboardForm>
 {
-    private UIBillboardFormPanel billboardFormPanel;
+    private UIBillboardFormPanel<BillboardForm> billboardFormPanel;
 
     public UIBillboardForm()
     {
         super();
 
-        this.billboardFormPanel = new UIBillboardFormPanel(this);
+        this.billboardFormPanel = new UIBillboardFormPanel<BillboardForm>(this);
         this.defaultPanel = this.billboardFormPanel;
 
         this.registerPanel(this.defaultPanel, UIKeys.FORMS_EDITORS_BILLBOARD_TITLE, Icons.MATERIAL);
+        this.registerPanel(new UIMaterialFormPanel(this), UIKeys.FORMS_EDITORS_MATERIAL_TITLE, Icons.MATERIAL);
         this.registerDefaultPanels();
 
         this.defaultPanel.keys().register(Keys.FORMS_PICK_TEXTURE, () ->
