@@ -415,7 +415,7 @@ public class BBSRendering
     }
 
     /**
-     * Replay FilterBoard model blocks after vanilla has rendered its entities.
+     * Replay FilterBoard model blocks at the end of the world pass.
      * A billboard lens rendered during the block-entity pass would snapshot an
      * incomplete frame, so only this form type is moved to the late world pass.
      */

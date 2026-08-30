@@ -531,8 +531,6 @@ public class BBSModClient implements ClientModInitializer
                 BBSRendering.renderCoolStuff(context);
             }
 
-            BBSRendering.renderDeferredFilterBoards(context);
-
             if (BBSSettings.chromaSkyEnabled.get())
             {
                 float d = BBSSettings.chromaSkyBillboard.get();
@@ -581,6 +579,14 @@ public class BBSModClient implements ClientModInitializer
          * (a drawn bow, a raised shield), and that state is computed here on
          * the client - hand it the lookup. */
         ItemUsePose.setSource(ThirdPersonItemUse::get);
+
+        /* AFTER_ENTITIES is before block entities in Fabric 1.20.1. Replay FilterBoard
+         * model blocks at LAST, after the regular block-entity and translucent passes. */
+        WorldRenderEvents.LAST.register((context) ->
+        {
+            BBSRendering.renderDeferredFilterBoards(context);
+            BBSRendering.flushDeferredFilterBoards();
+        });
 
         WorldRenderEvents.LAST.register((context) ->
         {
