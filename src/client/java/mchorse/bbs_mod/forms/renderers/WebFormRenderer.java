@@ -65,6 +65,27 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
     /** Hard cap on solver steps in a single frame, so a hitch can't cascade. */
     private static final int MAX_STEPS_PER_FRAME = 8;
+
+    /* How the simulation clock moved since the last frame */
+
+    /** Ordinary playback: step the solver by the elapsed time. */
+    private static final int TIME_NORMAL = 0;
+
+    /**
+     * Standing still. Paused playback keeps handing out partial ticks that wobble
+     * back and forth inside the same tick, which used to read as the clock running
+     * backwards and threw the whole rope back to its rest shape every frame.
+     */
+    private static final int TIME_HOLD = 1;
+
+    /** The timeline was scrubbed, or the scene jumped: the rope has to be re-settled. */
+    private static final int TIME_JUMP = 2;
+
+    /** Backwards wobble this small is paused playback, not a scrub. */
+    private static final double HOLD_TOLERANCE = 1.5D;
+
+    /** Solver steps spent settling the rope after a scrub, instead of showing it fall. */
+    private static final int SETTLE_STEPS = 120;
     private static final float MIN_DISTANCE = 1.0E-4F;
 
     /**
@@ -526,12 +547,15 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         Vector3f splatNormal = null;
         float fade = 1F;
 
+        /* One clock read per frame, before anything that depends on time. */
+        this.advanceClock(state, this.getSimulationTime(context));
+
         /* The web shooter runs its own little state machine in front of the solver:
          * holstered draws nothing, a flying shot is a straight taut line the physics
          * never touches, and only once it lands does the rope take over. */
         if (this.form.shooter.get())
         {
-            double shotTime = this.getSimulationTime(context);
+            double shotTime = state.clock;
 
             this.updateShot(state, shotTime, startWorld, endpointWorld);
             fade = this.getDissolveFade(state, shotTime);
@@ -595,25 +619,39 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             state.shotResetPending = false;
         }
 
-        if (state.shotResetPending || state.needsReset(segments, anchorMode, simulate, this.form.length.get(), this.form.sag.get()))
+        if (state.shotResetPending)
         {
-            Vector3f resetEndpoint = anchorMode == WebForm.ANCHOR_LOCKED && state.anchorMode == WebForm.ANCHOR_LOCKED && state.points.length > 0
-                ? new Vector3f(state.lockedEnd) : endpointWorld;
-
-            if (state.shotResetPending)
+            /* The rope is born exactly where the shot ended, taut between the hand
+             * and the point it reached - no sag, or it would snap into a curve the
+             * frame it lands. */
+            state.reset(segments, anchorMode, simulate, startWorld, endpointWorld, this.form.length.get(), 0F);
+            state.applyShotLanding(startWorld, endpointWorld, this.form.shotSpeed.get(), state.shotMode == WebForm.SHOT_AIR);
+            state.shotResetPending = false;
+        }
+        else if (state.needsReset(simulate))
+        {
+            state.reset(segments, anchorMode, simulate, startWorld, endpointWorld, this.form.length.get(), this.form.sag.get());
+        }
+        else
+        {
+            /* Everything short of a rebuild is done in place, so animating these
+             * from a film does not throw the rope away sixty times a second: the
+             * point count is resampled along the rope it already has, and the
+             * anchor mode just changes which ends are held. */
+            if (state.points.length != segments)
             {
-                /* The rope is born exactly where the shot ended, taut between the
-                 * hand and the point it reached - no sag, or it would snap into a
-                 * curve the frame it lands. */
-                state.reset(segments, anchorMode, simulate, startWorld, endpointWorld, this.form.length.get(), 0F);
-                state.applyShotLanding(startWorld, endpointWorld, this.form.shotSpeed.get(), state.shotMode == WebForm.SHOT_AIR);
-                state.shotResetPending = false;
+                state.resample(segments);
             }
-            else
+
+            if (state.anchorMode != anchorMode)
             {
-                state.reset(segments, anchorMode, simulate, startWorld, resetEndpoint, this.form.length.get(), this.form.sag.get());
+                state.setAnchorMode(anchorMode, endpointWorld);
             }
         }
+
+        /* Length and sag are read every frame instead of forcing a reset, which is
+         * what made them useless as keyframe channels. */
+        state.syncRest(this.form.length.get(), this.form.sag.get(), startWorld, endpointWorld);
 
         Vector3f endWorld = endpointWorld;
 
@@ -628,9 +666,7 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
         if (simulate)
         {
-            double time = this.getSimulationTime(context);
-
-            this.updateSimulation(state, context, time, startWorld, endWorld);
+            this.updateSimulation(state, context, state.clock, startWorld, endWorld);
 
             /* The solve runs at 20 steps per second like the rest of the game; the
              * frame in between reads an interpolated copy, so the rope moves at the
@@ -665,7 +701,7 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         this.attachPoints = localPoints;
 
         this.renderPoints(context, localPoints, splatCenter, splatNormal, fade,
-            this.getSplatScale(state, this.getSimulationTime(context)));
+            this.getSplatScale(state, state.clock));
     }
 
     /**
@@ -691,6 +727,15 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             return;
         }
 
+        if (this.form.paused.get())
+        {
+            /* Paused freezes the shot too. The trigger time rides along with the
+             * clock, so nothing has advanced when playback picks up again. */
+            state.fireTime += state.timeDelta;
+
+            return;
+        }
+
         /* Fresh trigger, a different kind of shot, or the clock jumped back: fire
          * anew. Moving the end point does NOT re-shoot on its own - a web that stuck
          * to a wall must not chase a keyframed aim - the editor's own inputs ask for
@@ -712,6 +757,15 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
         float speed = Math.max(0.01F, this.form.shotSpeed.get());
         float distance = state.shotOrigin.distance(state.shotTarget);
+
+        /* Dragging the playhead cannot know when the trigger went off, so a shot
+         * caught by a scrub is presented already landed rather than replaying its
+         * flight from the moment the scene was scrubbed to. Playing the film
+         * normally still animates every shot in full. */
+        if (state.timeStatus == TIME_JUMP)
+        {
+            state.fireTime = time - distance / speed - 1D;
+        }
 
         state.shotTravelled = (float) Math.max(0D, (time - state.fireTime) * speed);
 
@@ -1442,30 +1496,110 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         return context.entity == null ? transition : context.entity.getAge() + transition;
     }
 
-    private void updateSimulation(PhysicsState state, FormRenderingContext context, double time, Vector3f start, Vector3f endpoint)
+    /**
+     * Move the web's own clock to this frame and say what kind of move it was. The
+     * renderer used to read the raw entity age every time it needed a timestamp,
+     * which broke in an editor in two ways: paused playback still hands out partial
+     * ticks that swing back and forth inside one tick (the rope read that as time
+     * running backwards and reset itself every single frame), and dragging the
+     * playhead moves the age by hundreds of ticks at once. The clock here only ever
+     * moves forwards during playback, stands perfectly still while paused, and
+     * reports a scrub so the rope can be re-settled instead of dropped from scratch.
+     */
+    private void advanceClock(PhysicsState state, double time)
     {
         if (state.lastTime == Double.NEGATIVE_INFINITY)
         {
             state.lastTime = time;
-        }
-
-        double delta = time - state.lastTime;
-
-        state.lastTime = time;
-
-        if (delta < 0D || delta > MAX_TICK_STEP)
-        {
-            Vector3f resetEndpoint = state.anchorMode == WebForm.ANCHOR_LOCKED ? new Vector3f(state.lockedEnd) : endpoint;
-
-            state.reset(state.segments, state.anchorMode, true, start, resetEndpoint, this.form.length.get(), this.form.sag.get());
+            state.clock = time;
+            state.timeStatus = TIME_NORMAL;
+            state.timeDelta = 0D;
 
             return;
         }
 
-        if (this.form.paused.get())
+        double delta = time - state.lastTime;
+
+        if (delta < 0D && delta > -HOLD_TOLERANCE)
         {
+            /* Paused: hold everything, and remember the furthest point reached so
+             * resuming does not replay the fraction of a tick we sat on. */
+            state.timeStatus = TIME_HOLD;
+            state.timeDelta = 0D;
+
+            return;
+        }
+
+        if (delta <= -HOLD_TOLERANCE || delta > MAX_TICK_STEP)
+        {
+            state.timeStatus = TIME_JUMP;
+            state.timeDelta = delta;
+            state.lastTime = time;
+            state.clock += delta;
+
+            return;
+        }
+
+        state.timeStatus = TIME_NORMAL;
+        state.timeDelta = delta;
+        state.lastTime = time;
+        state.clock += delta;
+    }
+
+    /**
+     * Put the rope where it would have come to rest, in one go. Scrubbing a film to
+     * an arbitrary tick cannot replay everything that happened before it (the hand
+     * that holds the web moved along a path we no longer have), but showing the line
+     * snap straight and then visibly fall - which is what a bare reset looked like -
+     * is the worst of both worlds. Instead the solver is run forward here, silently,
+     * until the rope hangs the way it should at that anchor.
+     */
+    private void settle(PhysicsState state, FormRenderingContext context, Vector3f start, Vector3f endpoint)
+    {
+        Vector3f target = state.anchorMode == WebForm.ANCHOR_LOCKED ? new Vector3f(state.lockedEnd) : endpoint;
+
+        state.reset(state.segments, state.anchorMode, state.simulation, start, target, this.form.length.get(), this.form.sag.get());
+        state.accumulator = 0F;
+
+        int iterations = MathUtils.clamp(this.form.iterations.get(), 1, 12);
+
+        for (int i = 0; i < SETTLE_STEPS; i++)
+        {
+            state.snapshot();
+            this.integrate(state, state.step++);
+            this.dampSegments(state);
+            this.applyPins(state, start, target);
+            this.solveConstraints(state, context, iterations, start, target);
+        }
+
+        /* Land it at rest: whatever speed the settling left behind must not be
+         * released the moment playback resumes. */
+        for (int i = 0; i < state.points.length; i++)
+        {
+            state.previous[i].set(state.points[i]);
+            state.past[i].set(state.points[i]);
+        }
+    }
+
+    private void updateSimulation(PhysicsState state, FormRenderingContext context, double time, Vector3f start, Vector3f endpoint)
+    {
+        if (state.timeStatus == TIME_JUMP)
+        {
+            this.settle(state, context, start, endpoint);
+
+            return;
+        }
+
+        double delta = state.timeDelta;
+
+        if (state.timeStatus == TIME_HOLD || this.form.paused.get())
+        {
+            /* Frozen exactly where it stands - the ends still follow their anchors,
+             * so a paused rope stays attached to a hand that the editor moves, and
+             * the previous positions move with them so resuming does not fire the
+             * whole pause off as one enormous velocity. */
             state.accumulator = 0F;
-            state.applyPinsTo(state.points, start, endpoint);
+            this.applyPins(state, start, endpoint);
             state.snapshot();
 
             return;
@@ -1538,9 +1672,10 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         }
 
         float seconds = (float) (delta / 20D);
-        float minimum = Math.max(MIN_DISTANCE, state.points.length * 0.02F);
+        float base = Math.max(MIN_DISTANCE, state.restLength + state.reeled);
 
-        state.restLength = MathUtils.clamp(state.restLength - reel * seconds, minimum, 512F);
+        state.reeled = MathUtils.clamp(state.reeled + reel * seconds, -512F, base);
+        state.syncRest(state.lengthSetting, state.sagSetting, state.points[0], state.points[state.points.length - 1]);
     }
 
     /**
@@ -1929,6 +2064,15 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
         /** Simulation clock (in ticks, fractional) of the last frame, and the unspent remainder. */
         public double lastTime = Double.NEGATIVE_INFINITY;
+
+        /**
+         * The web's own clock. Unlike the entity's age it never runs backwards on a
+         * paused frame, which is what everything timed (the shot above all) reads.
+         */
+        public double clock;
+        public int timeStatus = TIME_NORMAL;
+        public double timeDelta;
+
         public float accumulator;
         public long step;
 
@@ -1949,11 +2093,83 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         public float sagSetting;
         public float restLength;
 
-        public boolean needsReset(int segments, int anchorMode, boolean simulation, float length, float sag)
+        /** Blocks the line has been winched in; kept apart so the settings stay authoritative. */
+        public float reeled;
+
+        /** Only a rope that does not exist yet, or one that changed solver mode, is rebuilt. */
+        public boolean needsReset(boolean simulation)
         {
-            return this.points.length != segments || this.segments != segments || this.anchorMode != anchorMode
-                || this.simulation != simulation || Math.abs(this.lengthSetting - length) > 1.0E-4F
-                || Math.abs(this.sagSetting - sag) > 1.0E-4F;
+            return this.points.length < 2 || this.simulation != simulation;
+        }
+
+        /**
+         * Follow the length and sag settings without rebuilding anything. The rest
+         * length is the setting or the span between the anchors, whichever is longer,
+         * minus whatever has been reeled in so far.
+         */
+        public void syncRest(float length, float sag, Vector3f start, Vector3f end)
+        {
+            this.lengthSetting = length;
+            this.sagSetting = sag;
+
+            Vector3f span = this.anchorMode == WebForm.ANCHOR_FREE ? this.initialEnd : end;
+            float base = Math.max(MIN_DISTANCE, Math.max(length, start.distance(span)));
+            float minimum = Math.max(MIN_DISTANCE, this.points.length * 0.02F);
+
+            this.restLength = MathUtils.clamp(base - this.reeled, minimum, 512F);
+        }
+
+        /** Swap which ends are held, keeping the rope exactly where it hangs. */
+        public void setAnchorMode(int anchorMode, Vector3f end)
+        {
+            this.anchorMode = anchorMode;
+
+            if (anchorMode == WebForm.ANCHOR_LOCKED)
+            {
+                this.lockedEnd.set(end);
+            }
+            else if (anchorMode == WebForm.ANCHOR_FREE)
+            {
+                this.initialEnd.set(end);
+            }
+        }
+
+        /**
+         * Change the point count by sampling the rope that is already there, instead
+         * of throwing it away. Speed is carried over with it, so a web being animated
+         * through a segment change keeps swinging.
+         */
+        public void resample(int count)
+        {
+            if (count < 2 || this.points.length < 2)
+            {
+                return;
+            }
+
+            Vector3f[] newPoints = new Vector3f[count];
+            Vector3f[] newPrevious = new Vector3f[count];
+            Vector3f[] newPast = new Vector3f[count];
+            Vector3f[] newRendered = new Vector3f[count];
+            int old = this.points.length;
+
+            for (int i = 0; i < count; i++)
+            {
+                float position = i / (float) (count - 1) * (old - 1);
+                int a = MathUtils.clamp((int) position, 0, old - 1);
+                int b = Math.min(a + 1, old - 1);
+                float blend = position - a;
+
+                newPoints[i] = new Vector3f(this.points[a]).lerp(this.points[b], blend);
+                newPrevious[i] = new Vector3f(this.previous[a]).lerp(this.previous[b], blend);
+                newPast[i] = new Vector3f(newPoints[i]);
+                newRendered[i] = new Vector3f(newPoints[i]);
+            }
+
+            this.points = newPoints;
+            this.previous = newPrevious;
+            this.past = newPast;
+            this.rendered = newRendered;
+            this.segments = count;
         }
 
         public void reset(int segments, int anchorMode, boolean simulation, Vector3f start, Vector3f end, float length, float sag)
@@ -1966,6 +2182,7 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             this.lockedEnd.set(end);
             this.initialEnd.set(end);
             this.restLength = Math.max(MIN_DISTANCE, Math.max(length, start.distance(end)));
+            this.reeled = 0F;
             this.points = new Vector3f[segments];
             this.previous = new Vector3f[segments];
             this.past = new Vector3f[segments];

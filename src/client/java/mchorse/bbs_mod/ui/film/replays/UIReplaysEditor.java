@@ -23,6 +23,7 @@ import mchorse.bbs_mod.forms.FormUtils;
 import mchorse.bbs_mod.forms.entities.IEntity;
 import mchorse.bbs_mod.forms.forms.BodyPart;
 import mchorse.bbs_mod.forms.forms.Form;
+import mchorse.bbs_mod.forms.forms.WebForm;
 import mchorse.bbs_mod.forms.forms.ModelForm;
 import mchorse.bbs_mod.forms.renderers.ModelFormRenderer;
 import mchorse.bbs_mod.graphics.window.Window;
@@ -403,6 +404,14 @@ public class UIReplaysEditor extends UIElement
         if (sheet.property == null && sheet.form == null)
         {
             return ReplayCategory.PLAYER;
+        }
+
+        /* A web is a simulation, not a model: everything on it - the anchors, the
+         * shooter's trigger, gravity, the reel - belongs next to the other physics
+         * tracks, which is where anyone animating a swing goes looking. */
+        if (getSheetForm(sheet) instanceof WebForm)
+        {
+            return ReplayCategory.PHYSICS;
         }
 
         return FormUtils.isPoseProperty(StringUtils.fileName(id)) ? ReplayCategory.POSE : ReplayCategory.MODEL;
