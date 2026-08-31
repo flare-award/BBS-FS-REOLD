@@ -10,7 +10,8 @@ import mchorse.bbs_mod.utils.resources.Pixels;
 import org.lwjgl.opengl.GL11;
 
 import java.nio.ByteBuffer;
-import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -40,8 +41,56 @@ public class FormMaterials
 
     private static final int SPECULAR_SIZE = 16;
 
-    private static final Map<Link, PBREntry> pbr = new HashMap<>();
-    private static final Map<Link, ProcessedEntry> processed = new HashMap<>();
+    /**
+     * Both caches are hard-capped. Every processed entry pins a full copy of its
+     * texture in native memory (the base pixels are read back once and kept for
+     * re-uploads) plus a GL texture, so an unbounded map would grow with every
+     * texture a film touches and starve the rest of the process - LWJGL's own
+     * allocations (Sodium's chunk meshes among them) then fail with a bare
+     * OutOfMemoryError. The eldest entry is deleted, not just dropped.
+     */
+    private static final int MAX_PROCESSED = 32;
+    private static final int MAX_PBR = 64;
+
+    /** How long a processed entry may sit unused before its native pixel copy is freed. */
+    private static final long IDLE_RELEASE_MS = 15_000L;
+
+    /** Textures bigger than this aren't worth a CPU copy - the base one is served instead. */
+    private static final int MAX_PROCESSED_SIZE = 2048;
+
+    private static final Map<Link, PBREntry> pbr = new LinkedHashMap<>(16, 0.75F, true)
+    {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Link, PBREntry> eldest)
+        {
+            if (this.size() > MAX_PBR)
+            {
+                eldest.getValue().delete();
+
+                return true;
+            }
+
+            return false;
+        }
+    };
+
+    private static final Map<Link, ProcessedEntry> processed = new LinkedHashMap<>(16, 0.75F, true)
+    {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Link, ProcessedEntry> eldest)
+        {
+            if (this.size() > MAX_PROCESSED)
+            {
+                eldest.getValue().delete();
+
+                return true;
+            }
+
+            return false;
+        }
+    };
+
+    private static long lastPrune;
 
     /**
      * The form whose model is being drawn right now. Per-material texture
@@ -140,7 +189,68 @@ public class FormMaterials
             return base;
         }
 
+        /* A CPU copy of a huge atlas costs more native memory than the effect is
+         * worth (and would be re-read on every texture swap), so it passes through. */
+        if (base.width > MAX_PROCESSED_SIZE || base.height > MAX_PROCESSED_SIZE)
+        {
+            return base;
+        }
+
+        prune();
+
         return processed.computeIfAbsent(link, (key) -> new ProcessedEntry()).get(link, base, overlay, relief, hue, saturation);
+    }
+
+    /**
+     * Drop the native pixel copies of entries nothing has asked for in a while.
+     * A form that comes back simply reads its texture again - the copy exists to
+     * make re-uploads cheap, not to be held for the rest of the session.
+     */
+    private static void prune()
+    {
+        long now = System.currentTimeMillis();
+
+        if (now - lastPrune < 1000L)
+        {
+            return;
+        }
+
+        lastPrune = now;
+
+        Iterator<Map.Entry<Link, ProcessedEntry>> it = processed.entrySet().iterator();
+
+        while (it.hasNext())
+        {
+            ProcessedEntry entry = it.next().getValue();
+
+            if (now - entry.lastUsed > IDLE_RELEASE_MS)
+            {
+                entry.delete();
+                it.remove();
+            }
+        }
+    }
+
+    /**
+     * Free every cached material texture and pixel copy. Called when the client
+     * leaves a world: the next one starts from an empty cache instead of carrying
+     * over the textures (and their native memory) of the previous session.
+     */
+    public static void clear()
+    {
+        for (PBREntry entry : pbr.values())
+        {
+            entry.delete();
+        }
+
+        for (ProcessedEntry entry : processed.values())
+        {
+            entry.delete();
+        }
+
+        pbr.clear();
+        processed.clear();
+        currentForm = null;
     }
 
     /** The four LabPBR slider values and the specular texture they bake into. */
@@ -233,10 +343,13 @@ public class FormMaterials
         private float lastRelief = -1F;
         private float lastHue;
         private float lastSaturation = 1F;
+        private long lastUsed = System.currentTimeMillis();
 
         public Texture get(Link link, Texture base, Color overlay, float relief, float hue, float saturation)
         {
             int color = overlay.a <= 0F ? 0 : overlay.getARGBColor();
+
+            this.lastUsed = System.currentTimeMillis();
 
             if (this.basePixels == null || this.baseId != base.id)
             {
@@ -402,6 +515,29 @@ public class FormMaterials
                  * PBR companions (file-based or synthesized) for the processed copy */
                 IrisUtils.trackSynthetic(this.derived.id, link);
             }
+        }
+
+        /** Free the GL copy and the native pixel buffer this entry holds. */
+        public void delete()
+        {
+            if (this.derived != null)
+            {
+                this.derived.delete();
+                this.derived = null;
+            }
+
+            if (this.basePixels != null)
+            {
+                this.basePixels.delete();
+                this.basePixels = null;
+            }
+
+            this.luminance = null;
+            this.baseId = -1;
+            this.lastRelief = -1F;
+            this.lastColor = 0;
+            this.lastHue = 0F;
+            this.lastSaturation = 1F;
         }
     }
 }

@@ -32,6 +32,7 @@ import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.forms.structure.BakedStructure;
 import mchorse.bbs_mod.graphics.Draw;
 import mchorse.bbs_mod.graphics.FramebufferManager;
+import mchorse.bbs_mod.graphics.texture.FormMaterials;
 import mchorse.bbs_mod.graphics.texture.TextureManager;
 import mchorse.bbs_mod.items.GunProperties;
 import mchorse.bbs_mod.items.GunZoom;
@@ -607,6 +608,10 @@ public class BBSModClient implements ClientModInitializer
             minecraftSoundCapture.end();
 
             films = new Films();
+
+            /* Material copies are per-session GL textures and native pixel buffers:
+             * without this they'd pile up across every world the client enters. */
+            FormMaterials.clear();
 
             ClientNetwork.resetHandshake();
             films.reset();
