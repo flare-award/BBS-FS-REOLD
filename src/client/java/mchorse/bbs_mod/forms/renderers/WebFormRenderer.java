@@ -66,7 +66,32 @@ public class WebFormRenderer extends FormRenderer<WebForm>
     /** Hard cap on solver steps in a single frame, so a hitch can't cascade. */
     private static final int MAX_STEPS_PER_FRAME = 8;
     private static final float MIN_DISTANCE = 1.0E-4F;
-    private static final float GRAVITY_SCALE = 0.02F;
+
+    /**
+     * Blocks per tick squared at a gravity of 1. Vanilla entities fall at about
+     * 0.08, and the old 0.02 made every web a slow motion pendulum: a five block
+     * line took seven seconds to swing once, so a hanging body just oozed downwards
+     * instead of swinging. At this scale the default 0.45 gives a rope that swings
+     * like a rope on film.
+     */
+    private static final float GRAVITY_SCALE = 0.06F;
+
+    /**
+     * How much of its speed a point may lose per tick at a damping of 1. The slider
+     * used to be the loss itself, so the default 0.08 wiped 8% of the speed every
+     * tick - a swing was over in half a second and never got to be a swing. Now the
+     * default costs about 0.6% a tick: five or six visible passes that decay to a
+     * stop right under the anchor, which is what a body on a rope does.
+     */
+    private static final float DAMPING_SCALE = 0.08F;
+
+    /**
+     * Fraction of the speed difference between neighbouring points removed each
+     * tick. This is what kills the shivering - it only ever damps points moving
+     * against each other, never the rope swinging as a whole - and it is why the
+     * air damping above can afford to be so gentle.
+     */
+    private static final float SEGMENT_DAMPING = 0.25F;
     private static final float WIND_SCALE = 0.02F;
 
     /** Furthest a simulated point may sit from the shooter before the rope is restarted. */
@@ -76,7 +101,7 @@ public class WebFormRenderer extends FormRenderer<WebForm>
     private static final float MAX_STEP = 2F;
 
     /** How quickly an attachment's orientation follows the rope (0 frozen, 1 instant). */
-    private static final float ORIENT_SMOOTHING = 0.35F;
+    private static final float ORIENT_SMOOTHING = 0.18F;
 
     /**
      * Mass of one bare rope point, in the same kilograms the body parts use. A load
@@ -86,7 +111,13 @@ public class WebFormRenderer extends FormRenderer<WebForm>
     private static final float POINT_MASS = 2F;
 
     /** Damping left at a fully loaded point - heavy things keep their momentum. */
-    private static final float HEAVY_DAMPING_SCALE = 0.35F;
+    private static final float HEAVY_DAMPING_SCALE = 0.55F;
+
+    /** Lightest a loaded point may be treated as, for solver stability. */
+    private static final float MIN_INVERSE_MASS = 0.15F;
+
+    /** Fraction of a segment a single constraint pass may move a point. */
+    private static final float MAX_CORRECTION = 0.5F;
 
     /* Web shooter phases of one shot */
 
@@ -337,15 +368,21 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             return new Matrix4f().translate(point);
         }
 
+        /* The direction is taken over several segments, not between two neighbours.
+         * One segment is a few centimetres long and every solver pass nudges it, so
+         * a hanging body read off it wobbles constantly; a chord over a quarter of
+         * the rope points the same way but barely notices the ripple. */
+        int span = Math.max(1, Math.min(points.length / 4, 4));
+        int reference = index == 0 ? Math.min(points.length - 1, span) : Math.max(0, index - span);
         Vector3f up = new Vector3f();
 
         if (index == 0)
         {
-            up.set(points[0]).sub(points[1]);
+            up.set(points[0]).sub(points[reference]);
         }
         else
         {
-            up.set(points[index - 1]).sub(points[index]);
+            up.set(points[reference]).sub(points[index]);
         }
 
         if (up.lengthSquared() <= MIN_DISTANCE * MIN_DISTANCE)
@@ -1449,6 +1486,7 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         {
             state.snapshot();
             this.integrate(state, state.step++);
+            this.dampSegments(state);
             this.applyPins(state, start, endpoint);
             this.solveConstraints(state, context, this.form.iterations.get(), start, endpoint);
 
@@ -1603,18 +1641,26 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             return 1F;
         }
 
-        return POINT_MASS / (POINT_MASS + this.pointMass[index]);
+        /* Floored: a 300 kg load would otherwise take 99% of every correction and
+         * hand the whole error to its light neighbour, which the solver answers with
+         * a violent shudder. The floor keeps heavy heavy and the rope stable. */
+        return Math.max(MIN_INVERSE_MASS, POINT_MASS / (POINT_MASS + this.pointMass[index]));
     }
 
     private void integrate(PhysicsState state, long step)
     {
         int last = state.points.length - 1;
         int end = state.anchorMode == WebForm.ANCHOR_FREE ? last + 1 : last;
-        float damping = 1F - MathUtils.clamp(this.form.damping.get(), 0F, 0.99F);
+        float damping = 1F - MathUtils.clamp(this.form.damping.get(), 0F, 1F) * DAMPING_SCALE;
         float gravity = Math.max(0F, this.form.gravity.get()) * GRAVITY_SCALE;
         Vector3f wind = this.form.wind.get();
         float windSpeed = Math.max(0F, this.form.windSpeed.get());
-        float noiseAmount = MathUtils.clamp(this.form.windNoise.get(), 0F, 1F);
+
+        /* Gusts are a modulation OF the wind, not a force of their own. They used to
+         * blow at full strength with the wind vector at zero, which meant the default
+         * web was permanently stirred: a hanging body never came to rest and the rope
+         * shivered in place. No wind, no gusts. */
+        float noiseAmount = MathUtils.clamp(this.form.windNoise.get(), 0F, 1F) * wind.length();
 
         for (int i = 1; i < end; i++)
         {
@@ -1630,7 +1676,10 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             float velocityX = (point.x - previous.x) * pointDamping;
             float velocityY = (point.y - previous.y) * pointDamping;
             float velocityZ = (point.z - previous.z) * pointDamping;
-            float phase = step * 0.08F * windSpeed + i * 1.713F;
+            /* A slow phase shift along the rope, not a different gust per point: with
+             * the old spacing neighbouring points were pushed in opposite directions
+             * on the same tick, which reads as shaking rather than as wind. */
+            float phase = step * 0.08F * windSpeed + i * 0.28F;
             float noiseX = (float) Math.sin(phase * 1.31F) * noiseAmount;
             float noiseY = (float) Math.cos(phase * 0.87F + 0.8F) * noiseAmount;
             float noiseZ = (float) Math.sin(phase * 1.11F + 1.7F) * noiseAmount;
@@ -1646,6 +1695,77 @@ public class WebFormRenderer extends FormRenderer<WebForm>
              * unbounded, one deep contact launches the point across the world and
              * the rest of the rope follows it - clamp the per-tick travel. */
             this.clampStep(point, previous);
+        }
+    }
+
+    /**
+     * Take the speed difference out of neighbouring points along the line between
+     * them. A rope swinging as one is untouched (its points all move together), while
+     * the buzzing the constraint solver leaves behind - segments sawing back and
+     * forth against each other, which a hanging body magnifies into a shake - dies
+     * within a few ticks. Verlet keeps its speed in the previous position, so the
+     * correction is written there.
+     */
+    private void dampSegments(PhysicsState state)
+    {
+        int last = state.points.length - 1;
+
+        if (last < 1)
+        {
+            return;
+        }
+
+        boolean pinEnd = state.anchorMode != WebForm.ANCHOR_FREE;
+
+        for (int i = 0; i < last; i++)
+        {
+            Vector3f first = state.points[i];
+            Vector3f second = state.points[i + 1];
+            float dx = second.x - first.x;
+            float dy = second.y - first.y;
+            float dz = second.z - first.z;
+            float distance = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+            if (distance <= MIN_DISTANCE)
+            {
+                continue;
+            }
+
+            dx /= distance;
+            dy /= distance;
+            dz /= distance;
+
+            Vector3f previousFirst = state.previous[i];
+            Vector3f previousSecond = state.previous[i + 1];
+            float relative =
+                  ((second.x - previousSecond.x) - (first.x - previousFirst.x)) * dx
+                + ((second.y - previousSecond.y) - (first.y - previousFirst.y)) * dy
+                + ((second.z - previousSecond.z) - (first.z - previousFirst.z)) * dz;
+
+            if (relative == 0F)
+            {
+                continue;
+            }
+
+            boolean firstPinned = i == 0;
+            boolean secondPinned = i + 1 == last && pinEnd;
+
+            if (firstPinned && secondPinned)
+            {
+                continue;
+            }
+
+            float impulse = relative * SEGMENT_DAMPING * (firstPinned || secondPinned ? 1F : 0.5F);
+
+            if (!firstPinned)
+            {
+                previousFirst.sub(dx * impulse, dy * impulse, dz * impulse);
+            }
+
+            if (!secondPinned)
+            {
+                previousSecond.add(dx * impulse, dy * impulse, dz * impulse);
+            }
         }
     }
 
@@ -1674,6 +1794,15 @@ public class WebFormRenderer extends FormRenderer<WebForm>
                 }
 
                 float error = distance - segmentLength;
+
+                /* One pass may only take out so much: a rope yanked far past its rest
+                 * length (a landing shot, a teleport, a heavy part dropped on it) would
+                 * otherwise be thrown back harder than it was pulled, and ring for
+                 * seconds afterwards. */
+                float limit = segmentLength * MAX_CORRECTION;
+
+                error = MathUtils.clamp(error, -limit, limit);
+
                 float correction = error / distance * stiffness;
                 boolean firstPinned = i == 0;
                 boolean secondPinned = i + 1 == last && pinEnd;
