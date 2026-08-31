@@ -4,12 +4,17 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import mchorse.bbs_mod.client.BBSRendering;
 import mchorse.bbs_mod.cubic.physics.ModelPhysicsWorldCollisions;
 import mchorse.bbs_mod.forms.FormTranslucentQueue;
+import mchorse.bbs_mod.forms.FormUtilsClient;
 import mchorse.bbs_mod.forms.entities.IEntity;
+import mchorse.bbs_mod.forms.forms.BodyPart;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.forms.forms.WebForm;
 import mchorse.bbs_mod.forms.renderers.utils.FormColorBlend;
+import mchorse.bbs_mod.forms.renderers.utils.MatrixCache;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.utils.MathUtils;
+import mchorse.bbs_mod.utils.MatrixStackUtils;
+import mchorse.bbs_mod.utils.StringUtils;
 import mchorse.bbs_mod.utils.colors.Color;
 import net.minecraft.client.gl.VertexBuffer;
 import net.minecraft.client.render.BufferBuilder;
@@ -18,10 +23,14 @@ import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.Tessellator;
 import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
+import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.math.RotationAxis;
 import org.joml.Matrix4f;
+import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 
@@ -46,12 +55,219 @@ public class WebFormRenderer extends FormRenderer<WebForm>
     /** Furthest a simulated point may travel in one tick. */
     private static final float MAX_STEP = 2F;
 
+    /* Attachment point names offered to body parts */
+    private static final String BONE_START = "start";
+    private static final String BONE_MIDDLE = "middle";
+    private static final String BONE_END = "end";
+    private static final String BONE_POINT_PREFIX = "point_";
+    private static final String FIXED_SUFFIX = "_fixed";
+
     private final Map<IEntity, PhysicsState> states = new WeakHashMap<>();
     private final PhysicsState nullEntityState = new PhysicsState();
+
+    /**
+     * The points of the last drawn web, in the same local space as the render stack.
+     * Body parts attach to these, so a model can ride the tip of a swinging line.
+     */
+    private Vector3f[] attachPoints;
 
     public WebFormRenderer(WebForm form)
     {
         super(form);
+    }
+
+    /**
+     * Attachment points offered to body parts. The web has no model, so the
+     * "bones" are its own anchors: the shooter's end, the middle, the tip, and
+     * every simulated point in between. The plain names orient the attached form
+     * along the line (its Y axis points back up the web, so a model hangs from
+     * it naturally); the {@code _fixed} ones only move it, leaving the rotation
+     * to the body part's own transform.
+     */
+    @Override
+    public List<String> getBones()
+    {
+        int segments = MathUtils.clamp(this.form.segments.get(), 2, 64);
+        List<String> bones = new ArrayList<>();
+
+        bones.add(BONE_START);
+        bones.add(BONE_MIDDLE);
+        bones.add(BONE_END);
+        bones.add(BONE_START + FIXED_SUFFIX);
+        bones.add(BONE_MIDDLE + FIXED_SUFFIX);
+        bones.add(BONE_END + FIXED_SUFFIX);
+
+        for (int i = 0; i < segments; i++)
+        {
+            /* Zero padded: the picker sorts the list alphabetically. */
+            bones.add(String.format("%s%02d", BONE_POINT_PREFIX, i + 1));
+        }
+
+        return bones;
+    }
+
+    @Override
+    public void renderBodyParts(FormRenderingContext context)
+    {
+        for (BodyPart part : this.form.parts.getAllTyped())
+        {
+            Matrix4f attachment = this.getAttachmentMatrix(part.bone.get());
+
+            if (attachment == null)
+            {
+                this.renderBodyPart(part, context);
+
+                continue;
+            }
+
+            context.stack.push();
+            MatrixStackUtils.multiply(context.stack, attachment);
+
+            if (context.world != null)
+            {
+                context.world.push();
+                MatrixStackUtils.multiply(context.world, attachment);
+            }
+
+            this.renderBodyPart(part, context);
+
+            context.stack.pop();
+
+            if (context.world != null)
+            {
+                context.world.pop();
+            }
+        }
+    }
+
+    @Override
+    public void collectMatrices(IEntity entity, MatrixStack stack, MatrixCache matrices, String prefix, float transition)
+    {
+        Matrix4f mm = new Matrix4f();
+        Matrix4f oo = new Matrix4f();
+
+        stack.push();
+        this.applyTransforms(stack, true, transition);
+        oo.set(stack.peek().getPositionMatrix());
+        stack.pop();
+
+        stack.push();
+        this.applyTransforms(stack, false, transition);
+        mm.set(stack.peek().getPositionMatrix());
+
+        matrices.put(prefix, mm, oo);
+
+        int i = 0;
+
+        for (BodyPart part : this.form.parts.getAllTyped())
+        {
+            Form form = part.getForm();
+
+            if (form != null)
+            {
+                Matrix4f attachment = this.getAttachmentMatrix(part.bone.get());
+
+                stack.push();
+
+                if (attachment != null)
+                {
+                    /* The editor's gizmo has to sit where the part is actually drawn. */
+                    MatrixStackUtils.multiply(stack, attachment);
+                }
+
+                MatrixStackUtils.applyTransform(stack, part.transform.get());
+
+                FormUtilsClient.getRenderer(form).collectMatrices(entity, stack, matrices, StringUtils.combinePaths(prefix, String.valueOf(i)), transition);
+
+                stack.pop();
+            }
+
+            i += 1;
+        }
+
+        stack.pop();
+    }
+
+    /**
+     * The local matrix of an attachment point, or null when the name isn't one of
+     * ours (an empty bone, or a leftover name from another form - the part then
+     * hangs off the web's origin exactly like before).
+     */
+    private Matrix4f getAttachmentMatrix(String bone)
+    {
+        if (bone == null || bone.isEmpty())
+        {
+            return null;
+        }
+
+        Vector3f[] points = this.attachPoints;
+
+        if (points == null || points.length < 2)
+        {
+            return null;
+        }
+
+        boolean oriented = !bone.endsWith(FIXED_SUFFIX);
+        String name = oriented ? bone : bone.substring(0, bone.length() - FIXED_SUFFIX.length());
+        int index;
+
+        if (name.equals(BONE_START))
+        {
+            index = 0;
+        }
+        else if (name.equals(BONE_END))
+        {
+            index = points.length - 1;
+        }
+        else if (name.equals(BONE_MIDDLE))
+        {
+            index = points.length / 2;
+        }
+        else if (name.startsWith(BONE_POINT_PREFIX))
+        {
+            try
+            {
+                index = Integer.parseInt(name.substring(BONE_POINT_PREFIX.length())) - 1;
+            }
+            catch (NumberFormatException e)
+            {
+                return null;
+            }
+        }
+        else
+        {
+            return null;
+        }
+
+        /* Fewer simulated points than the name asks for (the segment count changed
+         * after the part was attached): clamp to the tip instead of dropping it. */
+        index = MathUtils.clamp(index, 0, points.length - 1);
+
+        Vector3f point = points[index];
+        Matrix4f matrix = new Matrix4f().translate(point);
+
+        if (!oriented)
+        {
+            return matrix;
+        }
+
+        Vector3f up = new Vector3f();
+
+        if (index == 0)
+        {
+            up.set(points[0]).sub(points[1]);
+        }
+        else
+        {
+            up.set(points[index - 1]).sub(points[index]);
+        }
+
+        if (up.lengthSquared() <= MIN_DISTANCE * MIN_DISTANCE)
+        {
+            return matrix;
+        }
+
+        return matrix.rotate(new Quaternionf().rotationTo(new Vector3f(0F, 1F, 0F), up.normalize()));
     }
 
     @Override
@@ -109,7 +325,10 @@ public class WebFormRenderer extends FormRenderer<WebForm>
     {
         if (context.type == FormRenderType.ITEM_INVENTORY && !context.isPicking())
         {
-            this.renderPoints(context, this.buildInventoryPoints());
+            Vector3f[] inventoryPoints = this.buildInventoryPoints();
+
+            this.attachPoints = inventoryPoints;
+            this.renderPoints(context, inventoryPoints);
 
             return;
         }
@@ -167,6 +386,10 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         {
             localPoints[i] = inverseWorld.transformPosition(new Vector3f(worldPoints[i]));
         }
+
+        /* Body parts hang off these, so they have to be the very points that were
+         * drawn: same space as the render stack, same frame, physics included. */
+        this.attachPoints = localPoints;
 
         this.renderPoints(context, localPoints);
     }
