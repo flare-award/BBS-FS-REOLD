@@ -26,10 +26,10 @@ import net.minecraft.client.render.VertexFormats;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.math.RotationAxis;
 import org.joml.Matrix4f;
-import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -75,6 +75,19 @@ public class WebFormRenderer extends FormRenderer<WebForm>
     /** Furthest a simulated point may travel in one tick. */
     private static final float MAX_STEP = 2F;
 
+    /** How quickly an attachment's orientation follows the rope (0 frozen, 1 instant). */
+    private static final float ORIENT_SMOOTHING = 0.35F;
+
+    /**
+     * Mass of one bare rope point, in the same kilograms the body parts use. A load
+     * is only felt relative to the rope itself, so this is what "heavy" is measured
+     * against: a 60 kg rider on a 2 kg point moves the line, a 0.5 kg rat barely does.
+     */
+    private static final float POINT_MASS = 2F;
+
+    /** Damping left at a fully loaded point - heavy things keep their momentum. */
+    private static final float HEAVY_DAMPING_SCALE = 0.35F;
+
     /* Attachment point names offered to body parts */
     private static final String BONE_START = "start";
     private static final String BONE_MIDDLE = "middle";
@@ -98,6 +111,16 @@ public class WebFormRenderer extends FormRenderer<WebForm>
     private Vector3f[] frameBinormals = new Vector3f[0];
     private final Vector3f scratchTangent = new Vector3f();
     private final Vector3f scratchReference = new Vector3f();
+    private final Vector3f scratchOrient = new Vector3f();
+    private final Vector3f scratchRight = new Vector3f();
+    private final Vector3f scratchForward = new Vector3f();
+
+    /** Low-passed rope direction per attachment point, keyed by its name. */
+    private final Map<String, Vector3f> smoothedUp = new HashMap<>();
+
+    /** Attached mass per rope point (kg), rebuilt every frame from the body parts. */
+    private float[] pointMass = new float[0];
+    private boolean loaded;
     private final Vector3f ringA = new Vector3f();
     private final Vector3f ringB = new Vector3f();
     private final Vector3f ringC = new Vector3f();
@@ -276,11 +299,10 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         index = MathUtils.clamp(index, 0, points.length - 1);
 
         Vector3f point = points[index];
-        Matrix4f matrix = new Matrix4f().translate(point);
 
         if (!oriented)
         {
-            return matrix;
+            return new Matrix4f().translate(point);
         }
 
         Vector3f up = new Vector3f();
@@ -296,10 +318,68 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
         if (up.lengthSquared() <= MIN_DISTANCE * MIN_DISTANCE)
         {
-            return matrix;
+            return new Matrix4f().translate(point);
         }
 
-        return matrix.rotate(new Quaternionf().rotationTo(new Vector3f(0F, 1F, 0F), up.normalize()));
+        up.normalize();
+
+        /* Two ropes apart, one solver step apart, the raw direction jitters by a few
+         * degrees every frame - which reads as the hanging model shivering. The
+         * direction is low-passed per attachment point instead. */
+        Vector3f smoothed = this.smoothedUp.computeIfAbsent(bone, (key) -> new Vector3f(up));
+
+        smoothed.lerp(up, ORIENT_SMOOTHING);
+
+        if (smoothed.lengthSquared() <= MIN_DISTANCE * MIN_DISTANCE)
+        {
+            smoothed.set(up);
+        }
+        else
+        {
+            smoothed.normalize();
+        }
+
+        return this.orientationMatrix(point, smoothed);
+    }
+
+    /**
+     * A stable frame for a hanging form: Y along the rope, the other two axes pinned
+     * to a fixed reference.
+     *
+     * <p>The previous version asked for the shortest arc from +Y to the rope
+     * direction. That leaves the roll around the rope completely undetermined - as
+     * the line swings, the shortest arc twists with it, which is exactly the "it
+     * suddenly turns 45-90 degrees" the rider sees. Building the basis explicitly
+     * from a reference axis gives the same orientation for the same direction, every
+     * frame, with no accumulated or flipping roll.</p>
+     */
+    private Matrix4f orientationMatrix(Vector3f point, Vector3f up)
+    {
+        Vector3f reference = this.scratchOrient;
+
+        /* Only swap the reference when the rope is almost parallel to it, so the
+         * usual near-vertical rope always resolves the same way. */
+        reference.set(Math.abs(up.z) < 0.9F ? 0F : 1F, 0F, Math.abs(up.z) < 0.9F ? 1F : 0F);
+
+        /* right = up x reference, so a straight-up rope gives exactly the identity
+         * basis and a form hung on it faces the way it does everywhere else. */
+        Vector3f right = this.scratchRight.set(up).cross(reference);
+
+        if (right.lengthSquared() <= MIN_DISTANCE * MIN_DISTANCE)
+        {
+            return new Matrix4f().translate(point);
+        }
+
+        right.normalize();
+
+        Vector3f forward = this.scratchForward.set(right).cross(up).normalize();
+
+        return new Matrix4f(
+            right.x, right.y, right.z, 0F,
+            up.x, up.y, up.z, 0F,
+            forward.x, forward.y, forward.z, 0F,
+            point.x, point.y, point.z, 1F
+        );
     }
 
     @Override
@@ -390,6 +470,8 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         }
 
         Vector3f[] worldPoints;
+
+        this.collectMasses(segments);
 
         if (simulate)
         {
@@ -848,6 +930,108 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         }
     }
 
+
+    /**
+     * Gather the weights the body parts put on the rope. A part loads the point its
+     * own attachment name resolves to, so where it hangs matters: a giant on the tip
+     * drags the whole line, the same giant near the shooter barely bends it. Parts
+     * with the weight toggle off are massless, which is the default and keeps the
+     * old behaviour exactly.
+     */
+    private void collectMasses(int segments)
+    {
+        if (this.pointMass.length != segments)
+        {
+            this.pointMass = new float[segments];
+        }
+
+        java.util.Arrays.fill(this.pointMass, 0F);
+
+        this.loaded = false;
+
+        for (BodyPart part : this.form.parts.getAllTyped())
+        {
+            if (!part.weightEnabled.get() || part.getForm() == null)
+            {
+                continue;
+            }
+
+            float weight = Math.max(0F, part.weight.get());
+
+            if (weight <= 0F)
+            {
+                continue;
+            }
+
+            int index = this.attachmentIndex(part.bone.get(), segments);
+
+            if (index < 0)
+            {
+                continue;
+            }
+
+            this.pointMass[index] += weight;
+            this.loaded = true;
+        }
+    }
+
+    /** The rope point an attachment name resolves to, or -1 when it isn't one of ours. */
+    private int attachmentIndex(String bone, int segments)
+    {
+        if (bone == null || bone.isEmpty() || segments <= 0)
+        {
+            return -1;
+        }
+
+        String name = bone.endsWith(FIXED_SUFFIX) ? bone.substring(0, bone.length() - FIXED_SUFFIX.length()) : bone;
+        int index;
+
+        if (name.equals(BONE_START))
+        {
+            index = 0;
+        }
+        else if (name.equals(BONE_END))
+        {
+            index = segments - 1;
+        }
+        else if (name.equals(BONE_MIDDLE))
+        {
+            index = segments / 2;
+        }
+        else if (name.startsWith(BONE_POINT_PREFIX))
+        {
+            try
+            {
+                index = Integer.parseInt(name.substring(BONE_POINT_PREFIX.length())) - 1;
+            }
+            catch (NumberFormatException e)
+            {
+                return -1;
+            }
+        }
+        else
+        {
+            return -1;
+        }
+
+        return MathUtils.clamp(index, 0, segments - 1);
+    }
+
+    /**
+     * Inverse mass of a point: 1 for a bare rope point, smaller the more weight hangs
+     * on it. The constraint solve shares every correction by these, so the line gives
+     * way toward a heavy load (it visibly stretches) and snaps a light one around.
+     */
+    private float getInverseMass(int index)
+    {
+        if (!this.loaded || index < 0 || index >= this.pointMass.length)
+        {
+            return 1F;
+        }
+
+        return POINT_MASS / (POINT_MASS + this.pointMass[index]);
+    }
+
     private void integrate(PhysicsState state, long step)
     {
         int last = state.points.length - 1;
@@ -862,9 +1046,16 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         {
             Vector3f point = state.points[i];
             Vector3f previous = state.previous[i];
-            float velocityX = (point.x - previous.x) * damping;
-            float velocityY = (point.y - previous.y) * damping;
-            float velocityZ = (point.z - previous.z) * damping;
+
+            /* Air drag barely slows a heavy body: the more mass hangs here, the less
+             * of the damping applies, so a loaded line carries its swing further and
+             * whips faster instead of settling like an empty thread. */
+            float load = this.loaded ? 1F - this.getInverseMass(i) : 0F;
+            float pointDamping = 1F - (1F - damping) * (1F + (HEAVY_DAMPING_SCALE - 1F) * load);
+
+            float velocityX = (point.x - previous.x) * pointDamping;
+            float velocityY = (point.y - previous.y) * pointDamping;
+            float velocityZ = (point.z - previous.z) * pointDamping;
             float phase = step * 0.08F * windSpeed + i * 1.713F;
             float noiseX = (float) Math.sin(phase * 1.31F) * noiseAmount;
             float noiseY = (float) Math.cos(phase * 0.87F + 0.8F) * noiseAmount;
@@ -915,12 +1106,21 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
                 if (!firstPinned && !secondPinned)
                 {
-                    first.x += dx * correction * 0.5F;
-                    first.y += dy * correction * 0.5F;
-                    first.z += dz * correction * 0.5F;
-                    second.x -= dx * correction * 0.5F;
-                    second.y -= dy * correction * 0.5F;
-                    second.z -= dz * correction * 0.5F;
+                    /* Share the correction by inverse mass: the lighter end travels,
+                     * the heavier one holds its ground. With no weights attached both
+                     * are 1 and this is the old even 50/50 split. */
+                    float inverseFirst = this.getInverseMass(i);
+                    float inverseSecond = this.getInverseMass(i + 1);
+                    float total = inverseFirst + inverseSecond;
+                    float shareFirst = total <= MIN_DISTANCE ? 0.5F : inverseFirst / total;
+                    float shareSecond = total <= MIN_DISTANCE ? 0.5F : inverseSecond / total;
+
+                    first.x += dx * correction * shareFirst;
+                    first.y += dy * correction * shareFirst;
+                    first.z += dz * correction * shareFirst;
+                    second.x -= dx * correction * shareSecond;
+                    second.y -= dy * correction * shareSecond;
+                    second.z -= dz * correction * shareSecond;
                 }
                 else if (firstPinned)
                 {

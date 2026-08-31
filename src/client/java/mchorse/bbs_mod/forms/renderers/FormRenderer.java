@@ -254,6 +254,8 @@ public abstract class FormRenderer <T extends Form>
 
         if (part.getForm() != null)
         {
+            Matrix4f attachOffset = getAttachBoneOffset(part, context.entity, context.getTransition());
+
             context.stack.push();
             if (context.world != null)
             {
@@ -263,6 +265,16 @@ public abstract class FormRenderer <T extends Form>
             if (context.world != null)
             {
                 MatrixStackUtils.applyTransform(context.world, part.transform.get());
+            }
+
+            if (attachOffset != null)
+            {
+                MatrixStackUtils.multiply(context.stack, attachOffset);
+
+                if (context.world != null)
+                {
+                    MatrixStackUtils.multiply(context.world, attachOffset);
+                }
             }
 
             FormUtilsClient.render(part.getForm(), context);
@@ -275,6 +287,47 @@ public abstract class FormRenderer <T extends Form>
         }
 
         context.entity = oldEntity;
+    }
+
+    /**
+     * The correction that puts the part's chosen bone - not its origin - onto the
+     * attachment point. The bone's matrix already contains the part form's own
+     * transform and pose, so its inverse cancels everything between the form's
+     * origin and that bone: whatever the bone does in the animation, it stays on
+     * the anchor. Returns null when the part attaches by its origin (the default),
+     * when the form has no such bone, or when the bone matrix isn't invertible.
+     */
+    public static Matrix4f getAttachBoneOffset(BodyPart part, IEntity entity, float transition)
+    {
+        String bone = part.attachBone.get();
+
+        if (bone == null || bone.isEmpty() || part.getForm() == null)
+        {
+            return null;
+        }
+
+        FormRenderer renderer = FormUtilsClient.getRenderer(part.getForm());
+
+        if (renderer == null)
+        {
+            return null;
+        }
+
+        Matrix4f matrix = renderer.collectMatrices(entity, transition).get(bone).matrix();
+
+        if (matrix == null)
+        {
+            return null;
+        }
+
+        Matrix4f inverse = new Matrix4f(matrix);
+
+        if (Math.abs(inverse.determinant()) < 1.0E-8F)
+        {
+            return null;
+        }
+
+        return inverse.invert();
     }
 
     public MatrixCache collectMatrices(IEntity entity, float transition)
