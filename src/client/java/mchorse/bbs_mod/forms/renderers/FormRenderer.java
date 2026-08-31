@@ -291,11 +291,19 @@ public abstract class FormRenderer <T extends Form>
 
     /**
      * The correction that puts the part's chosen bone - not its origin - onto the
-     * attachment point. The bone's matrix already contains the part form's own
-     * transform and pose, so its inverse cancels everything between the form's
-     * origin and that bone: whatever the bone does in the animation, it stays on
-     * the anchor. Returns null when the part attaches by its origin (the default),
-     * when the form has no such bone, or when the bone matrix isn't invertible.
+     * attachment point: the form is shifted by minus that bone's position, so
+     * wherever the bone travels in the animation, it lands on the anchor.
+     *
+     * <p>Only the bone's POSITION is cancelled, never its rotation. Cancelling the
+     * full matrix looks right at first, but it pins the bone's frame rigidly: turning
+     * a bone that the attached one hangs off (the root, the torso) rotates that bone
+     * too, the inverse takes the rotation straight back out, and the model does not
+     * move at all - the pose sliders appear dead. With the position alone, the chosen
+     * bone stays glued to the point and the rest of the body poses and swings freely
+     * around it, which is also what hanging by a hand actually looks like.</p>
+     *
+     * <p>Returns null when the part attaches by its origin (the default) or when the
+     * form has no such bone.</p>
      */
     public static Matrix4f getAttachBoneOffset(BodyPart part, IEntity entity, float transition)
     {
@@ -320,14 +328,14 @@ public abstract class FormRenderer <T extends Form>
             return null;
         }
 
-        Matrix4f inverse = new Matrix4f(matrix);
+        Vector3f translation = matrix.getTranslation(new Vector3f());
 
-        if (Math.abs(inverse.determinant()) < 1.0E-8F)
+        if (!Float.isFinite(translation.x) || !Float.isFinite(translation.y) || !Float.isFinite(translation.z))
         {
             return null;
         }
 
-        return inverse.invert();
+        return new Matrix4f().translate(translation.negate());
     }
 
     public MatrixCache collectMatrices(IEntity entity, float transition)

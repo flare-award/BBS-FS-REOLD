@@ -897,7 +897,7 @@
 	"bbs.ui.forms.crop.top": "Обрезать сверху",
 	"bbs.ui.forms.editor.body_part_gizmo": "Редактировать трансформ части тела через гизмо",
 	"bbs.ui.forms.editor.attach_bone_origin": "По центру формы",
-	"bbs.ui.forms.editor.attach_bone_tooltip": "Какая кость этой части касается точки крепления. По умолчанию форма ставится своим центром.",
+	"bbs.ui.forms.editor.attach_bone_tooltip": "Какая кость этой части приклеена к точке крепления. Фиксируется только её позиция, поза при этом свободно двигает модель вокруг неё. По умолчанию форма ставится своим центром.",
 	"bbs.ui.forms.editor.weight_enabled": "Учитывать вес",
 	"bbs.ui.forms.editor.weight": "Вес (кг)",
 	"bbs.ui.forms.editor.weight_tooltip": "Масса, которой часть нагружает трос. Тяжёлые сильнее растягивают его и дольше раскачиваются.",
