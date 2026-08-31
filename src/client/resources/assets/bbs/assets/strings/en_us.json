@@ -1927,6 +1927,7 @@
 	"bbs.ui.forms.editors.web.strand_spread": "Strand spread",
 	"bbs.ui.forms.editors.web.physics": "Enable physics",
 	"bbs.ui.forms.editors.web.paused": "Pause simulation",
+	"bbs.ui.forms.editors.web.speed": "Simulation speed",
 	"bbs.ui.forms.editors.web.gravity": "Gravity",
 	"bbs.ui.forms.editors.web.damping": "Damping",
 	"bbs.ui.forms.editors.web.stiffness": "Constraint stiffness",

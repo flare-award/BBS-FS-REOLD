@@ -38,6 +38,7 @@ public class UIWebFormPanel extends UIFormPanel<WebForm>
 
     public UIToggle physics;
     public UIToggle paused;
+    public UITrackpad speed;
     public UITrackpad gravity;
     public UITrackpad damping;
     public UITrackpad stiffness;
@@ -93,6 +94,7 @@ public class UIWebFormPanel extends UIFormPanel<WebForm>
             this.resetSimulation();
         });
         this.paused = new UIToggle(UIKeys.FORMS_EDITORS_WEB_PAUSED, (b) -> this.form.paused.set(b.getValue()));
+        this.speed = new UITrackpad((v) -> this.form.speed.set(v.floatValue())).limit(0D, WebForm.MAX_SPEED).increment(0.05D);
         this.gravity = new UITrackpad((v) -> this.form.gravity.set(v.floatValue())).limit(0D, 2D).increment(0.01D);
         this.damping = new UITrackpad((v) -> this.form.damping.set(v.floatValue())).limit(0D, 1D).increment(0.01D);
         this.stiffness = new UITrackpad((v) -> this.form.stiffness.set(v.floatValue())).limit(0D, 1D).increment(0.01D);
@@ -131,6 +133,7 @@ public class UIWebFormPanel extends UIFormPanel<WebForm>
         dynamics.fields.add(
             this.physics,
             this.paused,
+            UI.labelRow(UIKeys.FORMS_EDITORS_WEB_SPEED, this.speed),
             UI.labelRow(UIKeys.FORMS_EDITORS_WEB_GRAVITY, this.gravity),
             UI.labelRow(UIKeys.FORMS_EDITORS_WEB_DAMPING, this.damping),
             UI.labelRow(UIKeys.FORMS_EDITORS_WEB_STIFFNESS, this.stiffness),
@@ -237,6 +240,7 @@ public class UIWebFormPanel extends UIFormPanel<WebForm>
         this.strandSpread.setValue(form.strandSpread.get());
         this.physics.setValue(form.physics.get());
         this.paused.setValue(form.paused.get());
+        this.speed.setValue(form.speed.get());
         this.gravity.setValue(form.gravity.get());
         this.damping.setValue(form.damping.get());
         this.stiffness.setValue(form.stiffness.get());

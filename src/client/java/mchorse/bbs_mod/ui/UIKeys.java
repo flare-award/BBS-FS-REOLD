@@ -715,6 +715,7 @@ public class UIKeys
     public static final IKey FORMS_EDITORS_WEB_STRAND_SPREAD = L10n.lang("bbs.ui.forms.editors.web.strand_spread");
     public static final IKey FORMS_EDITORS_WEB_PHYSICS = L10n.lang("bbs.ui.forms.editors.web.physics");
     public static final IKey FORMS_EDITORS_WEB_PAUSED = L10n.lang("bbs.ui.forms.editors.web.paused");
+    public static final IKey FORMS_EDITORS_WEB_SPEED = L10n.lang("bbs.ui.forms.editors.web.speed");
     public static final IKey FORMS_EDITORS_WEB_GRAVITY = L10n.lang("bbs.ui.forms.editors.web.gravity");
     public static final IKey FORMS_EDITORS_WEB_DAMPING = L10n.lang("bbs.ui.forms.editors.web.damping");
     public static final IKey FORMS_EDITORS_WEB_STIFFNESS = L10n.lang("bbs.ui.forms.editors.web.stiffness");

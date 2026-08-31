@@ -44,7 +44,27 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 {
     private static final int RING_SEGMENTS = 8;
     private static final float TWO_PI = (float) (Math.PI * 2D);
+
+    /* The ring is the same every frame: its trigonometry and shading are tabulated once. */
+    private static final float[] RING_COS = new float[RING_SEGMENTS + 1];
+    private static final float[] RING_SIN = new float[RING_SEGMENTS + 1];
+    private static final float[] RING_SHADE = new float[RING_SEGMENTS + 1];
+
+    static
+    {
+        for (int i = 0; i <= RING_SEGMENTS; i++)
+        {
+            float angle = i / (float) RING_SEGMENTS * TWO_PI;
+
+            RING_COS[i] = (float) Math.cos(angle);
+            RING_SIN[i] = (float) Math.sin(angle);
+            RING_SHADE[i] = 0.78F + 0.22F * (0.5F + 0.5F * (float) Math.cos(angle - 0.7F));
+        }
+    }
     private static final long MAX_TICK_STEP = 8L;
+
+    /** Hard cap on solver steps in a single frame, so a hitch can't cascade. */
+    private static final int MAX_STEPS_PER_FRAME = 8;
     private static final float MIN_DISTANCE = 1.0E-4F;
     private static final float GRAVITY_SCALE = 0.02F;
     private static final float WIND_SCALE = 0.02F;
@@ -70,6 +90,18 @@ public class WebFormRenderer extends FormRenderer<WebForm>
      * Body parts attach to these, so a model can ride the tip of a swinging line.
      */
     private Vector3f[] attachPoints;
+
+    /* Mesh scratch. A web is rebuilt every frame, so none of this may allocate. */
+    private Vector3f[] localBuffer = new Vector3f[0];
+    private Vector3f[] strandBuffer = new Vector3f[0];
+    private Vector3f[] frameNormals = new Vector3f[0];
+    private Vector3f[] frameBinormals = new Vector3f[0];
+    private final Vector3f scratchTangent = new Vector3f();
+    private final Vector3f scratchReference = new Vector3f();
+    private final Vector3f ringA = new Vector3f();
+    private final Vector3f ringB = new Vector3f();
+    private final Vector3f ringC = new Vector3f();
+    private final Vector3f ringD = new Vector3f();
 
     public WebFormRenderer(WebForm form)
     {
@@ -361,10 +393,14 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
         if (simulate)
         {
-            long tick = this.getSimulationTick(context);
+            double time = this.getSimulationTime(context);
 
-            this.updateSimulation(state, context, tick, startWorld, endWorld);
-            worldPoints = state.points;
+            this.updateSimulation(state, context, time, startWorld, endWorld);
+
+            /* The solve runs at 20 steps per second like the rest of the game; the
+             * frame in between reads an interpolated copy, so the rope moves at the
+             * monitor's rate instead of visibly stepping at tick rate. */
+            worldPoints = state.interpolate(startWorld, endWorld);
         }
         else
         {
@@ -380,11 +416,13 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             worldPoints = this.buildStaticPoints(startWorld, endWorld, segments, this.form.sag.get());
         }
 
-        Vector3f[] localPoints = new Vector3f[worldPoints.length];
+        this.localBuffer = ensureVectors(this.localBuffer, worldPoints.length);
+
+        Vector3f[] localPoints = this.localBuffer;
 
         for (int i = 0; i < worldPoints.length; i++)
         {
-            localPoints[i] = inverseWorld.transformPosition(new Vector3f(worldPoints[i]));
+            inverseWorld.transformPosition(localPoints[i].set(worldPoints[i]));
         }
 
         /* Body parts hang off these, so they have to be the very points that were
@@ -487,12 +525,16 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             Vector3f[] points = this.buildStrand(center, strand, strandCount, spread);
             float radius = thickness * (strandCount == 1 ? 1F : 0.72F);
 
+            this.computeFrames(points);
+
             for (int i = 0; i < points.length - 1; i++)
             {
                 Vector3f pointA = points[i];
                 Vector3f pointB = points[i + 1];
-                Frame frameA = this.getFrame(points, i);
-                Frame frameB = this.getFrame(points, i + 1);
+                Vector3f normalA = this.frameNormals[i];
+                Vector3f binormalA = this.frameBinormals[i];
+                Vector3f normalB = this.frameNormals[i + 1];
+                Vector3f binormalB = this.frameBinormals[i + 1];
                 float progressA = i / (float) (points.length - 1);
                 float progressB = (i + 1) / (float) (points.length - 1);
                 float radiusA = radius * this.getTaper(progressA);
@@ -500,102 +542,163 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
                 for (int side = 0; side < RING_SEGMENTS; side++)
                 {
-                    float a1 = side / (float) RING_SEGMENTS * TWO_PI;
-                    float a2 = (side + 1) / (float) RING_SEGMENTS * TWO_PI;
-                    Vector3f a = this.ringPoint(pointA, frameA, a1, radiusA);
-                    Vector3f b = this.ringPoint(pointB, frameB, a1, radiusB);
-                    Vector3f c = this.ringPoint(pointB, frameB, a2, radiusB);
-                    Vector3f d = this.ringPoint(pointA, frameA, a2, radiusA);
-                    float shade1 = this.getShade(a1);
-                    float shade2 = this.getShade(a2);
+                    float cos1 = RING_COS[side];
+                    float sin1 = RING_SIN[side];
+                    float cos2 = RING_COS[side + 1];
+                    float sin2 = RING_SIN[side + 1];
 
-                    builder.vertex(model, a.x, a.y, a.z).color(this.getRed(color, shade1), this.getGreen(color, shade1), this.getBlue(color, shade1), color.a).next();
-                    builder.vertex(model, b.x, b.y, b.z).color(this.getRed(color, shade1), this.getGreen(color, shade1), this.getBlue(color, shade1), color.a).next();
-                    builder.vertex(model, c.x, c.y, c.z).color(this.getRed(color, shade2), this.getGreen(color, shade2), this.getBlue(color, shade2), color.a).next();
-                    builder.vertex(model, d.x, d.y, d.z).color(this.getRed(color, shade2), this.getGreen(color, shade2), this.getBlue(color, shade2), color.a).next();
+                    this.ringPoint(this.ringA, pointA, normalA, binormalA, cos1, sin1, radiusA);
+                    this.ringPoint(this.ringB, pointB, normalB, binormalB, cos1, sin1, radiusB);
+                    this.ringPoint(this.ringC, pointB, normalB, binormalB, cos2, sin2, radiusB);
+                    this.ringPoint(this.ringD, pointA, normalA, binormalA, cos2, sin2, radiusA);
+
+                    float shade1 = RING_SHADE[side];
+                    float shade2 = RING_SHADE[side + 1];
+                    float r1 = this.getRed(color, shade1);
+                    float g1 = this.getGreen(color, shade1);
+                    float b1 = this.getBlue(color, shade1);
+                    float r2 = this.getRed(color, shade2);
+                    float g2 = this.getGreen(color, shade2);
+                    float b2 = this.getBlue(color, shade2);
+
+                    builder.vertex(model, this.ringA.x, this.ringA.y, this.ringA.z).color(r1, g1, b1, color.a).next();
+                    builder.vertex(model, this.ringB.x, this.ringB.y, this.ringB.z).color(r1, g1, b1, color.a).next();
+                    builder.vertex(model, this.ringC.x, this.ringC.y, this.ringC.z).color(r2, g2, b2, color.a).next();
+                    builder.vertex(model, this.ringD.x, this.ringD.y, this.ringD.z).color(r2, g2, b2, color.a).next();
                 }
             }
         }
     }
 
+    /**
+     * The offset copy of the line for one strand. A single strand (or no spread) is
+     * the centre line itself - no copy at all. Everything else writes into a reused
+     * buffer: this runs for every ring of every frame, so it must not allocate.
+     */
     private Vector3f[] buildStrand(Vector3f[] center, int strand, int strandCount, float spread)
     {
-        Vector3f[] points = new Vector3f[center.length];
-
         if (strandCount == 1 || spread <= MIN_DISTANCE)
         {
-            for (int i = 0; i < center.length; i++)
-            {
-                points[i] = new Vector3f(center[i]);
-            }
-
-            return points;
+            return center;
         }
+
+        this.strandBuffer = ensureVectors(this.strandBuffer, center.length);
+        this.computeFrames(center);
 
         for (int i = 0; i < center.length; i++)
         {
-            Frame frame = this.getFrame(center, i);
+            Vector3f normal = this.frameNormals[i];
+            Vector3f binormal = this.frameBinormals[i];
             float progress = i / (float) (center.length - 1);
             float phase = TWO_PI * strand / strandCount + progress * TWO_PI * 1.35F;
             float offset1 = (float) Math.cos(phase) * spread;
             float offset2 = (float) Math.sin(phase) * spread;
+            Vector3f point = this.strandBuffer[i];
 
-            points[i] = new Vector3f(center[i])
-                .add(new Vector3f(frame.normal).mul(offset1))
-                .add(new Vector3f(frame.binormal).mul(offset2));
+            point.set(center[i]);
+            point.x += normal.x * offset1 + binormal.x * offset2;
+            point.y += normal.y * offset1 + binormal.y * offset2;
+            point.z += normal.z * offset1 + binormal.z * offset2;
         }
 
-        return points;
+        return this.strandBuffer;
     }
 
-    private Frame getFrame(Vector3f[] points, int index)
+    /**
+     * Build the rotation-minimising-ish frame of every point in one pass, into the
+     * reused frame buffers. The old code rebuilt a frame per ring end, so every
+     * interior point was solved twice per strand and allocated six vectors each time.
+     */
+    private void computeFrames(Vector3f[] points)
     {
-        Vector3f tangent = new Vector3f();
+        this.frameNormals = ensureVectors(this.frameNormals, points.length);
+        this.frameBinormals = ensureVectors(this.frameBinormals, points.length);
 
-        if (index == 0)
+        for (int index = 0; index < points.length; index++)
         {
-            tangent.set(points[1]).sub(points[0]);
-        }
-        else if (index == points.length - 1)
-        {
-            tangent.set(points[index]).sub(points[index - 1]);
-        }
-        else
-        {
-            tangent.set(points[index + 1]).sub(points[index - 1]);
-        }
+            Vector3f tangent = this.scratchTangent;
 
-        if (tangent.lengthSquared() <= MIN_DISTANCE * MIN_DISTANCE)
-        {
-            tangent.set(0F, 1F, 0F);
-        }
-        else
-        {
-            tangent.normalize();
-        }
+            if (index == 0)
+            {
+                tangent.set(points[1]).sub(points[0]);
+            }
+            else if (index == points.length - 1)
+            {
+                tangent.set(points[index]).sub(points[index - 1]);
+            }
+            else
+            {
+                tangent.set(points[index + 1]).sub(points[index - 1]);
+            }
 
-        Vector3f reference = Math.abs(tangent.y) < 0.9F ? new Vector3f(0F, 1F, 0F) : new Vector3f(1F, 0F, 0F);
-        Vector3f normal = reference.cross(tangent, new Vector3f()).normalize();
-        Vector3f binormal = new Vector3f(tangent).cross(normal).normalize();
+            if (tangent.lengthSquared() <= MIN_DISTANCE * MIN_DISTANCE)
+            {
+                tangent.set(0F, 1F, 0F);
+            }
+            else
+            {
+                tangent.normalize();
+            }
 
-        return new Frame(normal, binormal);
+            Vector3f normal = this.frameNormals[index];
+            Vector3f binormal = this.frameBinormals[index];
+
+            this.scratchReference.set(Math.abs(tangent.y) < 0.9F ? 0F : 1F, Math.abs(tangent.y) < 0.9F ? 1F : 0F, 0F);
+            this.scratchReference.cross(tangent, normal);
+
+            if (normal.lengthSquared() <= MIN_DISTANCE * MIN_DISTANCE)
+            {
+                normal.set(1F, 0F, 0F);
+            }
+            else
+            {
+                normal.normalize();
+            }
+
+            binormal.set(tangent).cross(normal).normalize();
+        }
     }
 
-    private Vector3f ringPoint(Vector3f point, Frame frame, float angle, float radius)
+    private void ringPoint(Vector3f out, Vector3f point, Vector3f normal, Vector3f binormal, float cos, float sin, float radius)
     {
-        return new Vector3f(point)
-            .add(new Vector3f(frame.normal).mul((float) Math.cos(angle) * radius))
-            .add(new Vector3f(frame.binormal).mul((float) Math.sin(angle) * radius));
+        float a = cos * radius;
+        float b = sin * radius;
+
+        out.set(
+            point.x + normal.x * a + binormal.x * b,
+            point.y + normal.y * a + binormal.y * b,
+            point.z + normal.z * a + binormal.z * b
+        );
+    }
+
+    /**
+     * Resize a scratch array of vectors, keeping the instances that already exist.
+     * The result is exactly {@code size} long - callers iterate it by length, so a
+     * buffer left over from a longer rope would draw phantom segments.
+     */
+    private static Vector3f[] ensureVectors(Vector3f[] array, int size)
+    {
+        if (array.length == size)
+        {
+            return array;
+        }
+
+        Vector3f[] resized = new Vector3f[size];
+        int kept = Math.min(array.length, size);
+
+        System.arraycopy(array, 0, resized, 0, kept);
+
+        for (int i = kept; i < size; i++)
+        {
+            resized[i] = new Vector3f();
+        }
+
+        return resized;
     }
 
     private float getTaper(float progress)
     {
         return Math.max(0.08F, 1F - MathUtils.clamp(this.form.taper.get(), 0F, 1F) * progress);
-    }
-
-    private float getShade(float angle)
-    {
-        return 0.78F + 0.22F * (0.5F + 0.5F * (float) Math.cos(angle - 0.7F));
     }
 
     private float getRed(Color color, float shade)
@@ -659,43 +762,77 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         return this.states.computeIfAbsent(entity, (key) -> new PhysicsState());
     }
 
-    private long getSimulationTick(FormRenderingContext context)
+    /**
+     * Simulation clock in ticks, with the frame's partial tick folded in. The
+     * fraction is what lets the solve advance (and the render interpolate)
+     * between game ticks instead of once every 50 ms.
+     */
+    private double getSimulationTime(FormRenderingContext context)
     {
+        float transition = MathUtils.clamp(context.getTransition(), 0F, 1F);
+
         if (context.modelRenderer)
         {
-            return context.modelRendererTick;
+            return context.modelRendererTick + transition;
         }
 
-        return context.entity == null ? 0L : context.entity.getAge();
+        return context.entity == null ? transition : context.entity.getAge() + transition;
     }
 
-    private void updateSimulation(PhysicsState state, FormRenderingContext context, long tick, Vector3f start, Vector3f endpoint)
+    private void updateSimulation(PhysicsState state, FormRenderingContext context, double time, Vector3f start, Vector3f endpoint)
     {
-        if (state.lastTick == Long.MIN_VALUE)
+        if (state.lastTime == Double.NEGATIVE_INFINITY)
         {
-            state.lastTick = tick;
+            state.lastTime = time;
         }
 
-        long delta = tick - state.lastTick;
+        double delta = time - state.lastTime;
 
-        if (delta < 0L || delta > MAX_TICK_STEP)
+        state.lastTime = time;
+
+        if (delta < 0D || delta > MAX_TICK_STEP)
         {
             Vector3f resetEndpoint = state.anchorMode == WebForm.ANCHOR_LOCKED ? new Vector3f(state.lockedEnd) : endpoint;
 
             state.reset(state.segments, state.anchorMode, true, start, resetEndpoint, this.form.length.get(), this.form.sag.get());
-            state.lastTick = tick;
 
             return;
         }
 
-        if (!this.form.paused.get())
+        if (this.form.paused.get())
         {
-            for (long step = 0L; step < delta; step++)
-            {
-                this.integrate(state, tick - delta + step);
-                this.applyPins(state, start, endpoint);
-                this.solveConstraints(state, context, this.form.iterations.get(), start, endpoint);
-            }
+            state.accumulator = 0F;
+            state.applyPinsTo(state.points, start, endpoint);
+            state.snapshot();
+
+            return;
+        }
+
+        /* The speed multiplier stretches the simulation clock: at 1 the rope runs on
+         * game time, at 3 it swings three times as fast without touching gravity or
+         * the constraint solve, so the motion stays the same shape. */
+        float speed = MathUtils.clamp(this.form.speed.get(), 0F, WebForm.MAX_SPEED);
+
+        state.accumulator += (float) (delta * speed);
+
+        int steps = 0;
+
+        while (state.accumulator >= 1F && steps < MAX_STEPS_PER_FRAME)
+        {
+            state.snapshot();
+            this.integrate(state, state.step++);
+            this.applyPins(state, start, endpoint);
+            this.solveConstraints(state, context, this.form.iterations.get(), start, endpoint);
+
+            state.accumulator -= 1F;
+            steps += 1;
+        }
+
+        if (state.accumulator >= 1F)
+        {
+            /* A frame that fell behind (or a huge speed) must not build a backlog
+             * that then plays back in slow motion - the leftover time is dropped. */
+            state.accumulator = 0F;
         }
 
         this.applyPins(state, start, endpoint);
@@ -709,11 +846,9 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
             state.reset(state.segments, state.anchorMode, true, start, resetEndpoint, this.form.length.get(), this.form.sag.get());
         }
-
-        state.lastTick = tick;
     }
 
-    private void integrate(PhysicsState state, long tick)
+    private void integrate(PhysicsState state, long step)
     {
         int last = state.points.length - 1;
         int end = state.anchorMode == WebForm.ANCHOR_FREE ? last + 1 : last;
@@ -730,7 +865,7 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             float velocityX = (point.x - previous.x) * damping;
             float velocityY = (point.y - previous.y) * damping;
             float velocityZ = (point.z - previous.z) * damping;
-            float phase = tick * 0.08F * windSpeed + i * 1.713F;
+            float phase = step * 0.08F * windSpeed + i * 1.713F;
             float noiseX = (float) Math.sin(phase * 1.31F) * noiseAmount;
             float noiseY = (float) Math.cos(phase * 0.87F + 0.8F) * noiseAmount;
             float noiseZ = (float) Math.sin(phase * 1.11F + 1.7F) * noiseAmount;
@@ -877,25 +1012,23 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         this.nullEntityState.clear();
     }
 
-    private static class Frame
-    {
-        public final Vector3f normal;
-        public final Vector3f binormal;
-
-        public Frame(Vector3f normal, Vector3f binormal)
-        {
-            this.normal = normal;
-            this.binormal = binormal;
-        }
-    }
-
     private static class PhysicsState
     {
         public Vector3f[] points = new Vector3f[0];
         public Vector3f[] previous = new Vector3f[0];
+
+        /** Positions before the last solved step, and the buffer the frame renders. */
+        public Vector3f[] past = new Vector3f[0];
+        public Vector3f[] rendered = new Vector3f[0];
+
         public Vector3f lockedEnd = new Vector3f();
         public Vector3f initialEnd = new Vector3f();
-        public long lastTick = Long.MIN_VALUE;
+
+        /** Simulation clock (in ticks, fractional) of the last frame, and the unspent remainder. */
+        public double lastTime = Double.NEGATIVE_INFINITY;
+        public float accumulator;
+        public long step;
+
         public int segments;
         public int anchorMode;
         public boolean simulation;
@@ -922,6 +1055,8 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             this.restLength = Math.max(MIN_DISTANCE, Math.max(length, start.distance(end)));
             this.points = new Vector3f[segments];
             this.previous = new Vector3f[segments];
+            this.past = new Vector3f[segments];
+            this.rendered = new Vector3f[segments];
 
             for (int i = 0; i < segments; i++)
             {
@@ -931,16 +1066,65 @@ public class WebFormRenderer extends FormRenderer<WebForm>
                 point.y -= Math.max(0F, sag) * (float) Math.sin(Math.PI * progress);
                 this.points[i] = point;
                 this.previous[i] = new Vector3f(point);
+                this.past[i] = new Vector3f(point);
+                this.rendered[i] = new Vector3f(point);
             }
 
-            this.lastTick = Long.MIN_VALUE;
+            this.accumulator = 0F;
         }
 
         public void clear()
         {
             this.points = new Vector3f[0];
             this.previous = new Vector3f[0];
-            this.lastTick = Long.MIN_VALUE;
+            this.past = new Vector3f[0];
+            this.rendered = new Vector3f[0];
+            this.lastTime = Double.NEGATIVE_INFINITY;
+            this.accumulator = 0F;
+        }
+
+        /** Remember where the rope stood before the step that is about to run. */
+        public void snapshot()
+        {
+            for (int i = 0; i < this.points.length; i++)
+            {
+                this.past[i].set(this.points[i]);
+            }
+        }
+
+        /**
+         * The rope as this frame should see it: the last two solved states blended by
+         * the unspent part of the tick. The pinned ends are snapped to their live
+         * anchors afterwards, so the web never lags behind the hand holding it.
+         */
+        public Vector3f[] interpolate(Vector3f start, Vector3f endpoint)
+        {
+            float alpha = MathUtils.clamp(this.accumulator, 0F, 1F);
+
+            for (int i = 0; i < this.points.length; i++)
+            {
+                this.rendered[i].set(this.past[i]).lerp(this.points[i], alpha);
+            }
+
+            this.applyPinsTo(this.rendered, start, endpoint);
+
+            return this.rendered;
+        }
+
+        /** Snap the anchored ends of an array of points onto their live anchors. */
+        public void applyPinsTo(Vector3f[] target, Vector3f start, Vector3f endpoint)
+        {
+            if (target.length == 0)
+            {
+                return;
+            }
+
+            target[0].set(start);
+
+            if (this.anchorMode != WebForm.ANCHOR_FREE)
+            {
+                target[target.length - 1].set(endpoint);
+            }
         }
 
         /**

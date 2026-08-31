@@ -19,6 +19,9 @@ public class WebForm extends Form
     public static final int ANCHOR_LOCKED = 1;
     public static final int ANCHOR_FREE = 2;
 
+    /** Upper bound of the simulation speed multiplier. */
+    public static final float MAX_SPEED = 8F;
+
     public final ValueVector3f start = new ValueVector3f("start", new Vector3f(0F, 0F, 0F));
     public final ValueVector3f end = new ValueVector3f("end", new Vector3f(0F, 5F, 0F));
     public final ValueInt anchorMode = new ValueInt("anchor_mode", ANCHOR_FOLLOW, ANCHOR_FOLLOW, ANCHOR_FREE);
@@ -33,6 +36,13 @@ public class WebForm extends Form
 
     public final ValueBoolean physics = new ValueBoolean("physics", true);
     public final ValueBoolean paused = new ValueBoolean("paused", false);
+
+    /**
+     * How fast the rope's own clock runs. 1 is game time (the default, so nothing
+     * changes for existing webs); higher values swing and settle proportionally
+     * faster, which is what fast city swinging needs.
+     */
+    public final ValueFloat speed = new ValueFloat("speed", 1F, 0F, MAX_SPEED);
     public final ValueFloat gravity = new ValueFloat("gravity", 0.45F, 0F, 2F);
     public final ValueFloat damping = new ValueFloat("damping", 0.08F, 0F, 1F);
     public final ValueFloat stiffness = new ValueFloat("stiffness", 0.82F, 0F, 1F);
@@ -60,6 +70,7 @@ public class WebForm extends Form
         this.add(this.strandSpread);
         this.add(this.physics);
         this.add(this.paused);
+        this.add(this.speed);
         this.add(this.gravity);
         this.add(this.damping);
         this.add(this.stiffness);

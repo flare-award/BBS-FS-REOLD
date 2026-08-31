@@ -1910,6 +1910,7 @@
 	"bbs.ui.forms.editors.web.strand_spread": "Разброс нитей",
 	"bbs.ui.forms.editors.web.physics": "Включить физику",
 	"bbs.ui.forms.editors.web.paused": "Поставить симуляцию на паузу",
+	"bbs.ui.forms.editors.web.speed": "Скорость симуляции",
 	"bbs.ui.forms.editors.web.gravity": "Гравитация",
 	"bbs.ui.forms.editors.web.damping": "Затухание",
 	"bbs.ui.forms.editors.web.stiffness": "Жёсткость связей",
