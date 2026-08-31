@@ -40,6 +40,12 @@ public class WebFormRenderer extends FormRenderer<WebForm>
     private static final float GRAVITY_SCALE = 0.02F;
     private static final float WIND_SCALE = 0.02F;
 
+    /** Furthest a simulated point may sit from the shooter before the rope is restarted. */
+    private static final float MAX_POINT_DISTANCE = 256F;
+
+    /** Furthest a simulated point may travel in one tick. */
+    private static final float MAX_STEP = 2F;
+
     private final Map<IEntity, PhysicsState> states = new WeakHashMap<>();
     private final PhysicsState nullEntityState = new PhysicsState();
 
@@ -465,11 +471,22 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             {
                 this.integrate(state, tick - delta + step);
                 this.applyPins(state, start, endpoint);
-                this.solveConstraints(state, context, this.form.iterations.get());
+                this.solveConstraints(state, context, this.form.iterations.get(), start, endpoint);
             }
         }
 
         this.applyPins(state, start, endpoint);
+
+        /* World collisions can only push points; a solver that lost a point to
+         * infinity (or to the other side of the map) is restarted from the rest
+         * shape instead of dragging a stretched web around forever. */
+        if (!state.isSane(start, Math.max(MAX_POINT_DISTANCE, state.restLength * 2F + 16F)))
+        {
+            Vector3f resetEndpoint = state.anchorMode == WebForm.ANCHOR_LOCKED ? new Vector3f(state.lockedEnd) : endpoint;
+
+            state.reset(state.segments, state.anchorMode, true, start, resetEndpoint, this.form.length.get(), this.form.sag.get());
+        }
+
         state.lastTick = tick;
     }
 
@@ -501,10 +518,15 @@ public class WebFormRenderer extends FormRenderer<WebForm>
                 point.y + velocityY - gravity + (wind.y + noiseY) * WIND_SCALE,
                 point.z + velocityZ + (wind.z + noiseZ) * WIND_SCALE
             );
+
+            /* A depenetration push shows up as velocity on the next step. Left
+             * unbounded, one deep contact launches the point across the world and
+             * the rest of the rope follows it - clamp the per-tick travel. */
+            this.clampStep(point, previous);
         }
     }
 
-    private void solveConstraints(PhysicsState state, FormRenderingContext context, int requestedIterations)
+    private void solveConstraints(PhysicsState state, FormRenderingContext context, int requestedIterations, Vector3f start, Vector3f endpoint)
     {
         int iterations = MathUtils.clamp(requestedIterations, 1, 12);
         float segmentLength = Math.max(MIN_DISTANCE, state.restLength / (state.points.length - 1));
@@ -558,13 +580,16 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
             if (iteration == iterations - 1 && this.form.collisions.get() && context.entity != null && context.entity.getWorld() != null)
             {
-                float radius = Math.max(0.005F, this.form.thickness.get() * 0.6F);
+                float radius = Math.max(0.05F, this.form.thickness.get() * 0.6F);
                 int end = pinEnd ? last : last + 1;
 
                 ModelPhysicsWorldCollisions.resolve(context.entity.getWorld(), state.points, state.previous, 1, end, radius, 0.35F);
             }
 
-            this.applyPins(state, state.points[0], state.points[last]);
+            /* Re-pin to the real anchors. Passing the (possibly depenetrated) points
+             * themselves used to pin the rope to wherever a collision had shoved its
+             * ends, so every contact walked the whole web away from the shooter. */
+            this.applyPins(state, start, endpoint);
         }
     }
 
@@ -580,6 +605,31 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             state.points[last].set(endpoint);
             state.previous[last].set(endpoint);
         }
+    }
+
+    /** Cap how far a point may have moved since the last tick, keeping its direction. */
+    private void clampStep(Vector3f point, Vector3f previous)
+    {
+        float dx = point.x - previous.x;
+        float dy = point.y - previous.y;
+        float dz = point.z - previous.z;
+        float lengthSq = dx * dx + dy * dy + dz * dz;
+
+        if (!Float.isFinite(lengthSq))
+        {
+            point.set(previous);
+
+            return;
+        }
+
+        if (lengthSq <= MAX_STEP * MAX_STEP)
+        {
+            return;
+        }
+
+        float scale = MAX_STEP / (float) Math.sqrt(lengthSq);
+
+        point.set(previous.x + dx * scale, previous.y + dy * scale, previous.z + dz * scale);
     }
 
     private Vector3f[] buildStaticPoints(Vector3f start, Vector3f end, int segments, float sag)
@@ -668,6 +718,35 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             this.points = new Vector3f[0];
             this.previous = new Vector3f[0];
             this.lastTick = Long.MIN_VALUE;
+        }
+
+        /**
+         * Whether the solve is still usable: every point finite and within reach of
+         * the shooter. A single NaN (or a point flung across the world by a bad
+         * contact) poisons the whole rope, so the state is rebuilt instead.
+         */
+        public boolean isSane(Vector3f start, float maxDistance)
+        {
+            float maxSq = maxDistance * maxDistance;
+
+            for (int i = 0; i < this.points.length; i++)
+            {
+                Vector3f point = this.points[i];
+                Vector3f previous = this.previous[i];
+
+                if (!Float.isFinite(point.x) || !Float.isFinite(point.y) || !Float.isFinite(point.z)
+                    || !Float.isFinite(previous.x) || !Float.isFinite(previous.y) || !Float.isFinite(previous.z))
+                {
+                    return false;
+                }
+
+                if (point.distanceSquared(start) > maxSq)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }
