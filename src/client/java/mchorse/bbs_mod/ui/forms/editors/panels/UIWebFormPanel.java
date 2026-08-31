@@ -50,6 +50,17 @@ public class UIWebFormPanel extends UIFormPanel<WebForm>
     public UIToggle collisions;
     public UITrackpad iterations;
 
+    public UIToggle shooter;
+    public UICirculate shotMode;
+    public UIToggle fire;
+    public UITrackpad shotSpeed;
+    public UITrackpad shotTail;
+    public UIToggle splat;
+    public UITrackpad splatSize;
+    public UITrackpad dissolve;
+    public UITrackpad reel;
+    public UIToggle showAnchor;
+
     public UIColor color;
     public UIButton reset;
 
@@ -106,6 +117,40 @@ public class UIWebFormPanel extends UIFormPanel<WebForm>
         this.collisions = new UIToggle(UIKeys.FORMS_EDITORS_WEB_COLLISIONS, (b) -> this.form.collisions.set(b.getValue()));
         this.iterations = new UITrackpad((v) -> this.form.iterations.set(v.intValue())).limit(1D, 12D).integer();
 
+        this.shooter = new UIToggle(UIKeys.FORMS_EDITORS_WEB_SHOOTER, (b) ->
+        {
+            this.form.shooter.set(b.getValue());
+            this.resetSimulation();
+        });
+        this.shooter.tooltip(UIKeys.FORMS_EDITORS_WEB_SHOOTER_TOOLTIP);
+
+        this.shotMode = new UICirculate((b) ->
+        {
+            if (this.form != null)
+            {
+                this.form.shotMode.set(b.getValue());
+                this.resetSimulation();
+            }
+        });
+        this.shotMode.addLabel(UIKeys.FORMS_EDITORS_WEB_SHOT_ANCHORED);
+        this.shotMode.addLabel(UIKeys.FORMS_EDITORS_WEB_SHOT_AIR);
+        this.shotMode.addLabel(UIKeys.FORMS_EDITORS_WEB_SHOT_SINGLE);
+        this.shotMode.tooltip(UIKeys.FORMS_EDITORS_WEB_SHOT_MODE_TOOLTIP);
+
+        this.fire = new UIToggle(UIKeys.FORMS_EDITORS_WEB_FIRE, (b) -> this.form.fire.set(b.getValue()));
+        this.fire.tooltip(UIKeys.FORMS_EDITORS_WEB_FIRE_TOOLTIP);
+
+        this.shotSpeed = new UITrackpad((v) -> this.form.shotSpeed.set(v.floatValue())).limit(0.1D, 32D).increment(0.1D);
+        this.shotTail = new UITrackpad((v) -> this.form.shotTail.set(v.floatValue())).limit(0.1D, 32D).increment(0.1D);
+        this.splat = new UIToggle(UIKeys.FORMS_EDITORS_WEB_SPLAT, (b) -> this.form.splat.set(b.getValue()));
+        this.splatSize = new UITrackpad((v) -> this.form.splatSize.set(v.floatValue())).limit(0.05D, 4D).increment(0.05D);
+        this.dissolve = new UITrackpad((v) -> this.form.dissolve.set(v.floatValue())).limit(0D, 600D).increment(0.5D);
+        this.dissolve.tooltip(UIKeys.FORMS_EDITORS_WEB_DISSOLVE_TOOLTIP);
+        this.reel = new UITrackpad((v) -> this.form.reel.set(v.floatValue())).limit(-16D, 16D).increment(0.05D);
+        this.reel.tooltip(UIKeys.FORMS_EDITORS_WEB_REEL_TOOLTIP);
+        this.showAnchor = new UIToggle(UIKeys.FORMS_EDITORS_WEB_SHOW_ANCHOR, (b) -> this.form.showAnchor.set(b.getValue()));
+        this.showAnchor.tooltip(UIKeys.FORMS_EDITORS_WEB_SHOW_ANCHOR_TOOLTIP);
+
         this.color = new UIColor((value) -> this.form.color.set(Color.rgba(value))).direction(Direction.LEFT).withAlpha();
         this.reset = new UIButton(UIKeys.FORMS_EDITORS_WEB_RESET, (b) -> this.resetSimulation());
 
@@ -149,10 +194,24 @@ public class UIWebFormPanel extends UIFormPanel<WebForm>
             UI.labelRow(UIKeys.FORMS_EDITORS_WEB_WIND_SPEED, this.windSpeed)
         );
 
+        UISection shooterSection = this.section(UIKeys.FORMS_EDITORS_WEB_SECTION_SHOOTER, "web.shooter", true);
+        shooterSection.fields.add(
+            this.shooter,
+            this.fire,
+            UI.labelRow(UIKeys.FORMS_EDITORS_WEB_SHOT_MODE, this.shotMode),
+            UI.labelRow(UIKeys.FORMS_EDITORS_WEB_SHOT_SPEED, this.shotSpeed),
+            UI.labelRow(UIKeys.FORMS_EDITORS_WEB_SHOT_TAIL, this.shotTail),
+            this.splat,
+            UI.labelRow(UIKeys.FORMS_EDITORS_WEB_SPLAT_SIZE, this.splatSize),
+            UI.labelRow(UIKeys.FORMS_EDITORS_WEB_DISSOLVE, this.dissolve),
+            UI.labelRow(UIKeys.FORMS_EDITORS_WEB_REEL, this.reel),
+            this.showAnchor
+        );
+
         UISection material = this.section(UIKeys.FORMS_EDITORS_WEB_SECTION_MATERIAL, "web.material", true);
         material.fields.add(UI.labelRow(UIKeys.FORMS_EDITORS_WEB_COLOR, this.color));
 
-        this.options.add(anchors, shape, dynamics, wind, material, this.reset);
+        this.options.add(anchors, shooterSection, shape, dynamics, wind, material, this.reset);
     }
 
     private UITrackpad createVectorInput(boolean start, int axis)
@@ -162,6 +221,14 @@ public class UIWebFormPanel extends UIFormPanel<WebForm>
             if (this.form != null)
             {
                 this.setComponent(start ? this.form.start : this.form.end, axis, v.floatValue());
+
+                /* Re-aiming by hand re-shoots, so the sliders stay alive while a shot
+                 * is out. A shot that is already flying or stuck never follows the
+                 * end point on its own - keyframed aim would drag it off the wall. */
+                if (this.form.shooter.get())
+                {
+                    this.resetSimulation();
+                }
             }
         });
 
@@ -251,6 +318,16 @@ public class UIWebFormPanel extends UIFormPanel<WebForm>
         this.windSpeed.setValue(form.windSpeed.get());
         this.collisions.setValue(form.collisions.get());
         this.iterations.setValue(form.iterations.get());
+        this.shooter.setValue(form.shooter.get());
+        this.fire.setValue(form.fire.get());
+        this.shotMode.setValue(form.shotMode.get());
+        this.shotSpeed.setValue(form.shotSpeed.get());
+        this.shotTail.setValue(form.shotTail.get());
+        this.splat.setValue(form.splat.get());
+        this.splatSize.setValue(form.splatSize.get());
+        this.dissolve.setValue(form.dissolve.get());
+        this.reel.setValue(form.reel.get());
+        this.showAnchor.setValue(form.showAnchor.get());
         this.color.setColor(form.color.get().getARGBColor());
     }
 }

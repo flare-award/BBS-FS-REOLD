@@ -22,6 +22,17 @@ public class WebForm extends Form
     /** Upper bound of the simulation speed multiplier. */
     public static final float MAX_SPEED = 8F;
 
+    /* Web shooter: what the fired line does when it reaches its target. */
+
+    /** Sticks to the target and becomes a rope between the hand and that spot. */
+    public static final int SHOT_ANCHORED = 0;
+
+    /** Misses on purpose: the tip is released at the target and the line falls. */
+    public static final int SHOT_AIR = 1;
+
+    /** A thrown glob: nothing stays in the hand, only the splat on the target. */
+    public static final int SHOT_SINGLE = 2;
+
     public final ValueVector3f start = new ValueVector3f("start", new Vector3f(0F, 0F, 0F));
     public final ValueVector3f end = new ValueVector3f("end", new Vector3f(0F, 5F, 0F));
     public final ValueInt anchorMode = new ValueInt("anchor_mode", ANCHOR_FOLLOW, ANCHOR_FOLLOW, ANCHOR_FREE);
@@ -52,6 +63,41 @@ public class WebForm extends Form
     public final ValueBoolean collisions = new ValueBoolean("collisions", false);
     public final ValueInt iterations = new ValueInt("iterations", 6, 1, 12);
 
+    /**
+     * Web shooter mode. Both ends of the web collapse into the start point and the
+     * line is not drawn at all until it is fired - the wrist is loaded, nothing
+     * hangs off it. The editor viewport marks where that hidden point sits.
+     */
+    public final ValueBoolean shooter = new ValueBoolean("shooter", false);
+
+    /**
+     * The trigger. Flipping it on fires the line from the start point towards the
+     * end point; flipping it off holsters the web again, ready for the next shot.
+     * It is a plain value, so it keyframes in the film editor like anything else.
+     */
+    public final ValueBoolean fire = new ValueBoolean("fire", false);
+
+    public final ValueInt shotMode = new ValueInt("shot_mode", SHOT_ANCHORED, SHOT_ANCHORED, SHOT_SINGLE);
+
+    /** Flight speed of the tip, in blocks per tick. */
+    public final ValueFloat shotSpeed = new ValueFloat("shot_speed", 3F, 0.1F, 32F);
+
+    /** Length of the flying glob of a single shot - the part that is drawn mid-air. */
+    public final ValueFloat shotTail = new ValueFloat("shot_tail", 1.5F, 0.1F, 32F);
+
+    /** Draw the splattered patch of web where the shot lands. */
+    public final ValueBoolean splat = new ValueBoolean("splat", true);
+    public final ValueFloat splatSize = new ValueFloat("splat_size", 0.45F, 0.05F, 4F);
+
+    /** Seconds the landed web lasts before it fades away; 0 keeps it forever. */
+    public final ValueFloat dissolve = new ValueFloat("dissolve", 0F, 0F, 600F);
+
+    /** Blocks per second the attached line reels in (negative pays it out); 0 is off. */
+    public final ValueFloat reel = new ValueFloat("reel", 0F, -16F, 16F);
+
+    /** Show the shooter's hidden start point in editor viewports. */
+    public final ValueBoolean showAnchor = new ValueBoolean("show_anchor", true);
+
     public final ValueColor color = new ValueColor("color", Color.white());
 
     public WebForm()
@@ -79,6 +125,16 @@ public class WebForm extends Form
         this.add(this.windSpeed);
         this.add(this.collisions);
         this.add(this.iterations);
+        this.add(this.shooter);
+        this.add(this.fire);
+        this.add(this.shotMode);
+        this.add(this.shotSpeed);
+        this.add(this.shotTail);
+        this.add(this.splat);
+        this.add(this.splatSize);
+        this.add(this.dissolve);
+        this.add(this.reel);
+        this.add(this.showAnchor);
         this.add(this.color);
     }
 

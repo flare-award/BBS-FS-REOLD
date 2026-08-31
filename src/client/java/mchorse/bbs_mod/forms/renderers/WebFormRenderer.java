@@ -88,6 +88,30 @@ public class WebFormRenderer extends FormRenderer<WebForm>
     /** Damping left at a fully loaded point - heavy things keep their momentum. */
     private static final float HEAVY_DAMPING_SCALE = 0.35F;
 
+    /* Web shooter phases of one shot */
+
+    /** Loaded, nothing drawn: both ends sit in the hand. */
+    private static final int SHOT_IDLE = 0;
+
+    /** The tip is travelling from the hand towards the target. */
+    private static final int SHOT_FLYING = 1;
+
+    /** The shot arrived and turned into a rope (stuck, or released and falling). */
+    private static final int SHOT_ROPE = 2;
+
+    /** A single shot that arrived: only the splat (and the last of the glob) is left. */
+    private static final int SHOT_LANDED = 3;
+
+    /** Spokes of the splattered web patch, and how many rings tie them together. */
+    private static final int SPLAT_SPOKES = 9;
+    private static final int SPLAT_RINGS = 2;
+
+    /** Ticks the splat takes to pop to full size when it hits. */
+    private static final float SPLAT_GROW = 2.5F;
+
+    /** Seconds of the dissolve timer spent fading out. */
+    private static final float DISSOLVE_FADE = 1F;
+
     /* Attachment point names offered to body parts */
     private static final String BONE_START = "start";
     private static final String BONE_MIDDLE = "middle";
@@ -117,6 +141,14 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
     /** Low-passed rope direction per attachment point, keyed by its name. */
     private final Map<String, Vector3f> smoothedUp = new HashMap<>();
+
+    /* Shooter scratch: the flying line, and the polyline the splat is built from. */
+    private Vector3f[] shotBuffer = new Vector3f[0];
+    private Vector3f[] frameBuffer = new Vector3f[0];
+    private Vector3f[] splatBuffer = new Vector3f[0];
+    private final Vector3f scratchSplatU = new Vector3f();
+    private final Vector3f scratchSplatV = new Vector3f();
+    private final Vector3f scratchSplatPoint = new Vector3f();
 
     /** Attached mass per rope point (kg), rebuilt every frame from the body parts. */
     private float[] pointMass = new float[0];
@@ -453,13 +485,97 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         int segments = MathUtils.clamp(this.form.segments.get(), 2, 64);
         int anchorMode = MathUtils.clamp(this.form.anchorMode.get(), WebForm.ANCHOR_FOLLOW, WebForm.ANCHOR_FREE);
         boolean simulate = this.form.physics.get() && context.type != FormRenderType.ITEM_INVENTORY && !context.ui;
+        Vector3f splatCenter = null;
+        Vector3f splatNormal = null;
+        float fade = 1F;
 
-        if (state.needsReset(segments, anchorMode, simulate, this.form.length.get(), this.form.sag.get()))
+        /* The web shooter runs its own little state machine in front of the solver:
+         * holstered draws nothing, a flying shot is a straight taut line the physics
+         * never touches, and only once it lands does the rope take over. */
+        if (this.form.shooter.get())
+        {
+            double shotTime = this.getSimulationTime(context);
+
+            this.updateShot(state, shotTime, startWorld, endpointWorld);
+            fade = this.getDissolveFade(state, shotTime);
+
+            if (state.shotPhase == SHOT_IDLE || fade <= 0F)
+            {
+                /* Nothing is drawn, but body parts still need somewhere to sit: the
+                 * hand while holstered, the last known target once it dissolved. */
+                this.collapseAttachPoints(inverseWorld,
+                    state.shotPhase == SHOT_IDLE ? startWorld : state.shotTarget, segments);
+
+                if (state.shotPhase == SHOT_IDLE)
+                {
+                    this.renderShooterMarker(context);
+                }
+
+                return;
+            }
+
+            if (state.shotPhase == SHOT_FLYING || state.shotPhase == SHOT_LANDED)
+            {
+                Vector3f[] flight = this.buildShotPoints(state, startWorld, segments);
+                Vector3f[] flightLocal = null;
+
+                if (flight != null)
+                {
+                    flightLocal = this.toLocal(inverseWorld, flight);
+                    this.attachPoints = flightLocal;
+                }
+                else
+                {
+                    this.collapseAttachPoints(inverseWorld, state.shotTarget, segments);
+                }
+
+                if (this.hasSplat(state))
+                {
+                    splatCenter = this.transformPosition(inverseWorld, state.shotTarget);
+                    splatNormal = new Vector3f(state.shotTarget).sub(state.shotOrigin);
+                }
+
+                this.renderPoints(context, flightLocal, splatCenter, splatNormal, fade, this.getSplatScale(state, shotTime));
+
+                return;
+            }
+
+            /* Landed and turned into a rope: the tip is world locked when it stuck,
+             * or completely free when it was a shot into thin air. */
+            anchorMode = state.shotMode == WebForm.SHOT_AIR ? WebForm.ANCHOR_FREE : WebForm.ANCHOR_LOCKED;
+            endpointWorld = new Vector3f(state.shotTarget);
+
+            if (this.hasSplat(state))
+            {
+                splatCenter = this.transformPosition(inverseWorld, state.shotTarget);
+                splatNormal = new Vector3f(state.shotTarget).sub(state.shotOrigin);
+            }
+        }
+        else if (state.shotPhase != SHOT_IDLE)
+        {
+            /* Shooter mode switched off mid-shot: forget the shot entirely. */
+            state.shotPhase = SHOT_IDLE;
+            state.shotResetPending = false;
+        }
+
+        if (state.shotResetPending || state.needsReset(segments, anchorMode, simulate, this.form.length.get(), this.form.sag.get()))
         {
             Vector3f resetEndpoint = anchorMode == WebForm.ANCHOR_LOCKED && state.anchorMode == WebForm.ANCHOR_LOCKED && state.points.length > 0
                 ? new Vector3f(state.lockedEnd) : endpointWorld;
 
-            state.reset(segments, anchorMode, simulate, startWorld, resetEndpoint, this.form.length.get(), this.form.sag.get());
+            if (state.shotResetPending)
+            {
+                /* The rope is born exactly where the shot ended, taut between the
+                 * hand and the point it reached - no sag, or it would snap into a
+                 * curve the frame it lands. */
+                state.reset(segments, anchorMode, simulate, startWorld, endpointWorld, this.form.length.get(), 0F);
+                state.applyShotLanding(startWorld, endpointWorld, this.form.shotSpeed.get(), state.shotMode == WebForm.SHOT_AIR);
+                state.shotResetPending = false;
+            }
+            else
+            {
+                state.reset(segments, anchorMode, simulate, startWorld, resetEndpoint, this.form.length.get(), this.form.sag.get());
+            }
         }
 
         Vector3f endWorld = endpointWorld;
@@ -511,7 +627,195 @@ public class WebFormRenderer extends FormRenderer<WebForm>
          * drawn: same space as the render stack, same frame, physics included. */
         this.attachPoints = localPoints;
 
-        this.renderPoints(context, localPoints);
+        this.renderPoints(context, localPoints, splatCenter, splatNormal, fade,
+            this.getSplatScale(state, this.getSimulationTime(context)));
+    }
+
+    /**
+     * Advance the shot. The trigger is a plain value, so this only ever reacts to it:
+     * off holsters the web, the frame it turns on captures where the hand and the
+     * target are and starts the clock. Everything after that is a function of the
+     * elapsed time, which means scrubbing a film backwards rewinds the shot instead
+     * of leaving it stuck at its end state.
+     */
+    private void updateShot(PhysicsState state, double time, Vector3f startWorld, Vector3f endpointWorld)
+    {
+        int mode = MathUtils.clamp(this.form.shotMode.get(), WebForm.SHOT_ANCHORED, WebForm.SHOT_SINGLE);
+
+        if (!this.form.fire.get())
+        {
+            if (state.shotPhase != SHOT_IDLE)
+            {
+                state.shotPhase = SHOT_IDLE;
+                state.shotResetPending = false;
+                state.landTime = Double.NEGATIVE_INFINITY;
+            }
+
+            return;
+        }
+
+        /* Fresh trigger, a different kind of shot, or the clock jumped back: fire
+         * anew. Moving the end point does NOT re-shoot on its own - a web that stuck
+         * to a wall must not chase a keyframed aim - the editor's own inputs ask for
+         * a reset instead. */
+        if (state.shotPhase == SHOT_IDLE || state.shotMode != mode || time < state.fireTime)
+        {
+            state.shotMode = mode;
+            state.shotPhase = SHOT_FLYING;
+            state.fireTime = time;
+            state.landTime = Double.NEGATIVE_INFINITY;
+            state.shotResetPending = false;
+            state.shotOrigin.set(startWorld);
+            state.shotTarget.set(endpointWorld);
+        }
+
+        /* The target is captured once, in world space, and never chases the shooter
+         * afterwards: a web goes where it was aimed, and that is the whole point of
+         * anchoring it - the hand may swing off, the web stays on the building. */
+
+        float speed = Math.max(0.01F, this.form.shotSpeed.get());
+        float distance = state.shotOrigin.distance(state.shotTarget);
+
+        state.shotTravelled = (float) Math.max(0D, (time - state.fireTime) * speed);
+
+        if (state.shotTravelled >= distance && state.shotPhase == SHOT_FLYING)
+        {
+            state.shotPhase = state.shotMode == WebForm.SHOT_SINGLE ? SHOT_LANDED : SHOT_ROPE;
+            state.landTime = time;
+            state.shotResetPending = state.shotPhase == SHOT_ROPE;
+        }
+        else if (state.shotTravelled < distance && state.shotPhase != SHOT_FLYING)
+        {
+            /* Scrubbed back into the flight, or the target moved further away. */
+            state.shotPhase = SHOT_FLYING;
+            state.landTime = Double.NEGATIVE_INFINITY;
+            state.shotResetPending = false;
+        }
+    }
+
+    /**
+     * The flying line in world space, or null once there is nothing left in the air.
+     * An anchored or air shot trails all the way back to the hand; a single shot is a
+     * short glob that leaves the hand behind and streaks towards the target.
+     */
+    private Vector3f[] buildShotPoints(PhysicsState state, Vector3f startWorld, int segments)
+    {
+        float distance = state.shotOrigin.distance(state.shotTarget);
+        float tipProgress = distance <= MIN_DISTANCE ? 1F : MathUtils.clamp(state.shotTravelled / distance, 0F, 1F);
+        Vector3f tip = new Vector3f(state.shotOrigin).lerp(state.shotTarget, tipProgress);
+        Vector3f tail;
+
+        if (state.shotMode == WebForm.SHOT_SINGLE)
+        {
+            float tailLength = Math.max(0.05F, this.form.shotTail.get());
+            float tailProgress = distance <= MIN_DISTANCE
+                ? 1F : MathUtils.clamp((state.shotTravelled - tailLength) / distance, 0F, 1F);
+
+            if (tailProgress >= 1F)
+            {
+                return null;
+            }
+
+            tail = new Vector3f(state.shotOrigin).lerp(state.shotTarget, tailProgress);
+        }
+        else
+        {
+            tail = new Vector3f(startWorld);
+        }
+
+        int count = Math.max(2, segments);
+
+        this.shotBuffer = ensureVectors(this.shotBuffer, count);
+
+        for (int i = 0; i < count; i++)
+        {
+            float progress = i / (float) (count - 1);
+
+            this.shotBuffer[i].set(tail).lerp(tip, progress);
+        }
+
+        return this.shotBuffer;
+    }
+
+    /** Whether this shot leaves a patch of web where it hit. Air shots stick to nothing. */
+    private boolean hasSplat(PhysicsState state)
+    {
+        return this.form.splat.get() && state.shotMode != WebForm.SHOT_AIR
+            && (state.shotPhase == SHOT_LANDED || state.shotPhase == SHOT_ROPE);
+    }
+
+    /** The splat pops to full size over a couple of ticks instead of blinking in. */
+    private float getSplatScale(PhysicsState state, double time)
+    {
+        if (state.landTime == Double.NEGATIVE_INFINITY)
+        {
+            return 0F;
+        }
+
+        float elapsed = (float) Math.max(0D, time - state.landTime);
+        float progress = MathUtils.clamp(elapsed / SPLAT_GROW, 0F, 1F);
+
+        /* Ease out, with a touch of overshoot - webbing hits wet and settles. */
+        return (float) (1D + 0.12D * Math.sin(Math.PI * progress)) * (progress * (2F - progress));
+    }
+
+    /**
+     * Alpha of a landed web that is dissolving. Comic webbing gives out after a
+     * while; 0 seconds keeps it forever, which is the default.
+     */
+    private float getDissolveFade(PhysicsState state, double time)
+    {
+        float dissolve = Math.max(0F, this.form.dissolve.get());
+
+        if (dissolve <= 0F || state.landTime == Double.NEGATIVE_INFINITY)
+        {
+            return 1F;
+        }
+
+        float seconds = (float) Math.max(0D, (time - state.landTime) / 20D);
+        float fadeStart = Math.max(0F, dissolve - DISSOLVE_FADE);
+
+        if (seconds <= fadeStart)
+        {
+            return 1F;
+        }
+
+        if (seconds >= dissolve)
+        {
+            return 0F;
+        }
+
+        return 1F - (seconds - fadeStart) / Math.max(MIN_DISTANCE, dissolve - fadeStart);
+    }
+
+    /** Park every attachment point on one spot, so body parts ride the hidden shooter. */
+    private void collapseAttachPoints(Matrix4f inverseWorld, Vector3f worldPoint, int segments)
+    {
+        int count = Math.max(2, segments);
+
+        this.localBuffer = ensureVectors(this.localBuffer, count);
+
+        Vector3f local = this.transformPosition(inverseWorld, worldPoint);
+
+        for (int i = 0; i < count; i++)
+        {
+            this.localBuffer[i].set(local);
+        }
+
+        this.attachPoints = this.localBuffer;
+    }
+
+    /** World points into the render stack's local space, reusing the frame buffer. */
+    private Vector3f[] toLocal(Matrix4f inverseWorld, Vector3f[] worldPoints)
+    {
+        this.localBuffer = ensureVectors(this.localBuffer, worldPoints.length);
+
+        for (int i = 0; i < worldPoints.length; i++)
+        {
+            inverseWorld.transformPosition(this.localBuffer[i].set(worldPoints[i]));
+        }
+
+        return this.localBuffer;
     }
 
     private Vector3f[] buildInventoryPoints()
@@ -525,7 +829,20 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
     private void renderPoints(FormRenderingContext context, Vector3f[] points)
     {
-        if (points == null || points.length < 2)
+        this.renderPoints(context, points, null, null, 1F, 0F);
+    }
+
+    /**
+     * Draw the web: the line itself (when there is one in the air or on the rope) and
+     * the splattered patch where a shot landed, both in one buffer so a translucent
+     * web is still a single sorted draw.
+     */
+    private void renderPoints(FormRenderingContext context, Vector3f[] points, Vector3f splatCenter, Vector3f splatNormal, float fade, float splatScale)
+    {
+        boolean hasLine = points != null && points.length >= 2;
+        boolean hasSplat = splatCenter != null && splatScale > 0F;
+
+        if ((!hasLine && !hasSplat) || fade <= 0F)
         {
             return;
         }
@@ -549,6 +866,8 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             }
         }
 
+        color.a *= MathUtils.clamp(fade, 0F, 1F);
+
         float alpha = color.a;
         int renderLayer = this.form.renderLayer.get();
         boolean forcedOpaque = renderLayer == Form.LAYER_SOLID || renderLayer == Form.LAYER_CUTOUT;
@@ -557,7 +876,16 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             && FormTranslucentQueue.isActive();
 
         builder.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
-        this.appendTube(builder, model, points, color);
+
+        if (hasLine)
+        {
+            this.appendTube(builder, model, points, color);
+        }
+
+        if (hasSplat)
+        {
+            this.appendSplat(builder, model, splatCenter, splatNormal, this.form.splatSize.get() * splatScale, color);
+        }
 
         if (defer)
         {
@@ -650,6 +978,222 @@ public class WebFormRenderer extends FormRenderer<WebForm>
                 }
             }
         }
+    }
+
+    /**
+     * The patch of webbing a shot leaves where it hits: a handful of radial spokes
+     * with two rings strung between them, drawn facing back along the flight path.
+     * That is what a web splat reads as at any distance, and it costs a few dozen
+     * quads - far cheaper than a texture with its own material and sorting.
+     */
+    private void appendSplat(BufferBuilder builder, Matrix4f model, Vector3f center, Vector3f direction, float radius, Color color)
+    {
+        if (radius <= MIN_DISTANCE)
+        {
+            return;
+        }
+
+        Vector3f normal = this.scratchSplatU.set(direction);
+
+        if (normal.lengthSquared() <= MIN_DISTANCE * MIN_DISTANCE)
+        {
+            normal.set(0F, 1F, 0F);
+        }
+
+        normal.normalize();
+
+        /* An in-plane basis for the patch; the reference swaps near the poles so the
+         * pattern never collapses onto a line. */
+        Vector3f right = this.scratchSplatV.set(Math.abs(normal.y) < 0.9F ? 0F : 1F, Math.abs(normal.y) < 0.9F ? 1F : 0F, 0F);
+
+        right.cross(normal).normalize();
+
+        Vector3f up = new Vector3f(normal).cross(right).normalize();
+        float thickness = Math.max(0.0005F, this.form.thickness.get() * 0.32F);
+
+        /* Lift the patch a hair off the surface it is stuck to, and dish it slightly
+         * towards the shooter so it never z-fights with a flat wall. */
+        Vector3f base = new Vector3f(center).sub(normal.x * radius * 0.04F, normal.y * radius * 0.04F, normal.z * radius * 0.04F);
+        float[] spokeRadius = new float[SPLAT_SPOKES];
+
+        this.splatBuffer = ensureVectors(this.splatBuffer, Math.max(4, SPLAT_SPOKES + 1));
+
+        for (int spoke = 0; spoke < SPLAT_SPOKES; spoke++)
+        {
+            /* Deterministic irregularity: a real splat is never a clean flower, but
+             * it must also not jitter from frame to frame. */
+            float wobble = 0.78F + 0.22F * (float) Math.sin(spoke * 2.399F);
+
+            spokeRadius[spoke] = radius * wobble;
+        }
+
+        for (int spoke = 0; spoke < SPLAT_SPOKES; spoke++)
+        {
+            float angle = spoke / (float) SPLAT_SPOKES * TWO_PI;
+            float cos = (float) Math.cos(angle);
+            float sin = (float) Math.sin(angle);
+
+            for (int i = 0; i < 4; i++)
+            {
+                float progress = i / 3F;
+                float length = spokeRadius[spoke] * progress;
+
+                this.splatBuffer[i].set(
+                    base.x + (right.x * cos + up.x * sin) * length + normal.x * radius * 0.06F * progress,
+                    base.y + (right.y * cos + up.y * sin) * length + normal.y * radius * 0.06F * progress,
+                    base.z + (right.z * cos + up.z * sin) * length + normal.z * radius * 0.06F * progress
+                );
+            }
+
+            this.appendSimpleTube(builder, model, this.splatBuffer, 4, thickness, color);
+        }
+
+        for (int ring = 1; ring <= SPLAT_RINGS; ring++)
+        {
+            float ringProgress = ring / (float) (SPLAT_RINGS + 1);
+            int count = SPLAT_SPOKES + 1;
+
+            for (int spoke = 0; spoke < count; spoke++)
+            {
+                int index = spoke % SPLAT_SPOKES;
+                float angle = index / (float) SPLAT_SPOKES * TWO_PI;
+                float cos = (float) Math.cos(angle);
+                float sin = (float) Math.sin(angle);
+                float length = spokeRadius[index] * ringProgress;
+
+                this.splatBuffer[spoke].set(
+                    base.x + (right.x * cos + up.x * sin) * length + normal.x * radius * 0.06F * ringProgress,
+                    base.y + (right.y * cos + up.y * sin) * length + normal.y * radius * 0.06F * ringProgress,
+                    base.z + (right.z * cos + up.z * sin) * length + normal.z * radius * 0.06F * ringProgress
+                );
+            }
+
+            this.appendSimpleTube(builder, model, this.splatBuffer, count, thickness * 0.85F, color);
+        }
+    }
+
+    /**
+     * A tube of constant radius through the first {@code count} points of the buffer.
+     * The main line has strands and taper to worry about; the splat and the editor
+     * marker just need thin, even thread.
+     */
+    private void appendSimpleTube(BufferBuilder builder, Matrix4f model, Vector3f[] points, int count, float radius, Color color)
+    {
+        if (count < 2)
+        {
+            return;
+        }
+
+        Vector3f[] slice = points;
+
+        if (count != points.length)
+        {
+            this.frameBuffer = ensureVectors(this.frameBuffer, count);
+
+            for (int i = 0; i < count; i++)
+            {
+                this.frameBuffer[i].set(points[i]);
+            }
+
+            slice = this.frameBuffer;
+        }
+
+        this.computeFrames(slice);
+
+        for (int i = 0; i < count - 1; i++)
+        {
+            Vector3f pointA = slice[i];
+            Vector3f pointB = slice[i + 1];
+            Vector3f normalA = this.frameNormals[i];
+            Vector3f binormalA = this.frameBinormals[i];
+            Vector3f normalB = this.frameNormals[i + 1];
+            Vector3f binormalB = this.frameBinormals[i + 1];
+
+            for (int side = 0; side < RING_SEGMENTS; side++)
+            {
+                float cos1 = RING_COS[side];
+                float sin1 = RING_SIN[side];
+                float cos2 = RING_COS[side + 1];
+                float sin2 = RING_SIN[side + 1];
+
+                this.ringPoint(this.ringA, pointA, normalA, binormalA, cos1, sin1, radius);
+                this.ringPoint(this.ringB, pointB, normalB, binormalB, cos1, sin1, radius);
+                this.ringPoint(this.ringC, pointB, normalB, binormalB, cos2, sin2, radius);
+                this.ringPoint(this.ringD, pointA, normalA, binormalA, cos2, sin2, radius);
+
+                float shade1 = RING_SHADE[side];
+                float shade2 = RING_SHADE[side + 1];
+                float r1 = this.getRed(color, shade1);
+                float g1 = this.getGreen(color, shade1);
+                float b1 = this.getBlue(color, shade1);
+                float r2 = this.getRed(color, shade2);
+                float g2 = this.getGreen(color, shade2);
+                float b2 = this.getBlue(color, shade2);
+
+                builder.vertex(model, this.ringA.x, this.ringA.y, this.ringA.z).color(r1, g1, b1, color.a).next();
+                builder.vertex(model, this.ringB.x, this.ringB.y, this.ringB.z).color(r1, g1, b1, color.a).next();
+                builder.vertex(model, this.ringC.x, this.ringC.y, this.ringC.z).color(r2, g2, b2, color.a).next();
+                builder.vertex(model, this.ringD.x, this.ringD.y, this.ringD.z).color(r2, g2, b2, color.a).next();
+            }
+        }
+    }
+
+    /**
+     * The editor's stand-in for a holstered shooter. With the web hidden there is
+     * nothing to grab or even see, so an editor viewport gets a small cross on the
+     * start point (it follows the sliders live) and a dashed ghost of the shot to
+     * where the end point is aimed. Never drawn in the world - a finished scene must
+     * not have editor furniture in it.
+     */
+    private void renderShooterMarker(FormRenderingContext context)
+    {
+        if (!this.form.showAnchor.get() || !(context.modelRenderer || context.ui) || context.isPicking())
+        {
+            return;
+        }
+
+        Vector3f start = new Vector3f(this.form.start.get());
+        Vector3f end = new Vector3f(this.form.end.get());
+        Matrix4f model = new Matrix4f(context.stack.peek().getPositionMatrix());
+        BufferBuilder builder = Tessellator.getInstance().getBuffer();
+        Color color = this.form.color.get().copy();
+        Color cross = new Color(color.r, color.g, color.b, 0.9F);
+        Color ghost = new Color(color.r, color.g, color.b, 0.28F);
+        float size = 0.09F;
+        float thread = Math.max(0.006F, this.form.thickness.get() * 0.5F);
+
+        this.splatBuffer = ensureVectors(this.splatBuffer, Math.max(4, SPLAT_SPOKES + 1));
+
+        builder.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+
+        for (int axis = 0; axis < 3; axis++)
+        {
+            this.splatBuffer[0].set(start);
+            this.splatBuffer[1].set(start);
+            this.splatBuffer[0].setComponent(axis, start.get(axis) - size);
+            this.splatBuffer[1].setComponent(axis, start.get(axis) + size);
+
+            this.appendSimpleTube(builder, model, this.splatBuffer, 2, thread, cross);
+        }
+
+        /* Dashed preview of where the shot will go. */
+        int dashes = 10;
+
+        for (int dash = 0; dash < dashes; dash++)
+        {
+            float from = dash / (float) dashes;
+            float to = from + 0.55F / dashes;
+
+            this.splatBuffer[0].set(start).lerp(end, from);
+            this.splatBuffer[1].set(start).lerp(end, to);
+
+            this.appendSimpleTube(builder, model, this.splatBuffer, 2, thread * 0.55F, ghost);
+        }
+
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        RenderSystem.setShader(GameRenderer::getPositionColorProgram);
+        BufferRenderer.drawWithGlobalProgram(builder.end());
     }
 
     /**
@@ -897,6 +1441,8 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
         state.accumulator += (float) (delta * speed);
 
+        this.applyReel(state, delta);
+
         int steps = 0;
 
         while (state.accumulator >= 1F && steps < MAX_STEPS_PER_FRAME)
@@ -930,6 +1476,34 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         }
     }
 
+
+    /**
+     * Winch the attached line in (or pay it out) while it hangs. This is the swing
+     * itself in the films: the line does not just hold, it shortens and lifts the
+     * rider. Only the rest length changes, so the solver does the pulling and the
+     * rope keeps behaving like a rope.
+     */
+    private void applyReel(PhysicsState state, double delta)
+    {
+        float reel = this.form.reel.get();
+
+        if (reel == 0F || state.points.length < 2)
+        {
+            return;
+        }
+
+        /* Reeling a rope whose far end is not tied to anything just drags the tip
+         * around, so it is limited to lines that actually hold on to something. */
+        if (state.anchorMode == WebForm.ANCHOR_FREE)
+        {
+            return;
+        }
+
+        float seconds = (float) (delta / 20D);
+        float minimum = Math.max(MIN_DISTANCE, state.points.length * 0.02F);
+
+        state.restLength = MathUtils.clamp(state.restLength - reel * seconds, minimum, 512F);
+    }
 
     /**
      * Gather the weights the body parts put on the rope. A part loads the point its
@@ -1229,6 +1803,16 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         public float accumulator;
         public long step;
 
+        /* Web shooter state of the current shot */
+        public int shotPhase = SHOT_IDLE;
+        public int shotMode = WebForm.SHOT_ANCHORED;
+        public double fireTime;
+        public double landTime = Double.NEGATIVE_INFINITY;
+        public float shotTravelled;
+        public boolean shotResetPending;
+        public final Vector3f shotOrigin = new Vector3f();
+        public final Vector3f shotTarget = new Vector3f();
+
         public int segments;
         public int anchorMode;
         public boolean simulation;
@@ -1271,6 +1855,74 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             }
 
             this.accumulator = 0F;
+        }
+
+        /**
+         * Kick the rope the moment a shot lands. A stuck line snaps taut and rings
+         * like a plucked string; a shot into thin air keeps the speed it was flying
+         * at, so the tip overshoots and only then droops. Both are written as a
+         * difference between the current and previous positions - the Verlet solver
+         * reads that difference as velocity.
+         */
+        public void applyShotLanding(Vector3f start, Vector3f end, float shotSpeed, boolean released)
+        {
+            int last = this.points.length - 1;
+
+            if (last < 1)
+            {
+                return;
+            }
+
+            Vector3f direction = new Vector3f(end).sub(start);
+            float distance = direction.length();
+
+            if (distance <= MIN_DISTANCE)
+            {
+                return;
+            }
+
+            direction.div(distance);
+
+            if (released)
+            {
+                /* Momentum of the flight, strongest at the tip. */
+                float speed = Math.min(Math.max(0.01F, shotSpeed), MAX_STEP) * 0.5F;
+
+                for (int i = 1; i <= last; i++)
+                {
+                    float progress = i / (float) last;
+
+                    this.previous[i].set(this.points[i]).sub(
+                        direction.x * speed * progress,
+                        direction.y * speed * progress,
+                        direction.z * speed * progress
+                    );
+                }
+
+                return;
+            }
+
+            /* A transverse nudge along the line: one half wave, tiny but visible. */
+            Vector3f side = new Vector3f(Math.abs(direction.y) < 0.9F ? 0F : 1F, Math.abs(direction.y) < 0.9F ? 1F : 0F, 0F);
+
+            side.cross(direction);
+
+            if (side.lengthSquared() <= MIN_DISTANCE * MIN_DISTANCE)
+            {
+                return;
+            }
+
+            side.normalize();
+
+            float amplitude = Math.min(0.12F, distance * 0.02F);
+
+            for (int i = 1; i < last; i++)
+            {
+                float progress = i / (float) last;
+                float wave = (float) Math.sin(Math.PI * progress) * amplitude;
+
+                this.previous[i].set(this.points[i]).sub(side.x * wave, side.y * wave, side.z * wave);
+            }
         }
 
         public void clear()
