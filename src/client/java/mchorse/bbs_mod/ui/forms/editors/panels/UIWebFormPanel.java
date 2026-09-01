@@ -13,6 +13,7 @@ import mchorse.bbs_mod.ui.framework.elements.buttons.UICirculate;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIToggle;
 import mchorse.bbs_mod.ui.framework.elements.input.UIColor;
+import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
 import mchorse.bbs_mod.ui.framework.elements.input.UITrackpad;
 import mchorse.bbs_mod.ui.utils.UI;
 import mchorse.bbs_mod.utils.Direction;
@@ -63,6 +64,7 @@ public class UIWebFormPanel extends UIFormPanel<WebForm>
 
     public UIColor color;
     public UIButton reset;
+    public UIButton tutorial;
 
     public UIWebFormPanel(UIForm editor)
     {
@@ -154,6 +156,14 @@ public class UIWebFormPanel extends UIFormPanel<WebForm>
         this.color = new UIColor((value) -> this.form.color.set(Color.rgba(value))).direction(Direction.LEFT).withAlpha();
         this.reset = new UIButton(UIKeys.FORMS_EDITORS_WEB_RESET, (b) -> this.resetSimulation());
 
+        /* The web has far more moving parts than the other forms, so it carries its
+         * own manual instead of hoping every knob is guessable from its tooltip. */
+        this.tutorial = new UIButton(UIKeys.FORMS_EDITORS_WEB_TUTORIAL, (b) ->
+        {
+            UIOverlay.addOverlay(this.getContext(), new UIWebTutorialOverlayPanel(), 0.8F, 0.85F);
+        });
+        this.tutorial.tooltip(UIKeys.FORMS_EDITORS_WEB_TUTORIAL_TOOLTIP);
+
         UISection anchors = this.section(UIKeys.FORMS_EDITORS_WEB_SECTION_ANCHORS, "web.anchors", true);
         anchors.fields.add(
             UI.label(UIKeys.FORMS_EDITORS_WEB_START),
@@ -211,7 +221,7 @@ public class UIWebFormPanel extends UIFormPanel<WebForm>
         UISection material = this.section(UIKeys.FORMS_EDITORS_WEB_SECTION_MATERIAL, "web.material", true);
         material.fields.add(UI.labelRow(UIKeys.FORMS_EDITORS_WEB_COLOR, this.color));
 
-        this.options.add(anchors, shooterSection, shape, dynamics, wind, material, this.reset);
+        this.options.add(this.tutorial, anchors, shooterSection, shape, dynamics, wind, material, this.reset);
     }
 
     private UITrackpad createVectorInput(boolean start, int axis)

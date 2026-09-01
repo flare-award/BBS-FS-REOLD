@@ -3,6 +3,7 @@ package mchorse.bbs_mod.forms.renderers;
 import com.mojang.blaze3d.systems.RenderSystem;
 import mchorse.bbs_mod.client.BBSRendering;
 import mchorse.bbs_mod.cubic.physics.ModelPhysicsWorldCollisions;
+import mchorse.bbs_mod.film.FilmActorClock;
 import mchorse.bbs_mod.forms.FormTranslucentQueue;
 import mchorse.bbs_mod.forms.FormUtilsClient;
 import mchorse.bbs_mod.forms.entities.IEntity;
@@ -86,6 +87,13 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
     /** Solver steps spent settling the rope after a scrub, instead of showing it fall. */
     private static final int SETTLE_STEPS = 120;
+
+    /**
+     * Squared distance (0.01 blocks) an anchor has to travel on a frozen frame
+     * before the rope re-hangs itself. Small enough to feel immediate while
+     * dragging a slider, large enough to ignore floating point jitter.
+     */
+    private static final float ANCHOR_EPSILON = 1.0E-4F;
     private static final float MIN_DISTANCE = 1.0E-4F;
 
     /**
@@ -1493,6 +1501,18 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             return context.modelRendererTick + transition;
         }
 
+        /* Inside a film the playhead is the only honest clock. The actor's age is
+         * driven by how many times the film ticked the entity, not by where the
+         * cursor sits: dragging it across the whole film nudges the age by a tick
+         * or two, which is why scrubbing used to inch the web forward instead of
+         * showing it at the moment being scrubbed to. */
+        Integer filmTick = FilmActorClock.get(context.entity);
+
+        if (filmTick != null)
+        {
+            return filmTick + transition;
+        }
+
         return context.entity == null ? transition : context.entity.getAge() + transition;
     }
 
@@ -1579,6 +1599,8 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             state.previous[i].set(state.points[i]);
             state.past[i].set(state.points[i]);
         }
+
+        state.rememberAnchors(start, target);
     }
 
     private void updateSimulation(PhysicsState state, FormRenderingContext context, double time, Vector3f start, Vector3f endpoint)
@@ -1594,6 +1616,18 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
         if (state.timeStatus == TIME_HOLD || this.form.paused.get())
         {
+            /* A frozen rope still has to answer for its anchors. When either end is
+             * dragged somewhere else - by hand in the editor, or by a keyframe on a
+             * paused frame - there is no time in which to swing over there, so the
+             * rope is re-hung between the new points at once instead of leaving the
+             * old shape with a straight line reaching out of it. */
+            if (state.anchorsMoved(start, endpoint))
+            {
+                this.settle(state, context, start, endpoint);
+
+                return;
+            }
+
             /* Frozen exactly where it stands - the ends still follow their anchors,
              * so a paused rope stays attached to a hand that the editor moves, and
              * the previous positions move with them so resuming does not fire the
@@ -1604,6 +1638,10 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
             return;
         }
+
+        /* Running normally the rope follows its anchors by itself; the moment it is
+         * frozen again, that is the shape to compare against. */
+        state.rememberAnchors(start, endpoint);
 
         /* The speed multiplier stretches the simulation clock: at 1 the rope runs on
          * game time, at 3 it swings three times as fast without touching gravity or
@@ -2095,6 +2133,36 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
         /** Blocks the line has been winched in; kept apart so the settings stay authoritative. */
         public float reeled;
+
+        /**
+         * Where the anchors stood the last time the rope was brought to rest. A
+         * frozen rope has no time in which to follow a hand that the editor drags
+         * somewhere else, so it used to sit there as an old shape with a straight
+         * line stretching to the new point - which reads as "the web is broken".
+         * Comparing against these lets a paused web re-hang itself the instant
+         * either end is moved.
+         */
+        public final Vector3f heldStart = new Vector3f();
+        public final Vector3f heldEnd = new Vector3f();
+        public boolean heldAnchors;
+
+        public boolean anchorsMoved(Vector3f start, Vector3f end)
+        {
+            if (!this.heldAnchors)
+            {
+                return false;
+            }
+
+            return this.heldStart.distanceSquared(start) > ANCHOR_EPSILON
+                || this.heldEnd.distanceSquared(end) > ANCHOR_EPSILON;
+        }
+
+        public void rememberAnchors(Vector3f start, Vector3f end)
+        {
+            this.heldStart.set(start);
+            this.heldEnd.set(end);
+            this.heldAnchors = true;
+        }
 
         /** Only a rope that does not exist yet, or one that changed solver mode, is rebuilt. */
         public boolean needsReset(boolean simulation)

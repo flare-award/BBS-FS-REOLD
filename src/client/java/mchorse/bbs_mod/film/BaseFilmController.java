@@ -883,6 +883,16 @@ public abstract class BaseFilmController
             List<Replay> replays = this.film.replays.getList();
             Replay replay = CollectionUtils.getSafe(replays, i);
 
+            /* Publish the playhead so simulated forms (the web's rope) can run on
+             * film time instead of the actor's age, which barely moves while the
+             * film is paused and the playhead is dragged. This happens before the
+             * update check on purpose: a paused film still has a well defined
+             * moment in time, and freezing on it is exactly what those forms want. */
+            if (replay != null)
+            {
+                FilmActorClock.set(entity, replay.getTick(ticks));
+            }
+
             if (!this.canUpdate(i, replay, entity, UpdateMode.UPDATE))
             {
                 continue;
