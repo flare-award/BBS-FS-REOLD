@@ -750,6 +750,8 @@ public class UIKeys
     public static final IKey FORMS_EDITORS_WEB_TUTORIAL = L10n.lang("bbs.ui.forms.editors.web.tutorial");
     public static final IKey FORMS_EDITORS_WEB_TUTORIAL_TOOLTIP = L10n.lang("bbs.ui.forms.editors.web.tutorial_tooltip");
     public static final IKey FORMS_EDITORS_WEB_TUTORIAL_TITLE = L10n.lang("bbs.ui.forms.editors.web.tutorial.title");
+    public static final IKey FORMS_EDITORS_WEB_TUTORIAL_PREVIOUS = L10n.lang("bbs.ui.forms.editors.web.tutorial.previous");
+    public static final IKey FORMS_EDITORS_WEB_TUTORIAL_NEXT = L10n.lang("bbs.ui.forms.editors.web.tutorial.next");
     public static final IKey FORMS_EDITORS_WEB_TUTORIAL_BASICS = L10n.lang("bbs.ui.forms.editors.web.tutorial.basics");
     public static final IKey FORMS_EDITORS_WEB_TUTORIAL_BASICS_TEXT = L10n.lang("bbs.ui.forms.editors.web.tutorial.basics_text");
     public static final IKey FORMS_EDITORS_WEB_TUTORIAL_ANCHORS = L10n.lang("bbs.ui.forms.editors.web.tutorial.anchors");

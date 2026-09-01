@@ -33,6 +33,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.WeakHashMap;
 
 /**
@@ -94,6 +95,54 @@ public class WebFormRenderer extends FormRenderer<WebForm>
      * dragging a slider, large enough to ignore floating point jitter.
      */
     private static final float ANCHOR_EPSILON = 1.0E-4F;
+
+    /* ---------------------------------------------------------------------
+     * Timeline simulation.
+     *
+     * Inside a film the rope is not something that "keeps running" - it is a
+     * function of the film tick, exactly like a keyframe is. The solver is
+     * deterministic (every step is decided by the tick index, never by the wall
+     * clock), the anchor positions of every tick that has been drawn are kept in
+     * a track, and the rope state is cached every few ticks. Scrubbing anywhere
+     * then means: take the nearest cached state at or before that tick and replay
+     * the handful of ticks in between. The result is the same web every single
+     * time you land on the same frame, backwards or forwards, which is what makes
+     * it possible to actually animate with it.
+     * --------------------------------------------------------------------- */
+
+    /** "There is no such tick" - used for every cached tick index. */
+    private static final int NO_TICK = Integer.MIN_VALUE;
+
+    /** How often a full rope state is cached while replaying ticks. */
+    private static final int SNAPSHOT_INTERVAL = 10;
+
+    /** Cached rope states kept per web (about 1.5 KB each at 64 segments). */
+    private static final int MAX_SNAPSHOTS = 128;
+
+    /** Ticks of anchor positions remembered per web (six floats each). */
+    private static final int MAX_ANCHOR_SAMPLES = 6000;
+
+    /** Ticks that may be replayed in one frame to catch up with the playhead. */
+    private static final int MAX_CATCHUP = 600;
+    private static final int MAX_CATCHUP_COLLISIONS = 120;
+
+    /**
+     * Ticks simulated before the target tick when there is nothing cached to
+     * continue from (a cold jump, or a settings change that threw the cache out).
+     * A rope reaches its resting behaviour in a couple of seconds, so ten is
+     * plenty and keeps a slider drag responsive.
+     */
+    private static final int PREROLL = 200;
+    private static final int PREROLL_COLLISIONS = 40;
+
+    /** Solver steps a single film tick may ever run, whatever the speed says. */
+    private static final int MAX_STEPS_PER_TICK = 8;
+
+    /**
+     * How far a freshly measured anchor may differ from what the track predicted
+     * before the cache built on that prediction is thrown away (squared blocks).
+     */
+    private static final float ANCHOR_SAMPLE_EPSILON = 2.5E-3F;
     private static final float MIN_DISTANCE = 1.0E-4F;
 
     /**
@@ -556,7 +605,16 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         float fade = 1F;
 
         /* One clock read per frame, before anything that depends on time. */
-        this.advanceClock(state, this.getSimulationTime(context));
+        this.readClock(state, context);
+
+        /* Every tick that gets drawn contributes its anchors to the track the
+         * timeline simulation replays from. A sample that contradicts what the
+         * track guessed earlier (the first real playthrough after a blind jump)
+         * throws away everything that was cached on top of that guess. */
+        if (state.filmTick != NO_TICK && state.recordAnchor(state.filmTick, startWorld, endpointWorld, state.partial))
+        {
+            state.invalidateFrom(state.filmTick);
+        }
 
         /* The web shooter runs its own little state machine in front of the solver:
          * holstered draws nothing, a flying shot is a straight taut line the physics
@@ -674,7 +732,16 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
         if (simulate)
         {
-            this.updateSimulation(state, context, state.clock, startWorld, endWorld);
+            if (state.filmTick != NO_TICK)
+            {
+                /* On a timeline the rope is a function of the tick, not of the time
+                 * that happened to pass since the last frame. */
+                this.simulateTimeline(state, context, startWorld, endWorld);
+            }
+            else
+            {
+                this.updateSimulation(state, context, state.clock, startWorld, endWorld);
+            }
 
             /* The solve runs at 20 steps per second like the rest of the game; the
              * frame in between reads an interpolated copy, so the rope moves at the
@@ -713,6 +780,299 @@ public class WebFormRenderer extends FormRenderer<WebForm>
     }
 
     /**
+     * The shot, as a function of the film tick.
+     *
+     * <p>Nothing here accumulates: the trigger's rising edge is looked up in the
+     * track of ticks that have been drawn, and everything else (how far the web has
+     * flown, whether it has landed, when it landed) is arithmetic on that tick. Land
+     * on the same frame twice, from either direction, and the shot looks the same.
+     * A trigger that was pulled during ticks nobody has ever drawn cannot have its
+     * flight reconstructed, so that shot is presented as already landed.</p>
+     */
+    private void updateShotOnTimeline(PhysicsState state, Vector3f startWorld, Vector3f endpointWorld)
+    {
+        int tick = state.filmTick;
+        int mode = MathUtils.clamp(this.form.shotMode.get(), WebForm.SHOT_ANCHORED, WebForm.SHOT_SINGLE);
+        boolean fire = this.form.fire.get();
+
+        state.recordFire(tick, fire);
+
+        if (!fire)
+        {
+            state.shotPhase = SHOT_IDLE;
+            state.shotResetPending = false;
+            state.landTime = Double.NEGATIVE_INFINITY;
+            state.shotFireTick = NO_TICK;
+            state.setBirthTick(NO_TICK);
+
+            return;
+        }
+
+        int fireTick = state.fireStartTick(tick);
+
+        if (state.shotPhase == SHOT_IDLE || state.shotMode != mode || state.shotFireTick != fireTick)
+        {
+            state.shotMode = mode;
+            state.shotFireTick = fireTick;
+
+            if (fireTick == NO_TICK)
+            {
+                state.shotOrigin.set(startWorld);
+                state.shotTarget.set(endpointWorld);
+            }
+            else
+            {
+                state.anchorAt(fireTick);
+                state.shotOrigin.set(state.scratchStart);
+                state.shotTarget.set(state.scratchEnd);
+            }
+        }
+
+        float speed = Math.max(0.01F, this.form.shotSpeed.get());
+        float distance = state.shotOrigin.distance(state.shotTarget);
+        double flight = distance / speed;
+
+        state.fireTime = fireTick == NO_TICK ? state.clock - flight - 1D : fireTick;
+        state.shotTravelled = (float) Math.max(0D, (state.clock - state.fireTime) * speed);
+        state.shotResetPending = false;
+
+        if (state.shotTravelled < distance)
+        {
+            state.shotPhase = SHOT_FLYING;
+            state.landTime = Double.NEGATIVE_INFINITY;
+            state.setBirthTick(NO_TICK);
+
+            return;
+        }
+
+        state.shotPhase = state.shotMode == WebForm.SHOT_SINGLE ? SHOT_LANDED : SHOT_ROPE;
+        state.landTime = state.fireTime + flight;
+        state.setBirthTick(state.shotPhase == SHOT_ROPE ? (int) Math.ceil(state.landTime) : NO_TICK);
+    }
+
+    /**
+     * Bring the rope to the state it has on this film tick.
+     *
+     * <p>This is the whole point of the timeline model: the frame does not ask
+     * "how much time has passed", it asks "what does the web look like at tick
+     * N". Cached states make that cheap - playing forward costs one step, scrubbing
+     * backwards costs at most a snapshot interval of steps - and changing a setting
+     * simply throws the cache away, so the physics really does change with it.</p>
+     */
+    private void simulateTimeline(PhysicsState state, FormRenderingContext context, Vector3f start, Vector3f endpoint)
+    {
+        int tick = state.filmTick;
+
+        /* The unspent part of the tick is what the render interpolates with. */
+        state.accumulator = MathUtils.clamp(state.partial, 0F, 1F);
+
+        int hash = this.settingsHash();
+
+        if (hash != state.settingsHash)
+        {
+            state.settingsHash = hash;
+            state.dropCache();
+        }
+
+        if (state.simulatedTick == tick && state.points.length >= 2)
+        {
+            return;
+        }
+
+        this.catchUp(state, context, tick, start, endpoint);
+    }
+
+    /**
+     * Replay ticks until the rope stands on the requested one, starting from the
+     * cheapest place available: where the rope already is (playing forward), the
+     * nearest cached state at or before the tick (scrubbing), or a cold start with
+     * a short pre-roll when there is nothing to continue from.
+     */
+    private void catchUp(PhysicsState state, FormRenderingContext context, int tick, Vector3f start, Vector3f endpoint)
+    {
+        int budget = this.form.collisions.get() ? MAX_CATCHUP_COLLISIONS : MAX_CATCHUP;
+        int from = NO_TICK;
+
+        if (state.points.length >= 2 && state.simulatedTick != NO_TICK
+            && state.simulatedTick < tick && tick - state.simulatedTick <= budget)
+        {
+            from = state.simulatedTick;
+        }
+
+        Integer cached = state.snapshots.floorKey(tick);
+
+        if (cached != null && (from == NO_TICK || cached > from) && tick - cached <= budget)
+        {
+            state.restore(cached);
+
+            from = cached;
+        }
+
+        if (from == NO_TICK)
+        {
+            from = this.coldStart(state, context, tick, start, endpoint);
+        }
+
+        boolean follow = state.anchorMode == WebForm.ANCHOR_FOLLOW;
+        float speed = MathUtils.clamp(this.form.speed.get(), 0F, WebForm.MAX_SPEED);
+        int iterations = this.form.iterations.get();
+
+        for (int t = from + 1; t <= tick; t++)
+        {
+            Vector3f anchorStart;
+            Vector3f anchorEnd;
+
+            if (t == tick)
+            {
+                /* The tick being drawn always uses the anchors measured this frame,
+                 * so the web is exactly on the hand however rough the track is. */
+                anchorStart = start;
+                anchorEnd = endpoint;
+            }
+            else
+            {
+                state.anchorAt(t);
+
+                anchorStart = state.scratchStart;
+                anchorEnd = follow ? state.scratchEnd : endpoint;
+            }
+
+            /* Speed is resolved into whole solver steps per tick, from the tick
+             * index alone - so the same tick always gets the same number of steps,
+             * whatever route the playhead took to get there. */
+            int steps = (int) (Math.floor(t * (double) speed) - Math.floor((t - 1) * (double) speed));
+
+            steps = MathUtils.clamp(steps, 0, MAX_STEPS_PER_TICK);
+
+            /* Rest length belongs to the tick as well, so a keyframed length (or a
+             * winch) replays identically however we arrived at this tick. */
+            state.syncRest(this.form.length.get(), this.form.sag.get(), anchorStart, anchorEnd);
+            this.applyReel(state, 1D);
+
+            if (steps == 0)
+            {
+                this.applyPins(state, anchorStart, anchorEnd);
+                state.snapshot();
+            }
+
+            for (int i = 0; i < steps; i++)
+            {
+                state.snapshot();
+                this.integrate(state, t);
+                this.dampSegments(state);
+                this.applyPins(state, anchorStart, anchorEnd);
+                this.solveConstraints(state, context, iterations, anchorStart, anchorEnd);
+            }
+
+            if (!state.isSane(anchorStart, Math.max(MAX_POINT_DISTANCE, state.restLength * 2F + 16F)))
+            {
+                state.reset(MathUtils.clamp(this.form.segments.get(), 2, 64), state.anchorMode, true,
+                    anchorStart, anchorEnd, this.form.length.get(), this.form.sag.get());
+            }
+
+            state.simulatedTick = t;
+
+            if (Math.floorMod(t, SNAPSHOT_INTERVAL) == 0)
+            {
+                state.storeSnapshot(t);
+            }
+        }
+
+        state.simulatedTick = tick;
+        state.rememberAnchors(start, endpoint);
+    }
+
+    /**
+     * Where to begin when there is nothing to continue from. The rope is built at
+     * the anchors of an earlier tick and allowed to settle there, then the ticks in
+     * between are replayed normally - so a blind jump into the middle of a film
+     * still lands on a rope that hangs, swings and trails the way it should.
+     */
+    private int coldStart(PhysicsState state, FormRenderingContext context, int tick, Vector3f start, Vector3f endpoint)
+    {
+        int preroll = this.form.collisions.get() ? PREROLL_COLLISIONS : PREROLL;
+        int earliest = state.anchorTrack.isEmpty() ? tick : state.anchorTrack.firstKey();
+        int from = Math.max(tick - preroll, earliest);
+
+        if (state.birthTick != NO_TICK)
+        {
+            /* A shot rope does not exist before it lands. */
+            from = MathUtils.clamp(state.birthTick, Math.min(from, tick), tick);
+        }
+
+        state.snapshots.clear();
+
+        Vector3f anchorStart = new Vector3f(start);
+        Vector3f anchorEnd = new Vector3f(endpoint);
+
+        if (from != tick)
+        {
+            state.anchorAt(from);
+            anchorStart.set(state.scratchStart);
+
+            if (state.anchorMode == WebForm.ANCHOR_FOLLOW)
+            {
+                anchorEnd.set(state.scratchEnd);
+            }
+        }
+
+        if (state.birthTick == from && state.shotPhase == SHOT_ROPE)
+        {
+            state.reset(MathUtils.clamp(this.form.segments.get(), 2, 64), state.anchorMode, true,
+                anchorStart, anchorEnd, this.form.length.get(), 0F);
+            state.applyShotLanding(anchorStart, anchorEnd, this.form.shotSpeed.get(), state.shotMode == WebForm.SHOT_AIR);
+        }
+        else
+        {
+            this.settleAt(state, context, anchorStart, anchorEnd);
+        }
+
+        state.simulatedTick = from;
+        state.storeSnapshot(from);
+
+        return from;
+    }
+
+    /**
+     * Everything the solver reads, boiled down to one number. When it changes the
+     * cached timeline is worthless - which is exactly what should happen when the
+     * collisions, the gravity or the segment count is edited: the whole film's worth
+     * of web is recomputed under the new settings.
+     */
+    private int settingsHash()
+    {
+        int hash = this.form.segments.get();
+
+        hash = hash * 31 + this.form.anchorMode.get();
+        hash = hash * 31 + Float.floatToIntBits(this.form.length.get());
+        hash = hash * 31 + Float.floatToIntBits(this.form.sag.get());
+        hash = hash * 31 + Float.floatToIntBits(this.form.speed.get());
+        hash = hash * 31 + Float.floatToIntBits(this.form.gravity.get());
+        hash = hash * 31 + Float.floatToIntBits(this.form.damping.get());
+        hash = hash * 31 + Float.floatToIntBits(this.form.stiffness.get());
+        hash = hash * 31 + Float.floatToIntBits(this.form.wind.get().x);
+        hash = hash * 31 + Float.floatToIntBits(this.form.wind.get().y);
+        hash = hash * 31 + Float.floatToIntBits(this.form.wind.get().z);
+        hash = hash * 31 + Float.floatToIntBits(this.form.windNoise.get());
+        hash = hash * 31 + Float.floatToIntBits(this.form.windSpeed.get());
+        hash = hash * 31 + Float.floatToIntBits(this.form.reel.get());
+        hash = hash * 31 + Float.floatToIntBits(this.form.shotSpeed.get());
+        hash = hash * 31 + this.form.iterations.get();
+        hash = hash * 31 + (this.form.collisions.get() ? 1 : 0);
+        hash = hash * 31 + (this.form.physics.get() ? 1 : 0);
+        hash = hash * 31 + (this.form.shooter.get() ? 1 : 0);
+        hash = hash * 31 + this.form.shotMode.get();
+
+        /* A body part's weight is part of the physics too. */
+        for (int i = 0; i < this.pointMass.length; i++)
+        {
+            hash = hash * 31 + Float.floatToIntBits(this.pointMass[i]);
+        }
+
+        return hash;
+    }
+
+    /**
      * Advance the shot. The trigger is a plain value, so this only ever reacts to it:
      * off holsters the web, the frame it turns on captures where the hand and the
      * target are and starts the clock. Everything after that is a function of the
@@ -721,6 +1081,13 @@ public class WebFormRenderer extends FormRenderer<WebForm>
      */
     private void updateShot(PhysicsState state, double time, Vector3f startWorld, Vector3f endpointWorld)
     {
+        if (state.filmTick != NO_TICK)
+        {
+            this.updateShotOnTimeline(state, startWorld, endpointWorld);
+
+            return;
+        }
+
         int mode = MathUtils.clamp(this.form.shotMode.get(), WebForm.SHOT_ANCHORED, WebForm.SHOT_SINGLE);
 
         if (!this.form.fire.get())
@@ -1501,19 +1868,40 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             return context.modelRendererTick + transition;
         }
 
-        /* Inside a film the playhead is the only honest clock. The actor's age is
-         * driven by how many times the film ticked the entity, not by where the
-         * cursor sits: dragging it across the whole film nudges the age by a tick
-         * or two, which is why scrubbing used to inch the web forward instead of
-         * showing it at the moment being scrubbed to. */
-        Integer filmTick = FilmActorClock.get(context.entity);
+        return context.entity == null ? transition : context.entity.getAge() + transition;
+    }
 
-        if (filmTick != null)
+    /**
+     * Decide what time it is for this web, and in which of the two worlds it lives.
+     *
+     * <p>Inside a film the playhead is the only honest clock: the actor's age is
+     * driven by how many times the film happened to tick the entity, not by where
+     * the cursor sits, so dragging the cursor across the whole film moves the age
+     * by a tick or two. Everywhere else (the world, the model preview) there is no
+     * timeline to address, and the rope simply runs forward on its own clock.</p>
+     */
+    private void readClock(PhysicsState state, FormRenderingContext context)
+    {
+        Integer filmTick = context.modelRenderer ? null : FilmActorClock.get(context.entity);
+
+        if (filmTick == null)
         {
-            return filmTick + transition;
+            state.filmTick = NO_TICK;
+            state.partial = 0F;
+
+            this.advanceClock(state, this.getSimulationTime(context));
+
+            return;
         }
 
-        return context.entity == null ? transition : context.entity.getAge() + transition;
+        float transition = MathUtils.clamp(context.getTransition(), 0F, 1F);
+
+        state.filmTick = filmTick;
+        state.partial = transition;
+        state.timeStatus = TIME_NORMAL;
+        state.timeDelta = 0D;
+        state.lastTime = filmTick + transition;
+        state.clock = filmTick + transition;
     }
 
     /**
@@ -1578,7 +1966,15 @@ public class WebFormRenderer extends FormRenderer<WebForm>
     {
         Vector3f target = state.anchorMode == WebForm.ANCHOR_LOCKED ? new Vector3f(state.lockedEnd) : endpoint;
 
-        state.reset(state.segments, state.anchorMode, state.simulation, start, target, this.form.length.get(), this.form.sag.get());
+        this.settleAt(state, context, start, target);
+        state.rememberAnchors(start, target);
+    }
+
+    /** {@link #settle} against anchors given outright, without re-reading the mode. */
+    private void settleAt(PhysicsState state, FormRenderingContext context, Vector3f start, Vector3f target)
+    {
+        state.reset(MathUtils.clamp(this.form.segments.get(), 2, 64), state.anchorMode, state.simulation,
+            start, target, this.form.length.get(), this.form.sag.get());
         state.accumulator = 0F;
 
         int iterations = MathUtils.clamp(this.form.iterations.get(), 1, 12);
@@ -1586,7 +1982,9 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         for (int i = 0; i < SETTLE_STEPS; i++)
         {
             state.snapshot();
-            this.integrate(state, state.step++);
+            /* Deterministic on purpose: settling the same rope at the same anchors
+             * twice has to give the same rope, or scrubbing would flicker. */
+            this.integrate(state, i);
             this.dampSegments(state);
             this.applyPins(state, start, target);
             this.solveConstraints(state, context, iterations, start, target);
@@ -1599,8 +1997,6 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             state.previous[i].set(state.points[i]);
             state.past[i].set(state.points[i]);
         }
-
-        state.rememberAnchors(start, target);
     }
 
     private void updateSimulation(PhysicsState state, FormRenderingContext context, double time, Vector3f start, Vector3f endpoint)
@@ -2146,6 +2542,38 @@ public class WebFormRenderer extends FormRenderer<WebForm>
         public final Vector3f heldEnd = new Vector3f();
         public boolean heldAnchors;
 
+        /* ---- Timeline (film) state ------------------------------------- */
+
+        /** The film tick being drawn, or {@link #NO_TICK} outside of a film. */
+        public int filmTick = NO_TICK;
+
+        /** Fraction of that tick the frame sits on, for the render interpolation. */
+        public float partial;
+
+        /** The tick the solved rope currently stands on. */
+        public int simulatedTick = NO_TICK;
+
+        /** Fingerprint of the settings the cache was built with. */
+        public int settingsHash;
+
+        /** The tick a shot rope came into existence, or {@link #NO_TICK}. */
+        public int birthTick = NO_TICK;
+
+        /** The tick the current shot's trigger went up, or {@link #NO_TICK}. */
+        public int shotFireTick = NO_TICK;
+
+        /** Anchors (start xyz, end xyz) of every tick that has been drawn. */
+        public final TreeMap<Integer, float[]> anchorTrack = new TreeMap<>();
+
+        /** Rope states cached along the timeline, so scrubbing is cheap. */
+        public final TreeMap<Integer, Frame> snapshots = new TreeMap<>();
+
+        /** The trigger, per drawn tick, so a shot's start can be found again. */
+        public final TreeMap<Integer, Boolean> fireTrack = new TreeMap<>();
+
+        public final Vector3f scratchStart = new Vector3f();
+        public final Vector3f scratchEnd = new Vector3f();
+
         public boolean anchorsMoved(Vector3f start, Vector3f end)
         {
             if (!this.heldAnchors)
@@ -2242,6 +2670,10 @@ public class WebFormRenderer extends FormRenderer<WebForm>
 
         public void reset(int segments, int anchorMode, boolean simulation, Vector3f start, Vector3f end, float length, float sag)
         {
+            /* A rope that is built from scratch has nothing to do with what was
+             * cached for it, whichever tick that was. */
+            this.dropCache();
+
             this.segments = segments;
             this.anchorMode = anchorMode;
             this.simulation = simulation;
@@ -2269,6 +2701,235 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             }
 
             this.accumulator = 0F;
+        }
+
+        /* ---- Timeline cache -------------------------------------------- */
+
+        /**
+         * Remember where the anchors really were on this tick.
+         *
+         * @return true when the measurement contradicts what the track had been
+         *         guessing for that tick, which means everything cached after it
+         *         was built on a wrong assumption.
+         */
+        public boolean recordAnchor(int tick, Vector3f start, Vector3f end, float partial)
+        {
+            float[] sample = this.anchorTrack.get(tick);
+
+            if (sample != null)
+            {
+                /* The first measurement of a tick wins: later frames of the same
+                 * tick see the actor interpolated a little further along, and that
+                 * is a smoother pose, not a different anchor. Only a measurement
+                 * taken at the very same moment inside the tick can disagree - which
+                 * is what happens when the tick is frozen and the point is dragged
+                 * by hand, and then the rope must be rebuilt. */
+                if (Math.abs(sample[6] - partial) > 0.02F)
+                {
+                    return false;
+                }
+
+                boolean same = distanceSquared(sample, 0, start) <= ANCHOR_SAMPLE_EPSILON
+                    && distanceSquared(sample, 3, end) <= ANCHOR_SAMPLE_EPSILON;
+
+                write(sample, start, end);
+                sample[6] = partial;
+
+                return !same;
+            }
+
+            boolean predicted = !this.anchorTrack.isEmpty();
+
+            if (predicted)
+            {
+                this.anchorAt(tick);
+
+                predicted = this.scratchStart.distanceSquared(start) > ANCHOR_SAMPLE_EPSILON
+                    || this.scratchEnd.distanceSquared(end) > ANCHOR_SAMPLE_EPSILON;
+            }
+
+            sample = new float[7];
+
+            write(sample, start, end);
+            sample[6] = partial;
+            this.anchorTrack.put(tick, sample);
+
+            while (this.anchorTrack.size() > MAX_ANCHOR_SAMPLES)
+            {
+                /* Drop whichever end of the track is further from where we are. */
+                int first = this.anchorTrack.firstKey();
+                int last = this.anchorTrack.lastKey();
+
+                this.anchorTrack.remove(tick - first >= last - tick ? first : last);
+            }
+
+            return predicted;
+        }
+
+        /** Anchors of a tick into {@link #scratchStart} and {@link #scratchEnd}. */
+        public void anchorAt(int tick)
+        {
+            Map.Entry<Integer, float[]> before = this.anchorTrack.floorEntry(tick);
+            Map.Entry<Integer, float[]> after = this.anchorTrack.ceilingEntry(tick);
+
+            if (before == null && after == null)
+            {
+                return;
+            }
+
+            if (before == null)
+            {
+                read(after.getValue(), this.scratchStart, this.scratchEnd);
+
+                return;
+            }
+
+            if (after == null || after.getKey().intValue() == before.getKey().intValue())
+            {
+                read(before.getValue(), this.scratchStart, this.scratchEnd);
+
+                return;
+            }
+
+            float blend = (tick - before.getKey()) / (float) (after.getKey() - before.getKey());
+            float[] a = before.getValue();
+            float[] b = after.getValue();
+
+            this.scratchStart.set(
+                a[0] + (b[0] - a[0]) * blend,
+                a[1] + (b[1] - a[1]) * blend,
+                a[2] + (b[2] - a[2]) * blend
+            );
+            this.scratchEnd.set(
+                a[3] + (b[3] - a[3]) * blend,
+                a[4] + (b[4] - a[4]) * blend,
+                a[5] + (b[5] - a[5]) * blend
+            );
+        }
+
+        public void recordFire(int tick, boolean fire)
+        {
+            this.fireTrack.put(tick, fire);
+
+            while (this.fireTrack.size() > MAX_ANCHOR_SAMPLES)
+            {
+                int first = this.fireTrack.firstKey();
+                int last = this.fireTrack.lastKey();
+
+                this.fireTrack.remove(tick - first >= last - tick ? first : last);
+            }
+        }
+
+        /**
+         * The tick this shot's trigger went up, walking back through the ticks that
+         * have actually been drawn. A gap in that walk means the flight cannot be
+         * reconstructed honestly, and {@link #NO_TICK} is returned instead.
+         */
+        public int fireStartTick(int tick)
+        {
+            int start = NO_TICK;
+
+            for (int t = tick; t > tick - MAX_CATCHUP; t--)
+            {
+                Boolean fire = this.fireTrack.get(t);
+
+                if (fire == null)
+                {
+                    /* The trigger went up during ticks nobody has drawn: the flight
+                     * cannot be replayed honestly, so the shot is shown landed. */
+                    return NO_TICK;
+                }
+
+                if (!fire.booleanValue())
+                {
+                    return t + 1;
+                }
+
+                start = t;
+            }
+
+            return NO_TICK;
+        }
+
+        public void setBirthTick(int tick)
+        {
+            if (this.birthTick != tick)
+            {
+                this.birthTick = tick;
+
+                this.dropCache();
+            }
+        }
+
+        /** Cache a copy of the rope as it stands, keyed by tick. */
+        public void storeSnapshot(int tick)
+        {
+            this.snapshots.put(tick, new Frame(this));
+
+            while (this.snapshots.size() > MAX_SNAPSHOTS)
+            {
+                int first = this.snapshots.firstKey();
+                int last = this.snapshots.lastKey();
+
+                this.snapshots.remove(tick - first >= last - tick ? first : last);
+            }
+        }
+
+        /** Put the rope back into a cached state. */
+        public void restore(int tick)
+        {
+            Frame frame = this.snapshots.get(tick);
+
+            if (frame == null)
+            {
+                return;
+            }
+
+            frame.applyTo(this);
+            this.simulatedTick = tick;
+        }
+
+        /** Throw away every cached rope state, keeping the tracks. */
+        public void dropCache()
+        {
+            this.snapshots.clear();
+            this.simulatedTick = NO_TICK;
+        }
+
+        /** Throw away everything cached at or after a tick. */
+        public void invalidateFrom(int tick)
+        {
+            this.snapshots.tailMap(tick, true).clear();
+
+            if (this.simulatedTick != NO_TICK && this.simulatedTick >= tick)
+            {
+                this.simulatedTick = NO_TICK;
+            }
+        }
+
+        private static void write(float[] sample, Vector3f start, Vector3f end)
+        {
+            sample[0] = start.x;
+            sample[1] = start.y;
+            sample[2] = start.z;
+            sample[3] = end.x;
+            sample[4] = end.y;
+            sample[5] = end.z;
+        }
+
+        private static void read(float[] sample, Vector3f start, Vector3f end)
+        {
+            start.set(sample[0], sample[1], sample[2]);
+            end.set(sample[3], sample[4], sample[5]);
+        }
+
+        private static float distanceSquared(float[] sample, int offset, Vector3f point)
+        {
+            float dx = sample[offset] - point.x;
+            float dy = sample[offset + 1] - point.y;
+            float dz = sample[offset + 2] - point.z;
+
+            return dx * dx + dy * dy + dz * dz;
         }
 
         /**
@@ -2347,6 +3008,83 @@ public class WebFormRenderer extends FormRenderer<WebForm>
             this.rendered = new Vector3f[0];
             this.lastTime = Double.NEGATIVE_INFINITY;
             this.accumulator = 0F;
+            this.heldAnchors = false;
+            this.birthTick = NO_TICK;
+            this.shotFireTick = NO_TICK;
+            this.settingsHash = 0;
+            this.anchorTrack.clear();
+            this.fireTrack.clear();
+            this.dropCache();
+        }
+
+        /** A cached rope: the two position buffers the solver needs, plus its rest. */
+        private static class Frame
+        {
+            public final float[] points;
+            public final float[] previous;
+            public final float reeled;
+            public final float restLength;
+
+            public Frame(PhysicsState state)
+            {
+                int length = state.points.length;
+
+                this.points = new float[length * 3];
+                this.previous = new float[length * 3];
+                this.reeled = state.reeled;
+                this.restLength = state.restLength;
+
+                for (int i = 0; i < length; i++)
+                {
+                    store(this.points, i, state.points[i]);
+                    store(this.previous, i, state.previous[i]);
+                }
+            }
+
+            public void applyTo(PhysicsState state)
+            {
+                int length = this.points.length / 3;
+
+                if (state.points.length != length)
+                {
+                    state.points = new Vector3f[length];
+                    state.previous = new Vector3f[length];
+                    state.past = new Vector3f[length];
+                    state.rendered = new Vector3f[length];
+
+                    for (int i = 0; i < length; i++)
+                    {
+                        state.points[i] = new Vector3f();
+                        state.previous[i] = new Vector3f();
+                        state.past[i] = new Vector3f();
+                        state.rendered[i] = new Vector3f();
+                    }
+
+                    state.segments = length;
+                }
+
+                for (int i = 0; i < length; i++)
+                {
+                    load(this.points, i, state.points[i]);
+                    load(this.previous, i, state.previous[i]);
+                    state.past[i].set(state.points[i]);
+                }
+
+                state.reeled = this.reeled;
+                state.restLength = this.restLength;
+            }
+
+            private static void store(float[] target, int index, Vector3f point)
+            {
+                target[index * 3] = point.x;
+                target[index * 3 + 1] = point.y;
+                target[index * 3 + 2] = point.z;
+            }
+
+            private static void load(float[] source, int index, Vector3f point)
+            {
+                point.set(source[index * 3], source[index * 3 + 1], source[index * 3 + 2]);
+            }
         }
 
         /** Remember where the rope stood before the step that is about to run. */

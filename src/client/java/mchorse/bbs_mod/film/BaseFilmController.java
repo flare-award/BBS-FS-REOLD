@@ -1479,6 +1479,14 @@ public abstract class BaseFilmController
                 continue;
             }
 
+            /* Simulated forms need the playhead of the frame they are drawn on, and
+             * they need it even when the film is not ticking at all - a paused editor
+             * still redraws every frame while the cursor is dragged. */
+            if (replay != null)
+            {
+                FilmActorClock.set(entity, replay.getTick(this.getTick()));
+            }
+
             this.renderEntity(context, replay, entity);
         }
     }
