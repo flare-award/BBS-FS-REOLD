@@ -7,6 +7,7 @@ import java.util.Map;
 
 import mchorse.bbs_mod.client.BBSRendering;
 import mchorse.bbs_mod.cubic.IBoneHierarchy;
+import mchorse.bbs_mod.forms.FormUtils;
 import mchorse.bbs_mod.forms.FormUtilsClient;
 import mchorse.bbs_mod.forms.entities.IEntity;
 import mchorse.bbs_mod.forms.forms.BodyPart;
@@ -133,8 +134,10 @@ public abstract class FormRenderer <T extends Form>
 
     public final void render(FormRenderingContext context)
     {
-        if (!this.form.shaderShadow.get() && BBSRendering.isIrisShadowPass())
+        if (BBSRendering.isIrisShadowPass() && !this.form.shaderShadow.get() && !FormUtils.getRoot(this.form).shaderShadow.get())
         {
+            /* The root form's toggle carries the whole hierarchy: enabling the
+             * shader shadow on the model shouldn't leave its body parts shadowless. */
             return;
         }
 
@@ -316,6 +319,8 @@ public abstract class FormRenderer <T extends Form>
 
         if (part.getForm() != null)
         {
+            Matrix4f attachOffset = getAttachBoneOffset(part, context.entity, context.getTransition());
+
             context.stack.push();
             if (context.world != null)
             {
@@ -325,6 +330,16 @@ public abstract class FormRenderer <T extends Form>
             if (context.world != null)
             {
                 MatrixStackUtils.applyTransform(context.world, part.transform.get());
+            }
+
+            if (attachOffset != null)
+            {
+                MatrixStackUtils.multiply(context.stack, attachOffset);
+
+                if (context.world != null)
+                {
+                    MatrixStackUtils.multiply(context.world, attachOffset);
+                }
             }
 
             FormUtilsClient.render(part.getForm(), context);
@@ -337,6 +352,55 @@ public abstract class FormRenderer <T extends Form>
         }
 
         context.entity = oldEntity;
+    }
+
+    /**
+     * The correction that puts the part's chosen bone - not its origin - onto the
+     * attachment point: the form is shifted by minus that bone's position, so
+     * wherever the bone travels in the animation, it lands on the anchor.
+     *
+     * <p>Only the bone's POSITION is cancelled, never its rotation. Cancelling the
+     * full matrix looks right at first, but it pins the bone's frame rigidly: turning
+     * a bone that the attached one hangs off (the root, the torso) rotates that bone
+     * too, the inverse takes the rotation straight back out, and the model does not
+     * move at all - the pose sliders appear dead. With the position alone, the chosen
+     * bone stays glued to the point and the rest of the body poses and swings freely
+     * around it, which is also what hanging by a hand actually looks like.</p>
+     *
+     * <p>Returns null when the part attaches by its origin (the default) or when the
+     * form has no such bone.</p>
+     */
+    public static Matrix4f getAttachBoneOffset(BodyPart part, IEntity entity, float transition)
+    {
+        String bone = part.attachBone.get();
+
+        if (bone == null || bone.isEmpty() || part.getForm() == null)
+        {
+            return null;
+        }
+
+        FormRenderer renderer = FormUtilsClient.getRenderer(part.getForm());
+
+        if (renderer == null)
+        {
+            return null;
+        }
+
+        Matrix4f matrix = renderer.collectMatrices(entity, transition).get(bone).matrix();
+
+        if (matrix == null)
+        {
+            return null;
+        }
+
+        Vector3f translation = matrix.getTranslation(new Vector3f());
+
+        if (!Float.isFinite(translation.x) || !Float.isFinite(translation.y) || !Float.isFinite(translation.z))
+        {
+            return null;
+        }
+
+        return new Matrix4f().translate(translation.negate());
     }
 
     public MatrixCache collectMatrices(IEntity entity, float transition)

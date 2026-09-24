@@ -112,9 +112,14 @@ public class UIToggle extends UIClickable<UIToggle> implements ITextColoring
         /* No outline at all: off is a well in the surface ramp, on is the accent,
          * and the knob is light enough to stand on either without being drawn
          * around. */
-        int trackFill = this.value ? Colors.A100 | BBSSettings.primaryColor.get() : BBSSettings.deepSurface();
-
-        context.batcher.box(trackLeft, trackTop, trackRight, trackBottom, trackFill);
+        if (this.value)
+        {
+            context.batcher.primaryBox(trackLeft, trackTop, trackRight, trackBottom, Colors.A100);
+        }
+        else
+        {
+            context.batcher.box(trackLeft, trackTop, trackRight, trackBottom, BBSSettings.deepSurface());
+        }
 
         int knobColor = this.hover ? Colors.lerp(KNOB_COLOR, Colors.WHITE, 0.2F) : KNOB_COLOR;
 

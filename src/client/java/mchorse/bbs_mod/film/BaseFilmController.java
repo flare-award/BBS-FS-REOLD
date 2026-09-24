@@ -156,6 +156,16 @@ public abstract class BaseFilmController
             Replay replay = replays.get(i);
             IEntity entity = this.entities.get(replay.getId());
 
+            /* Publish the playhead so simulated forms (the web's rope) can run on
+             * film time instead of the actor's age, which barely moves while the
+             * film is paused and the playhead is dragged. This happens before the
+             * update check on purpose: a paused film still has a well defined
+             * moment in time, and freezing on it is exactly what those forms want. */
+            if (replay != null)
+            {
+                FilmActorClock.set(entity, replay.getTick(ticks));
+            }
+
             if (entity == null || !this.canUpdate(i, replay, entity, UpdateMode.UPDATE))
             {
                 continue;
@@ -246,6 +256,13 @@ public abstract class BaseFilmController
         {
             Replay replay = replays.get(i);
             IEntity entity = this.entities.get(replay.getId());
+
+            /* Same playhead publication as updateEntities: this loop drives the same
+             * forms, and skipping it here would leave the rope on a stale tick. */
+            if (replay != null)
+            {
+                FilmActorClock.set(entity, replay.getTick(ticks));
+            }
 
             if (entity == null || !this.canUpdate(i, replay, entity, UpdateMode.UPDATE))
             {
@@ -531,6 +548,14 @@ public abstract class BaseFilmController
             if (frustum != null && this.isCulled(frustum, replay, entity))
             {
                 continue;
+            }
+
+            /* Simulated forms need the playhead of the frame they are drawn on, and
+             * they need it even when the film is not ticking at all - a paused editor
+             * still redraws every frame while the cursor is dragged. */
+            if (replay != null)
+            {
+                FilmActorClock.set(entity, replay.getTick(this.getTick()));
             }
 
             this.renderEntity(context, replay, entity);

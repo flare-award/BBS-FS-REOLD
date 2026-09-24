@@ -39,6 +39,12 @@ public class BBSSettings {
 	public static final String DEFAULT_AUDIO_FFMPEG_ARGUMENTS = "-f rawvideo -pix_fmt bgr24 -s %WIDTH%x%HEIGHT% -r %FPS% -i - -i %AUDIO_TRACK% -vf %FILTERS% -c:v libx264 -preset ultrafast -tune zerolatency -qp 18 -pix_fmt yuv420p -c:a aac -b:a 128k -shortest %NAME%.mp4";
 	public static final String DEFAULT_MUX_FFMPEG_ARGUMENTS = "-y -i %VIDEO% -i %AUDIO_TRACK% -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a 192k -shortest %NAME%.mp4";
 
+	/* Shared HSL wheel order: the UI, clip channels and shader use the same eight colour bands. */
+	public static final String[] HSL_COLOR_IDS = {
+		"red", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta"
+	};
+	public static final int HSL_COLOR_COUNT = HSL_COLOR_IDS.length;
+
 	public static ValueColors favoriteColors;
 	public static ValueColors recentColors;
 	public static ValueStringKeys disabledSheets;
@@ -46,6 +52,9 @@ public class BBSSettings {
 	public static ValueStringKeys disabledMorphFormCategories;
 	public static ValueLanguage language;
 	public static ValueInt primaryColor;
+	public static ValueBoolean primaryColorGradient;
+	public static ValueInt primaryColorEnd;
+	public static ValueInt primaryColorGradientDirection;
 	public static ValueInt stencilHighlightColor;
 	public static ValueBoolean enableTrackpadIncrements;
 	public static ValueBoolean enableTrackpadScrolling;
@@ -217,11 +226,60 @@ public class BBSSettings {
 
 	public static ValueInt secondaryColor;
 	public static ValueFloat overlayBackgroundOpacity;
+
+	/* Custom interface background: 0 keeps the secondary colour's own ladder, 1 recolors
+	 * it with interfaceBackgroundColor, 2 flows it from that color into
+	 * interfaceBackgroundColorEnd across the screen in the chosen direction. */
+	public static ValueInt backgroundColorMode;
+	public static ValueInt interfaceBackgroundColor;
+	public static ValueInt interfaceBackgroundColorEnd;
+	public static ValueInt backgroundGradientDirection;
 	public static ValueBoolean interfaceShadows;
 	public static ValueBoolean interfaceHighlights;
 	public static ValueBoolean interfaceGlow;
 	public static ValueBoolean interfaceBlur;
 	public static ValueInt interfaceBlurRadius;
+	public static ValueInt modelEditorTransparency;
+
+	/* Color grading filters baked into the film preview and video export (all neutral by default). */
+	public static ValueFloat filmFilterBrightness;
+	public static ValueFloat filmFilterContrast;
+	public static ValueFloat filmFilterSaturation;
+	public static ValueFloat filmFilterHue;
+	public static ValueFloat filmFilterTemperature;
+	public static ValueFloat filmFilterGamma;
+	public static ValueFloat filmFilterSharpness;
+	public static ValueFloat filmFilterVignette;
+	public static ValueFloat filmFilterSepia;
+	public static ValueFloat filmFilterGrain;
+	public static ValueFloat filmFilterAberration;
+	public static ValueFloat filmFilterInvert;
+	public static ValueFloat filmFilterPosterize;
+	public static ValueFloat filmFilterPixelate;
+	public static ValueFloat filmFilterDistortion;
+	public static ValueFloat filmFilterBloom;
+	public static ValueFloat filmFilterRadial;
+	public static ValueFloat filmFilterVhs;
+	public static ValueFloat filmFilterFlip;
+	public static ValueFloat filmFilterFisheye;
+	public static ValueFloat[] filmFilterHslHue;
+	public static ValueFloat[] filmFilterHslSaturation;
+	public static ValueFloat[] filmFilterHslLightness;
+
+	/* A photo laid over the film preview and export - PNG transparency respected.
+	 * Position is in NDC-like units (0 centered, positive X right, positive Y down),
+	 * scale is the photo's height relative to the frame's, stretches are multipliers.
+	 * The single-photo values are legacy: they migrate into the layer list below. */
+	public static ValueString filmPhotoTexture;
+	public static ValueFloat filmPhotoOpacity;
+	public static ValueFloat filmPhotoX;
+	public static ValueFloat filmPhotoY;
+	public static ValueFloat filmPhotoScale;
+	public static ValueFloat filmPhotoStretchX;
+	public static ValueFloat filmPhotoStretchY;
+
+	/* Serialized list of photo overlay layers (see the client's PhotoLayer class). */
+	public static ValueString filmPhotoLayers;
 
 	public static ValueBoolean shaderCurvesEnabled;
 	public static ValueBoolean translucencyQueue;
@@ -239,7 +297,31 @@ public class BBSSettings {
 	public static ValueString cdnToken;
 
 	private static final int DEFAULT_PRIMARY_COLOR = 0xff3242;
+	private static final int DEFAULT_PRIMARY_COLOR_END = 0xff8a3c;
 	private static final float DEFAULT_OVERLAY_BACKGROUND_OPACITY = 0.5F;
+	private static final int DEFAULT_MODEL_EDITOR_TRANSPARENCY = 25;
+	private static final int MAX_MODEL_EDITOR_TRANSPARENCY = 100;
+	public static final float MIN_FILM_GAMMA = 0.25F;
+	public static final float MAX_FILM_GAMMA = 4F;
+	public static final float MIN_FILM_PHOTO_SCALE = 0.05F;
+	public static final float MAX_FILM_PHOTO_SCALE = 3F;
+	public static final float MIN_FILM_PHOTO_STRETCH = 0.1F;
+	public static final float MAX_FILM_PHOTO_STRETCH = 5F;
+	public static final float MAX_FILM_PHOTO_OFFSET = 2F;
+	public static final float MAX_FILM_POSTERIZE = 32F;
+	public static final float MAX_FILM_PIXELATE = 64F;
+
+	/* Directions the primary color gradient can flow in */
+	public static final int GRADIENT_HORIZONTAL = 0;
+	public static final int GRADIENT_VERTICAL = 1;
+	public static final int GRADIENT_DIAGONAL = 2;
+
+	/* Background color modes */
+	public static final int BACKGROUND_DEFAULT = 0;
+	public static final int BACKGROUND_SOLID = 1;
+	public static final int BACKGROUND_GRADIENT = 2;
+	private static final int DEFAULT_BACKGROUND_COLOR = 0x1d1d1d;
+	private static final int DEFAULT_BACKGROUND_COLOR_END = 0x101a26;
 
 	/**
 	 * Tonal map of the interface's surfaces, four levels deep: deep sits under
@@ -287,9 +369,12 @@ public class BBSSettings {
 
 	private static final Oklab SURFACE_OKLAB = new Oklab();
 	private static final int[] SURFACES = new int[SURFACE_OFFSETS.length];
+	/** The gradient's far end: a second ladder built from interfaceBackgroundColorEnd. */
+	private static final int[] SURFACES_GRADIENT = new int[SURFACE_OFFSETS.length];
 
-	/** The colour {@link #SURFACES} was derived from; -1 is no colour, so the first read builds. */
+	/** The colours {@link #SURFACES} and {@link #SURFACES_GRADIENT} were derived from; -1/0 are none, so the first read builds. */
 	private static int surfaceSource = -1;
+	private static int gradientSource = 0;
 	private static boolean lightSurfaces;
 
 	public static int primaryColor()
@@ -300,6 +385,29 @@ public class BBSSettings {
 	public static int primaryColor(int alpha)
 	{
 		return withAlpha(primaryColor.get(), alpha);
+	}
+
+	/**
+	 * Whether the accent flows from {@link #primaryColor} into {@link #primaryColorEnd}
+	 * as a gradient on buttons instead of staying a single flat color.
+	 */
+	public static boolean isPrimaryGradient()
+	{
+		return primaryColorGradient != null && primaryColorGradient.get();
+	}
+
+	public static int primaryColorEnd()
+	{
+		return primaryColorEnd == null ? DEFAULT_PRIMARY_COLOR_END : primaryColorEnd.get();
+	}
+
+	/**
+	 * Which way the accent gradient flows: {@link #GRADIENT_HORIZONTAL},
+	 * {@link #GRADIENT_VERTICAL} or {@link #GRADIENT_DIAGONAL}.
+	 */
+	public static int primaryGradientDirection()
+	{
+		return primaryColorGradientDirection == null ? GRADIENT_HORIZONTAL : primaryColorGradientDirection.get();
 	}
 
 	private static int withAlpha(int color, int alpha)
@@ -314,9 +422,14 @@ public class BBSSettings {
 	 */
 	private static void buildSurfaces()
 	{
-		int color = secondaryColor == null ? DEFAULT_SECONDARY_COLOR : secondaryColor.get() & Colors.RGB;
+		int mode = backgroundColorMode();
+		int color = mode != BACKGROUND_DEFAULT && interfaceBackgroundColor != null
+			? interfaceBackgroundColor.get() & Colors.RGB
+			: secondaryColor == null ? DEFAULT_SECONDARY_COLOR : secondaryColor.get() & Colors.RGB;
+		int gradientColor = mode != BACKGROUND_GRADIENT || interfaceBackgroundColorEnd == null
+			? 0 : interfaceBackgroundColorEnd.get() & Colors.RGB;
 
-		if (color == surfaceSource)
+		if (color == surfaceSource && gradientColor == gradientSource)
 		{
 			return;
 		}
@@ -328,15 +441,26 @@ public class BBSSettings {
 			SURFACES[i] = SURFACE_OKLAB.toRGB(SURFACE_OKLAB.l + SURFACE_OFFSETS[i]);
 		}
 
+		if (mode == BACKGROUND_GRADIENT)
+		{
+			SURFACE_OKLAB.set(gradientColor);
+
+			for (int i = 0; i < SURFACES_GRADIENT.length; i++)
+			{
+				SURFACES_GRADIENT[i] = SURFACE_OKLAB.toRGB(SURFACE_OKLAB.l + SURFACE_OFFSETS[i]);
+			}
+		}
+
 		lightSurfaces = SURFACE_OKLAB.l > LIGHT_SURFACE_LIGHTNESS;
 		surfaceSource = color;
+		gradientSource = gradientColor;
 	}
 
 	private static int surface(int level)
 	{
 		buildSurfaces();
 
-		return SURFACES[level];
+		return applySurfaceTransparency(SURFACES[level]);
 	}
 
 	/**
@@ -404,6 +528,93 @@ public class BBSSettings {
 	public static int inputSurface()
 	{
 		return lightInputs ? raisedSurface() : deepSurface();
+	}
+
+	/**
+	 * Render-scoped, like {@link #lightInputs}: the form editor sets this for the
+	 * duration of its own rendering so the surfaces of its panels let the world
+	 * show through. Zero keeps every surface exactly as solid as it always was.
+	 */
+	public static float surfaceTransparency = 0F;
+
+	private static int applySurfaceTransparency(int color)
+	{
+		if (surfaceTransparency <= 0F)
+		{
+			return color;
+		}
+
+		float factor = 1F - MathUtils.clamp(surfaceTransparency, 0F, 1F);
+		int alpha = Math.round(((color >> 24) & 0xff) * factor);
+
+		return withAlpha(color, MathUtils.clamp(alpha, 0, 255) << 24);
+	}
+
+	/**
+	 * The form editor's transparency percentage as a 0..1 factor that
+	 * {@link #surfaceTransparency} understands. Zero keeps the panels solid,
+	 * a hundred percent makes them fully see-through. The config key predates
+	 * the setting covering every form type, hence the name.
+	 */
+	public static float modelEditorTransparency()
+	{
+		int percent = modelEditorTransparency == null ? DEFAULT_MODEL_EDITOR_TRANSPARENCY : modelEditorTransparency.get();
+
+		return MathUtils.clamp(percent, 0, MAX_MODEL_EDITOR_TRANSPARENCY) / (float) MAX_MODEL_EDITOR_TRANSPARENCY;
+	}
+
+	public static int backgroundColorMode()
+	{
+		return backgroundColorMode == null ? BACKGROUND_DEFAULT : MathUtils.clamp(backgroundColorMode.get(), BACKGROUND_DEFAULT, BACKGROUND_GRADIENT);
+	}
+
+	public static boolean isBackgroundGradient()
+	{
+		return backgroundColorMode() == BACKGROUND_GRADIENT;
+	}
+
+	public static int backgroundGradientDirection()
+	{
+		return backgroundGradientDirection == null ? GRADIENT_HORIZONTAL : backgroundGradientDirection.get();
+	}
+
+	/**
+	 * The gradient's far-end twin of a surface fill color, or 0 when the given
+	 * color isn't one of the current background surfaces (or the background
+	 * isn't in gradient mode). The UI batcher asks this to know which flat
+	 * fills should flow across the screen instead.
+	 */
+	public static int backgroundGradientEnd(int surfaceColor)
+	{
+		if (!isBackgroundGradient())
+		{
+			return 0;
+		}
+
+		buildSurfaces();
+
+		for (int i = 0; i < SURFACES.length; i++)
+		{
+			if (surfaceColor == SURFACES[i])
+			{
+				return SURFACES_GRADIENT[i];
+			}
+		}
+
+		return 0;
+	}
+
+	/** Show only the background color settings the current mode makes use of. */
+	public static void updateBackgroundSettingsVisibility()
+	{
+		int mode = backgroundColorMode();
+
+		if (interfaceBackgroundColor != null)
+		{
+			interfaceBackgroundColor.visible(mode != BACKGROUND_DEFAULT);
+			interfaceBackgroundColorEnd.visible(mode == BACKGROUND_GRADIENT);
+			backgroundGradientDirection.visible(mode == BACKGROUND_GRADIENT);
+		}
 	}
 
 	public static int panelShadowOpaqueColor()
@@ -690,7 +901,15 @@ public class BBSSettings {
 
 		builder.category("personalization", Icons.COLOR);
 		primaryColor = builder.getInt("primary_color", DEFAULT_PRIMARY_COLOR).color();
+		primaryColorGradient = builder.getBoolean("primary_color_gradient", false);
+		primaryColorEnd = builder.getInt("primary_color_end", DEFAULT_PRIMARY_COLOR_END).color();
+		primaryColorGradientDirection = builder.getInt("primary_color_gradient_direction", GRADIENT_HORIZONTAL, GRADIENT_HORIZONTAL, GRADIENT_DIAGONAL);
 		secondaryColor = builder.getInt("secondary_color", DEFAULT_SECONDARY_COLOR).color();
+		/* Custom interface background: edited here and from the settings menu alike. */
+		backgroundColorMode = builder.getInt("background_color_mode", BACKGROUND_DEFAULT, BACKGROUND_DEFAULT, BACKGROUND_GRADIENT);
+		interfaceBackgroundColor = builder.getInt("background_color", DEFAULT_BACKGROUND_COLOR).color();
+		interfaceBackgroundColorEnd = builder.getInt("background_color_end", DEFAULT_BACKGROUND_COLOR_END).color();
+		backgroundGradientDirection = builder.getInt("background_gradient_direction", GRADIENT_HORIZONTAL, GRADIENT_HORIZONTAL, GRADIENT_DIAGONAL);
 		stencilHighlightColor = builder.getInt("stencil_highlight_color", 0x2EFFFFFF).colorAlpha();
 		overlayBackgroundOpacity = builder.getFloat("overlay_background_opacity", DEFAULT_OVERLAY_BACKGROUND_OPACITY, 0F, 1F).slider();
 		interfaceBlur = builder.getBoolean("interface_blur", true);
@@ -698,6 +917,82 @@ public class BBSSettings {
 		interfaceShadows = builder.getBoolean("interface_shadows", true);
 		interfaceHighlights = builder.getBoolean("interface_highlights", false);
 		interfaceGlow = builder.getBoolean("interface_glow", true);
+		modelEditorTransparency = builder.getInt("model_editor_transparency", DEFAULT_MODEL_EDITOR_TRANSPARENCY, 0, MAX_MODEL_EDITOR_TRANSPARENCY).slider();
+
+		/* Film preview/export filters and the photo overlay - edited from the film panel's preview bar. */
+		filmFilterBrightness = builder.getFloat("film_filter_brightness", 0F, -1F, 1F);
+		filmFilterBrightness.invisible();
+		filmFilterContrast = builder.getFloat("film_filter_contrast", 0F, -1F, 1F);
+		filmFilterContrast.invisible();
+		filmFilterSaturation = builder.getFloat("film_filter_saturation", 0F, -1F, 1F);
+		filmFilterSaturation.invisible();
+		filmFilterHue = builder.getFloat("film_filter_hue", 0F, -180F, 180F);
+		filmFilterHue.invisible();
+		filmFilterTemperature = builder.getFloat("film_filter_temperature", 0F, -1F, 1F);
+		filmFilterTemperature.invisible();
+		filmFilterGamma = builder.getFloat("film_filter_gamma", 1F, MIN_FILM_GAMMA, MAX_FILM_GAMMA);
+		filmFilterGamma.invisible();
+		filmFilterSharpness = builder.getFloat("film_filter_sharpness", 0F, 0F, 1F);
+		filmFilterSharpness.invisible();
+		filmFilterVignette = builder.getFloat("film_filter_vignette", 0F, -1F, 1F);
+		filmFilterVignette.invisible();
+		filmFilterSepia = builder.getFloat("film_filter_sepia", 0F, 0F, 1F);
+		filmFilterSepia.invisible();
+		filmFilterGrain = builder.getFloat("film_filter_grain", 0F, 0F, 1F);
+		filmFilterGrain.invisible();
+		filmFilterAberration = builder.getFloat("film_filter_aberration", 0F, 0F, 1F);
+		filmFilterAberration.invisible();
+		filmFilterInvert = builder.getFloat("film_filter_invert", 0F, 0F, 1F);
+		filmFilterInvert.invisible();
+		filmFilterPosterize = builder.getFloat("film_filter_posterize", 0F, 0F, MAX_FILM_POSTERIZE);
+		filmFilterPosterize.invisible();
+		filmFilterPixelate = builder.getFloat("film_filter_pixelate", 0F, 0F, MAX_FILM_PIXELATE);
+		filmFilterPixelate.invisible();
+		filmFilterDistortion = builder.getFloat("film_filter_distortion", 0F, -1F, 1F);
+		filmFilterDistortion.invisible();
+		filmFilterBloom = builder.getFloat("film_filter_bloom", 0F, 0F, 1F);
+		filmFilterBloom.invisible();
+		filmFilterRadial = builder.getFloat("film_filter_radial", 0F, 0F, 1F);
+		filmFilterRadial.invisible();
+		filmFilterVhs = builder.getFloat("film_filter_vhs", 0F, 0F, 1F);
+		filmFilterVhs.invisible();
+		filmFilterFlip = builder.getFloat("film_filter_flip", 0F, 0F, 2F);
+		filmFilterFlip.invisible();
+		filmFilterFisheye = builder.getFloat("film_filter_fisheye", 0F, -1F, 1F);
+		filmFilterFisheye.invisible();
+
+		filmFilterHslHue = new ValueFloat[HSL_COLOR_COUNT];
+		filmFilterHslSaturation = new ValueFloat[HSL_COLOR_COUNT];
+		filmFilterHslLightness = new ValueFloat[HSL_COLOR_COUNT];
+
+		for (int i = 0; i < HSL_COLOR_COUNT; i++)
+		{
+			String color = HSL_COLOR_IDS[i];
+
+			filmFilterHslHue[i] = builder.getFloat("film_filter_hsl_" + color + "_hue", 0F, -180F, 180F);
+			filmFilterHslHue[i].invisible();
+			filmFilterHslSaturation[i] = builder.getFloat("film_filter_hsl_" + color + "_saturation", 0F, -1F, 1F);
+			filmFilterHslSaturation[i].invisible();
+			filmFilterHslLightness[i] = builder.getFloat("film_filter_hsl_" + color + "_lightness", 0F, -1F, 1F);
+			filmFilterHslLightness[i].invisible();
+		}
+
+		filmPhotoTexture = builder.getString("film_photo_texture", "");
+		filmPhotoTexture.invisible();
+		filmPhotoOpacity = builder.getFloat("film_photo_opacity", 1F, 0F, 1F);
+		filmPhotoOpacity.invisible();
+		filmPhotoX = builder.getFloat("film_photo_x", 0F, -MAX_FILM_PHOTO_OFFSET, MAX_FILM_PHOTO_OFFSET);
+		filmPhotoX.invisible();
+		filmPhotoY = builder.getFloat("film_photo_y", 0F, -MAX_FILM_PHOTO_OFFSET, MAX_FILM_PHOTO_OFFSET);
+		filmPhotoY.invisible();
+		filmPhotoScale = builder.getFloat("film_photo_scale", 1F, MIN_FILM_PHOTO_SCALE, MAX_FILM_PHOTO_SCALE);
+		filmPhotoScale.invisible();
+		filmPhotoStretchX = builder.getFloat("film_photo_stretch_x", 1F, MIN_FILM_PHOTO_STRETCH, MAX_FILM_PHOTO_STRETCH);
+		filmPhotoStretchX.invisible();
+		filmPhotoStretchY = builder.getFloat("film_photo_stretch_y", 1F, MIN_FILM_PHOTO_STRETCH, MAX_FILM_PHOTO_STRETCH);
+		filmPhotoStretchY.invisible();
+		filmPhotoLayers = builder.getString("film_photo_layers", "");
+		filmPhotoLayers.invisible();
 
 		builder.category("scrollbars", Icons.VERTICAL);
 		scrollbarWidth = builder.getInt("width", 4, 2, 10).slider();

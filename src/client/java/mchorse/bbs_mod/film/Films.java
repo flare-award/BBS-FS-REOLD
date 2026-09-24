@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import com.mojang.blaze3d.systems.RenderSystem;
 import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.BBSSettings;
+import mchorse.bbs_mod.client.FilmEffects;
 import mchorse.bbs_mod.audio.AudioRenderer;
 import mchorse.bbs_mod.camera.clips.misc.AudioClip;
 import mchorse.bbs_mod.camera.controller.ICameraController;
@@ -96,6 +97,10 @@ public class Films
     public static void playFilm(Film film, boolean withCamera)
     {
         FirstPersonFilmController filmController = new FirstPersonFilmController(film);
+
+        /* Effects are per-film: playback outside the editor shows this film's
+         * filters and photo layers, exactly like its preview does. */
+        FilmEffects.setCurrentFilm(film);
 
         if (withCamera && !film.hasFirstPerson())
         {

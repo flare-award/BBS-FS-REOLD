@@ -9,6 +9,7 @@ import mchorse.bbs_mod.settings.values.core.ValueGroup;
 import mchorse.bbs_mod.settings.values.core.ValueString;
 import mchorse.bbs_mod.settings.values.core.ValueTransform;
 import mchorse.bbs_mod.settings.values.numeric.ValueBoolean;
+import mchorse.bbs_mod.settings.values.numeric.ValueFloat;
 import mchorse.bbs_mod.utils.joml.Matrices;
 import mchorse.bbs_mod.utils.pose.Transform;
 import org.joml.Matrix4f;
@@ -26,8 +27,30 @@ public class BodyPart extends ValueGroup
 
     private Form form;
 
+    /** Default mass used when the weight toggle is switched on without an estimate. */
+    public static final float DEFAULT_WEIGHT = 60F;
+
+    public static final float MAX_WEIGHT = 10000F;
+
     public final ValueTransform transform = new ValueTransform("transform", new Transform());
     public final ValueString bone = new ValueString("bone", "");
+
+    /**
+     * Which bone of THIS part's own form is put onto the attachment point. Empty
+     * means the form's origin, the way it has always worked; naming a bone (a hand,
+     * say) makes that bone the contact point instead.
+     */
+    public final ValueString attachBone = new ValueString("attach_bone", "");
+
+    /**
+     * Optional mass, in kilograms. Off by default - the part then weighs nothing
+     * and the parent's physics behave exactly as before. Switched on, a rope the
+     * part hangs from carries the load: it stretches toward the weight, and heavy
+     * parts keep their momentum instead of being damped away.
+     */
+    public final ValueBoolean weightEnabled = new ValueBoolean("weight_enabled", false);
+    public final ValueFloat weight = new ValueFloat("weight", DEFAULT_WEIGHT, 0F, MAX_WEIGHT);
+
     public final ValueBoolean useTarget = new ValueBoolean("useTarget", false);
 
     /**
@@ -49,6 +72,9 @@ public class BodyPart extends ValueGroup
 
         this.add(this.transform);
         this.add(this.bone);
+        this.add(this.attachBone);
+        this.add(this.weightEnabled);
+        this.add(this.weight);
         this.add(this.useTarget);
         this.add(this.inheritPosition);
         this.add(this.inheritRotation);

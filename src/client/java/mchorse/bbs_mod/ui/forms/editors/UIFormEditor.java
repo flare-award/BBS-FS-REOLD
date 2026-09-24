@@ -10,6 +10,7 @@ import mchorse.bbs_mod.forms.FormUtils;
 import mchorse.bbs_mod.forms.forms.AnchorForm;
 import mchorse.bbs_mod.forms.forms.BillboardForm;
 import mchorse.bbs_mod.forms.forms.BlockForm;
+import mchorse.bbs_mod.forms.forms.FilterBoardForm;
 import mchorse.bbs_mod.forms.forms.BodyPart;
 import mchorse.bbs_mod.forms.forms.BodyPartManager;
 import mchorse.bbs_mod.forms.forms.ExtrudedForm;
@@ -24,6 +25,7 @@ import mchorse.bbs_mod.forms.forms.StructureForm;
 import mchorse.bbs_mod.forms.forms.TrailForm;
 import mchorse.bbs_mod.forms.forms.VanillaParticleForm;
 import mchorse.bbs_mod.forms.forms.VideoForm;
+import mchorse.bbs_mod.forms.forms.WebForm;
 import mchorse.bbs_mod.forms.renderers.ModelFormRenderer;
 import mchorse.bbs_mod.forms.states.AnimationState;
 import mchorse.bbs_mod.graphics.texture.Texture;
@@ -40,6 +42,7 @@ import mchorse.bbs_mod.ui.forms.UIFormPalette;
 import mchorse.bbs_mod.ui.forms.editors.forms.UIAnchorForm;
 import mchorse.bbs_mod.ui.forms.editors.forms.UIBillboardForm;
 import mchorse.bbs_mod.ui.forms.editors.forms.UIBlockForm;
+import mchorse.bbs_mod.ui.forms.editors.forms.UIFilterBoardForm;
 import mchorse.bbs_mod.ui.forms.editors.forms.UIExtrudedForm;
 import mchorse.bbs_mod.ui.forms.editors.forms.UIForm;
 import mchorse.bbs_mod.ui.forms.editors.forms.UIFramebufferForm;
@@ -52,6 +55,7 @@ import mchorse.bbs_mod.ui.forms.editors.forms.UIStructureForm;
 import mchorse.bbs_mod.ui.forms.editors.forms.UITrailForm;
 import mchorse.bbs_mod.ui.forms.editors.forms.UIVanillaParticleForm;
 import mchorse.bbs_mod.ui.forms.editors.forms.UIVideoForm;
+import mchorse.bbs_mod.ui.forms.editors.forms.UIWebForm;
 import mchorse.bbs_mod.ui.forms.editors.states.UIAnimationStatesOverlayPanel;
 import mchorse.bbs_mod.ui.forms.editors.states.keyframes.UIAnimationStateEditor;
 import mchorse.bbs_mod.ui.forms.editors.utils.UIPickableFormRenderer;
@@ -162,6 +166,7 @@ public class UIFormEditor extends UIElement implements IUIFormList, ICursor, IBo
     public static void setup()
     {
         register(BillboardForm.class, UIBillboardForm::new);
+        register(FilterBoardForm.class, UIFilterBoardForm::new);
         register(VideoForm.class, UIVideoForm::new);
         register(ExtrudedForm.class, UIExtrudedForm::new);
         register(LabelForm.class, UILabelForm::new);
@@ -175,6 +180,7 @@ public class UIFormEditor extends UIElement implements IUIFormList, ICursor, IBo
         register(TrailForm.class, UITrailForm::new);
         register(FramebufferForm.class, UIFramebufferForm::new);
         register(StructureForm.class, UIStructureForm::new);
+        register(WebForm.class, UIWebForm::new);
     }
 
     public static void register(Class clazz, Supplier<UIForm> supplier)
@@ -1243,7 +1249,20 @@ public class UIFormEditor extends UIElement implements IUIFormList, ICursor, IBo
             this.undoHandler.submitUndo();
         }
 
-        super.render(context);
+        /* The form's panels are a sheet over the world: the transparency setting comes off the alpha of
+         * every surface this editor lays down - the tab strip, the sidebar and the options column with
+         * its sliders - for every form type, stock or addon, while the rest of the interface keeps
+         * drawing its surfaces solid. */
+        BBSSettings.surfaceTransparency = this.isEditing() ? BBSSettings.modelEditorTransparency() : 0F;
+
+        try
+        {
+            super.render(context);
+        }
+        finally
+        {
+            BBSSettings.surfaceTransparency = 0F;
+        }
     }
 
     public Matrix4f getOrigin(float transition)

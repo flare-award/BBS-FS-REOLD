@@ -26,6 +26,8 @@ import mchorse.bbs_mod.film.replays.ReplayKeyframes;
 import mchorse.bbs_mod.forms.FormUtils;
 import mchorse.bbs_mod.forms.entities.IEntity;
 import mchorse.bbs_mod.forms.forms.Form;
+import mchorse.bbs_mod.forms.forms.BodyPart;
+import mchorse.bbs_mod.forms.forms.WebForm;
 import mchorse.bbs_mod.forms.forms.IPosedForm;
 import mchorse.bbs_mod.forms.forms.ModelForm;
 import mchorse.bbs_mod.forms.renderers.ModelFormRenderer;
@@ -183,7 +185,18 @@ public class UIReplaysEditor extends UIElement implements IBoneSelectionHost
     /** Single home of the category rule: tabs only filter now, so collectors always gather and this decides where a sheet lands. */
     public static TrackCategory categoryOf(UIKeyframeSheet sheet)
     {
-        return categoryOf(sheet.id, sheet.property != null || sheet.form != null);
+        TrackCategory category = categoryOf(sheet.id, sheet.property != null || sheet.form != null);
+
+        /* A web is a simulation, not a model: everything on it - the anchors, the
+         * shooter's trigger, gravity, the reel - belongs next to the other physics
+         * tracks, which is where anyone animating a swing goes looking. */
+        if ((category == TrackCategory.FORM || category == TrackCategory.POSE)
+            && getSheetForm(sheet) instanceof WebForm)
+        {
+            return TrackCategory.PHYSICS;
+        }
+
+        return category;
     }
 
     /**

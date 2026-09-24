@@ -276,6 +276,44 @@ public class BillboardFormRenderer <T extends BillboardForm> extends FormRendere
         boolean mipmap = this.form.mipmap.get();
         boolean translucent = texture.hasTranslucency() || color.a < 1F || linear || mipmap;
 
+        /* The entity shader shades its vertices with two directional lights that the game
+         * keeps expressed relative to the camera. This quad's normal, though, is a fixed
+         * world axis (the rotation was stripped above, or is whatever the form was rotated
+         * to), so the dot product between the two swings as the camera turns and the whole
+         * photo collapses to near-black at certain angles - a placed picture must not go
+         * dark when you look at it from the side. The screen solves it the same way: both
+         * lights pinned to the quad's own axis, which keeps every face as bright as the
+         * world light allows, from every angle. The no-shading program has no directional
+         * lights at all, so it needs no pinning. */
+        Vector3f savedLight0;
+        Vector3f savedLight1;
+        Vector3f face;
+        Vector3f faceBack;
+
+        if (format == VertexFormats.POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL)
+        {
+            savedLight0 = RenderSystem.shaderLightDirections[0];
+            savedLight1 = RenderSystem.shaderLightDirections[1];
+
+            face = normal.transform(new Vector3f(0F, 0F, 1F));
+
+            if (face.length() < 1.0E-4F)
+            {
+                face.set(0F, 0F, 1F);
+            }
+
+            faceBack = new Vector3f(-face.x, -face.y, -face.z);
+
+            RenderSystem.setShaderLights(face, faceBack);
+        }
+        else
+        {
+            savedLight0 = null;
+            savedLight1 = null;
+            face = null;
+            faceBack = null;
+        }
+
         if (defer && translucent && FormTranslucentQueue.isActive())
         {
             /* The whole quad defers to the end-of-frame translucent pass: depth testing still
@@ -300,18 +338,42 @@ public class BillboardFormRenderer <T extends BillboardForm> extends FormRendere
                     RenderSystem.activeTexture(GL13.GL_TEXTURE0);
                     RenderSystem.bindTexture(texture.id);
                     texture.setFilterMipmap(linear, mipmap);
+
+                    /* The flush happens at the end of the frame, after the world's lights
+                     * are back in place - re-pin them around this draw. */
+                    if (face != null)
+                    {
+                        RenderSystem.setShaderLights(face, faceBack);
+                    }
                 },
                 () ->
                 {
                     RenderSystem.activeTexture(GL13.GL_TEXTURE0);
                     RenderSystem.bindTexture(texture.id);
                     texture.setFilterMipmap(false, false);
+
+                    if (savedLight0 != null)
+                    {
+                        RenderSystem.setShaderLights(savedLight0, savedLight1);
+                    }
                 }
             ).overlayColor(overlayActive ? formOverlay : null));
+
+            /* The command re-pins the lights around its own draw at the flush, so the
+             * world's lights can be restored right away for the forms drawn in between. */
+            if (savedLight0 != null)
+            {
+                RenderSystem.setShaderLights(savedLight0, savedLight1);
+            }
         }
         else
         {
             BufferRenderer.drawWithGlobalProgram(builder.end());
+
+            if (savedLight0 != null)
+            {
+                RenderSystem.setShaderLights(savedLight0, savedLight1);
+            }
         }
 
         if (FramebufferDebug.inside())

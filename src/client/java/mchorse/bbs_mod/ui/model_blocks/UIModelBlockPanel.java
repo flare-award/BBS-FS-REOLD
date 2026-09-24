@@ -11,6 +11,7 @@ import mchorse.bbs_mod.blocks.entities.ModelProperties;
 import mchorse.bbs_mod.camera.CameraUtils;
 import mchorse.bbs_mod.client.BBSRendering;
 import mchorse.bbs_mod.client.BBSShaders;
+import mchorse.bbs_mod.forms.forms.FilterBoardForm;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.graphics.Draw;
 import mchorse.bbs_mod.graphics.texture.Texture;
@@ -209,7 +210,14 @@ public class UIModelBlockPanel extends UIDashboardPanel implements GizmoViewport
             palette.editor.keys().register(Keys.MODEL_BLOCKS_TOGGLE_RENDERING, () -> this.toggleRendering = !this.toggleRendering);
             palette.editor.renderer.full(dashboard.getRoot());
             palette.editor.renderer.setTarget(this.modelBlock.getEntity());
-            palette.editor.renderer.setRenderForm(() -> !this.toggleRendering);
+            palette.editor.renderer.setRenderForm(() ->
+            {
+                Form form = this.modelBlock.getProperties().getForm();
+
+                /* A FilterBoard is composited in the world; its mask must not become
+                 * a flat photo in the immersive editor viewport. */
+                return !this.toggleRendering && !(form instanceof FilterBoardForm);
+            });
             palette.getEvents().register(UIToggleEditorEvent.class, (e) ->
             {
                 if (e.editing)

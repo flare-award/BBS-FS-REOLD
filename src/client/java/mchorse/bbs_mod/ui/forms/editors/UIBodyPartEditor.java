@@ -13,14 +13,18 @@ import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.Keys;
 import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.framework.elements.UIScrollView;
+import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIconToggles;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIToggle;
 import mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform;
+import mchorse.bbs_mod.ui.framework.elements.input.UITrackpad;
+import mchorse.bbs_mod.ui.utils.UI;
 import mchorse.bbs_mod.ui.utils.UIConstants;
 import mchorse.bbs_mod.ui.utils.bones.UIBonePicker;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.utils.Pair;
+import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -31,6 +35,10 @@ public class UIBodyPartEditor extends UIScrollView
     public UIButton pick;
     public UIToggle useTarget;
     public UIBonePicker bone;
+    public UIBonePicker attachBone;
+    public UIToggle weightEnabled;
+    public UITrackpad weight;
+    public UIElement weightRow;
     public UIIconToggles inherit;
     public UIPropTransform transform;
 
@@ -160,6 +168,84 @@ public class UIBodyPartEditor extends UIScrollView
             .add(Icons.SCALE, UIKeys.INHERIT_SCALE, () -> this.part.inheritScale)
             .resettable();
 
+        this.attachBone = new UIBonePicker((b) ->
+        {
+            if (this.part == null)
+            {
+                return;
+            }
+
+            this.part.attachBone.set(b == null ? "" : b);
+            this.attachBone.setLabel(this.attachBoneLabel(b));
+        });
+        this.attachBone.menu((picker) ->
+        {
+            if (this.part == null || this.part.getForm() == null)
+            {
+                return;
+            }
+
+            Form partForm = this.part.getForm();
+            ModelInstance model = partForm instanceof ModelForm modelForm ? ModelFormRenderer.getModel(modelForm) : null;
+
+            if (model != null && model.model != null)
+            {
+                picker.bones(model.model, BBSSettings.poseShowDisabledBones.get() ? null : model.getDisabledBones());
+            }
+            else
+            {
+                IBoneHierarchy hierarchy = FormUtilsClient.getBoneHierarchy(partForm);
+
+                if (hierarchy == null)
+                {
+                    List<String> bones = new ArrayList<>(FormUtilsClient.getBones(partForm));
+
+                    bones.sort(String::compareToIgnoreCase);
+                    picker.list(bones);
+                }
+                else
+                {
+                    picker.bones(hierarchy, null);
+                }
+            }
+
+            picker.none().set(this.part.attachBone.get());
+        });
+        this.attachBone.tooltip(UIKeys.FORMS_EDITOR_ATTACH_BONE_TOOLTIP);
+
+        this.weight = new UITrackpad((v) ->
+        {
+            if (this.part != null)
+            {
+                this.part.weight.set(v.floatValue());
+            }
+        }).limit(0D, BodyPart.MAX_WEIGHT).increment(1D);
+        this.weight.tooltip(UIKeys.FORMS_EDITOR_WEIGHT_TOOLTIP);
+        this.weightRow = UI.labelRow(UIKeys.FORMS_EDITOR_WEIGHT, this.weight);
+
+        this.weightEnabled = new UIToggle(UIKeys.FORMS_EDITOR_WEIGHT_ENABLED, (b) ->
+        {
+            if (this.part == null)
+            {
+                return;
+            }
+
+            this.part.weightEnabled.set(b.getValue());
+
+            /* Switching it on fills in an estimate, but only while the field was
+             * never touched - a value the player typed themselves is never
+             * overwritten, since no guess fits every model. */
+            if (b.getValue() && this.part.weight.get() == BodyPart.DEFAULT_WEIGHT)
+            {
+                float estimate = estimateWeight(this.part);
+
+                this.part.weight.set(estimate);
+                this.weight.setValue(estimate);
+            }
+
+            this.updateWeightVisibility();
+        });
+
         this.transform = new UIPropTransform().callbacks(() -> this.part.transform).barBackground();
         this.transform.enableHotkeys(this.editor::isBodyPartGizmoMode);
         this.transform.hotkeyDrag(() -> this.editor.buildHotkeyDrag(this.transform));
@@ -179,17 +265,29 @@ public class UIBodyPartEditor extends UIScrollView
         this.removeAll();
 
         this.bone.setLabel(this.boneLabel(part.bone.get()));
+        this.attachBone.setLabel(this.attachBoneLabel(part.attachBone.get()));
+        this.weightEnabled.setValue(part.weightEnabled.get());
+        this.weight.setValue(part.weight.get());
+        this.updateWeightVisibility();
 
         /* The inheritance toggles filter the attachment bone's matrix, so they are offered only
          * where there is a bone to attach to at all — the same condition the picker has. */
         if (!FormUtilsClient.getBones(form).isEmpty())
         {
-            this.add(this.pick, this.bone, this.inherit.labelRow(UIKeys.INHERIT_TITLE), this.useTarget, this.transform);
+            this.add(this.pick, this.bone, this.inherit.labelRow(UIKeys.INHERIT_TITLE));
         }
         else
         {
-            this.add(this.pick, this.useTarget, this.transform);
+            this.add(this.pick);
         }
+
+        /* The part's own bones: which of them is put onto the anchor. */
+        if (part.getForm() != null && !FormUtilsClient.getBones(part.getForm()).isEmpty())
+        {
+            this.add(this.attachBone);
+        }
+
+        this.add(this.weightEnabled, this.weightRow, this.useTarget, this.transform);
 
         this.scroll.setScroll(0);
         this.resize();
@@ -198,6 +296,60 @@ public class UIBodyPartEditor extends UIScrollView
     private IKey boneLabel(String bone)
     {
         return bone == null || bone.isEmpty() ? UIKeys.MODEL_EDITOR_PICK_BONE : IKey.constant(bone);
+    }
+
+    private IKey attachBoneLabel(String bone)
+    {
+        return bone == null || bone.isEmpty() ? UIKeys.FORMS_EDITOR_ATTACH_BONE_ORIGIN : IKey.constant(bone);
+    }
+
+    private void updateWeightVisibility()
+    {
+        this.weightRow.setVisible(this.part != null && this.part.weightEnabled.get());
+        this.resize();
+    }
+
+    /**
+     * A first guess at what the part weighs. Model-like forms start from a human
+     * ballpark, flat and decorative ones from almost nothing, and the part's own
+     * scale cubes into it - a model scaled to three times its size is roughly
+     * twenty-seven times the mass. It is only a starting value: the field stays
+     * editable precisely because no guess fits every model.
+     */
+    private static float estimateWeight(BodyPart part)
+    {
+        Form form = part.getForm();
+
+        if (form == null)
+        {
+            return BodyPart.DEFAULT_WEIGHT;
+        }
+
+        String id = form.getFormId();
+        float base;
+
+        if (id.contains("model") || id.contains("mob"))
+        {
+            base = BodyPart.DEFAULT_WEIGHT;
+        }
+        else if (id.contains("block") || id.contains("structure"))
+        {
+            base = 20F;
+        }
+        else if (id.contains("item"))
+        {
+            base = 2F;
+        }
+        else
+        {
+            base = 1F;
+        }
+
+        Vector3f scale = part.transform.get().scale;
+        float average = Math.abs(scale.x + scale.y + scale.z) / 3F;
+        float estimate = base * average * average * average;
+
+        return Math.round(Math.max(0.1F, Math.min(estimate, BodyPart.MAX_WEIGHT)) * 10F) / 10F;
     }
 
     /** Attach the active body part to the clicked parent bone; returns whether it did. */

@@ -12,6 +12,7 @@ import mchorse.bbs_mod.camera.data.Point;
 import mchorse.bbs_mod.camera.data.Position;
 import mchorse.bbs_mod.camera.utils.TimeUtils;
 import mchorse.bbs_mod.client.BBSRendering;
+import mchorse.bbs_mod.client.FilmEffects;
 import mchorse.bbs_mod.ui.framework.UIScreen;
 import mchorse.bbs_mod.film.Films;
 import mchorse.bbs_mod.graphics.texture.Texture;
@@ -79,6 +80,8 @@ public class UIFilmPreview extends UIElement
     public UIIcon flight;
     public UIIcon control;
     public UIIcon perspective;
+    public UIIcon filters;
+    public UIIcon photoFilter;
     public UIIcon recordReplay;
     public UIIcon recordVideo;
 
@@ -185,6 +188,10 @@ public class UIFilmPreview extends UIElement
                 menu.action(Icons.FRUSTUM, UIKeys.FILM_CONTROLLER_KEYS_TOGGLE_ORTHO, controller.orbit.isOrtho(), controller.orbit::toggleOrtho);
             }
         });
+        this.filters = new UIIcon(Icons.FILTER, (b) -> UIOverlay.addOverlay(this.getContext(), new UIFilmFiltersOverlayPanel(), UIFilmEffectsOverlayPanel.WIDTH, UIFilmEffectsOverlayPanel.HEIGHT));
+        this.filters.tooltip(UIKeys.FILM_FILTERS_TITLE);
+        this.photoFilter = new UIIcon(Icons.IMAGE, (b) -> UIOverlay.addOverlay(this.getContext(), new UIFilmPhotoOverlayPanel(), UIFilmEffectsOverlayPanel.WIDTH, UIFilmEffectsOverlayPanel.HEIGHT));
+        this.photoFilter.tooltip(UIKeys.FILM_PHOTO_TITLE);
         this.recordReplay = new UIIcon(Icons.SPHERE, (b) -> this.panel.getController().pickRecording());
         this.recordReplay.highlight(() -> this.panel.getController().isRecording(), Direction.BOTTOM);
         this.recordReplay.tooltip(UIKeys.FILM_REPLAY_RECORD);
@@ -260,7 +267,7 @@ public class UIFilmPreview extends UIElement
             });
         });
 
-        this.icons.add(this.onionSkin, this.motionPath, this.teleport, this.flight, this.plause, this.control, this.perspective, this.recordReplay, this.recordVideo);
+        this.icons.add(this.onionSkin, this.motionPath, this.teleport, this.flight, this.plause, this.control, this.perspective, this.filters, this.photoFilter, this.recordReplay, this.recordVideo);
         this.add(this.icons);
 
         for (Function<UIFilmPreview, UIElement> factory : OVERLAYS)
