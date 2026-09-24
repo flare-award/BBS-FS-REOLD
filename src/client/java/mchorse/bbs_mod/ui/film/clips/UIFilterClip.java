@@ -161,7 +161,7 @@ public class UIFilterClip extends UIClip<FilterClip>
     {
         int sheetColor = channel.getId().hashCode() & Colors.RGB;
 
-        this.keyframes.view.addSheet(new UIKeyframeSheet(channel.getId(), getChannelLabel(channel.getId()), sheetColor, false, channel, null));
+        this.keyframes.view.addSheet(new UIKeyframeSheet(channel.getId(), getChannelLabel(channel.getId()), sheetColor, channel, null));
     }
 
     @Override
