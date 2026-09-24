@@ -2,6 +2,7 @@ package mchorse.bbs_mod.forms.structure;
 
 import mchorse.bbs_mod.client.BBSRendering;
 import mchorse.bbs_mod.forms.CustomVertexConsumerProvider;
+import mchorse.bbs_mod.utils.MathUtils;
 import net.fabricmc.fabric.api.client.render.fluid.v1.FluidRenderHandler;
 import net.fabricmc.fabric.api.client.render.fluid.v1.FluidRenderHandlerRegistry;
 import net.minecraft.block.BlockRenderType;
@@ -20,6 +21,7 @@ import net.minecraft.client.render.block.BlockRenderManager;
 import net.minecraft.client.render.model.BakedModel;
 import net.minecraft.client.render.model.BakedQuad;
 import net.minecraft.client.texture.Sprite;
+import net.minecraft.client.texture.SpriteAtlasTexture;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.fluid.FluidState;
 import net.minecraft.util.math.BlockPos;
@@ -51,6 +53,25 @@ import java.util.Set;
  */
 public class BakedStructure
 {
+    /**
+     * Where the color overlay pass draws. What eliminated the alternatives, in order:
+     *
+     * <ul>
+     * <li>its shader must read the overlay channel. The terrain shaders the structure normally
+     * draws through have no such channel at all, and neither does {@code entity_translucent_cull},
+     * the layer its own translucent blocks go to;</li>
+     * <li>its name must not contain "translucent", or the provider defers it into the frame's
+     * sorted translucent queue — which draws it long after the overlay texture was unbound;</li>
+     * <li>it must cut out on the raw texel alpha, so leaves and plants keep their shape at any
+     * overlay strength (a cutout shader tests the texel before the vertex color reaches it).</li>
+     * </ul>
+     *
+     * <p>Blending and back-face culling are turned back on for the draw by the renderer, through
+     * the same per-layer hook that binds the overlay texture: the pass composites rather than
+     * replaces, and a plant's double-sided cross must not be painted twice.</p>
+     */
+    public static final RenderLayer OVERLAY_LAYER = RenderLayer.getEntityCutoutNoCull(SpriteAtlasTexture.BLOCK_ATLAS_TEXTURE, false);
+
     private static int globalGeneration;
 
     private static final Direction[] DIRECTIONS = Direction.values();
@@ -227,6 +248,18 @@ public class BakedStructure
      * map, so it falls back to the shared buffer that {@code Immediate.draw()} flushes first —
      * which would draw translucent before opaque and bring the bug back.</p>
      */
+    /**
+     * Whether the structure's own geometry is routed through entity layers instead of the terrain
+     * ones (see {@link #render}). The color overlay follows from it: an entity layer's shader
+     * mixes the bound overlay into the fragment in place, so {@link #renderOverlay} would double
+     * it there, while the terrain layers have no overlay channel at all and the pass is the only
+     * way to get one.
+     */
+    public static boolean usesEntityLayers()
+    {
+        return BBSRendering.isIrisShadersEnabled();
+    }
+
     private static RenderLayer getEntityLayer(RenderLayer blockLayer)
     {
         if (isTranslucent(blockLayer))
@@ -240,20 +273,16 @@ public class BakedStructure
     /**
      * Replay the baked vertices into the provider's layer buffers, transforming positions and
      * normals by the given matrices and multiplying colors by {@code tint} (ARGB; the form/film
-     * color — applied here instead of a wrapping consumer so the fast path can write raw bytes).
+     * color — applied here instead of a wrapping consumer, which would also have to survive the
+     * substitute wrapper the block entities use).
      *
      * <p>Light: the sky component comes from {@code contextLight} (the form's world/entity
      * light, already modulated by the {@code lighting} form property), the block component is
      * the max of context and baked light — so the structure darkens in caves/at night like any
      * other form, while baked emitters (glowstone, lamps) keep glowing. UI previews pass
      * {@code MAX_LIGHT_COORDINATE} which makes everything full-bright.</p>
-     *
-     * <p>When the target consumer is a plain {@link BufferBuilder} (no substitute wrapper is
-     * active) and fast render is on, the whole layer is bulk-copied into the builder's memory and
-     * fixed up in place ({@link #replayRaw}) — no per-vertex virtual calls. Otherwise the
-     * per-vertex fallback is used.</p>
      */
-    public void render(MatrixStack.Entry entry, CustomVertexConsumerProvider consumers, int contextLight, int tint, boolean fastRender)
+    public void render(MatrixStack.Entry entry, CustomVertexConsumerProvider consumers, int contextLight, int tint)
     {
         /* Sodium only animates sprites it saw this frame — baked geometry bypasses it */
         SodiumSpriteHook.markActive(this.sprites);
@@ -262,8 +291,7 @@ public class BakedStructure
         Matrix3f normalMatrix = entry.getNormalMatrix();
         int contextBlock = contextLight & 0xFFFF;
         int contextSky = (contextLight >> 16) & 0xFFFF;
-        boolean shaders = BBSRendering.isIrisShadersEnabled();
-        boolean fast = fastRender && !shaders;
+        boolean shaders = usesEntityLayers();
 
         /* Transparency only needs the right draw ORDER against the shared depth buffer: opaque must
          * be flushed (writing depth) before translucent draws over it. We exploit that while also
@@ -273,41 +301,75 @@ public class BakedStructure
          *   directional diffuse, so the smooth AO / face-shade already baked into the vertex colors
          *   shows as-is (entity layers would re-shade and darken the whole structure). The provider
          *   flushes each terrain layer as it switches, so their depth lands before the translucent
-         *   pass. With "fast render" on (no shaderpack) these are bulk-copied as raw bytes — opaque
-         *   layers carry no per-vertex sort, so the raw copy is safe.
+         *   pass.
          * - translucent goes to BBS's KEYED entity translucent-cull layer, which the provider draws
          *   last (after every terrain layer) — so glass/water/ice composite over the opaque blocks
-         *   behind them instead of hiding them. It is ALWAYS replayed per vertex: the terrain
-         *   translucent layer sorts its quads at draw time from sort state that only the per-vertex
-         *   path builds, so a raw byte copy there corrupts the shared buffer and crashes the frame.
+         *   behind them instead of hiding them.
          *
          * Under a shaderpack Iris owns the terrain pipeline and relights everything itself, so the
-         * whole structure is fed through entity layers per vertex (no double-diffuse there). */
+         * whole structure is fed through entity layers instead (no double-diffuse there). */
         for (BakedLayer baked : this.layers)
         {
+            RenderLayer target;
+
             if (shaders)
             {
-                replaySlow(consumers.getBuffer(getEntityLayer(baked.layer())), baked, pose, normalMatrix, contextBlock, contextSky, tint);
+                target = getEntityLayer(baked.layer());
             }
             else if (isTranslucent(baked.layer()))
             {
-                replaySlow(consumers.getBuffer(TexturedRenderLayers.getEntityTranslucentCull()), baked, pose, normalMatrix, contextBlock, contextSky, tint);
+                target = TexturedRenderLayers.getEntityTranslucentCull();
             }
             else
             {
-                VertexConsumer out = consumers.getBuffer(baked.layer());
-
-                if (!fast || !(out instanceof BufferBuilder builder)
-                        || !replayRaw(builder, baked.data(), baked.vertexCount(), pose, normalMatrix, contextBlock, contextSky, tint))
-                {
-                    replaySlow(out, baked, pose, normalMatrix, contextBlock, contextSky, tint);
-                }
+                target = baked.layer();
             }
+
+            replay(consumers.getBuffer(target), baked, pose, normalMatrix, contextBlock, contextSky, tint);
         }
     }
 
-    /** Per-vertex fallback for wrapped consumers (e.g. a color substitute is active). */
-    private static void replaySlow(VertexConsumer out, BakedLayer baked, Matrix4f pose, Matrix3f normalMatrix, int contextBlock, int contextSky, int tint)
+    /**
+     * The color overlay pass: the same geometry replayed once more into {@link #OVERLAY_LAYER},
+     * where the fragment takes its color entirely from the overlay texture the caller bound (at
+     * full strength) and {@code strength} rides in the vertex alpha — so the pass composites into
+     * {@code mix(structure, overlay, strength)} over what {@link #render} just drew.
+     *
+     * <p>A second pass is what the overlay costs here: the terrain shaders have no overlay
+     * channel to mix the color in place, and rerouting the structure to an entity layer to get
+     * one would re-shade the whole thing (see {@link #render}). The pass itself is immune to that
+     * re-shading — the overlay texture overwrites the fragment's RGB, so the entity layer's
+     * directional diffuse never reaches it. Only alpha survives, which is why the baked per-vertex
+     * alpha (real opacity on the translucent layer) still scales the strength.</p>
+     */
+    public void renderOverlay(MatrixStack.Entry entry, CustomVertexConsumerProvider consumers, int contextLight, float strength)
+    {
+        int alpha = (int) (MathUtils.clamp(strength, 0F, 1F) * 255F);
+
+        if (alpha <= 0)
+        {
+            return;
+        }
+
+        SodiumSpriteHook.markActive(this.sprites);
+
+        VertexConsumer out = consumers.getBuffer(OVERLAY_LAYER);
+        Matrix4f pose = entry.getPositionMatrix();
+        Matrix3f normalMatrix = entry.getNormalMatrix();
+        int contextBlock = contextLight & 0xFFFF;
+        int contextSky = (contextLight >> 16) & 0xFFFF;
+
+        /* White RGB: this pass carries the strength and nothing else — the color arrives through
+         * the bound overlay texture, which the layer's shader writes over the fragment */
+        int tint = (alpha << 24) | 0xFFFFFF;
+
+        for (BakedLayer baked : this.layers)
+        {
+            replay(out, baked, pose, normalMatrix, contextBlock, contextSky, tint);
+        }
+    }
+
+    private static void replay(VertexConsumer out, BakedLayer baked, Matrix4f pose, Matrix3f normalMatrix, int contextBlock, int contextSky, int tint)
     {
         Vector4f position = new Vector4f();
         Vector3f normal = new Vector3f();
@@ -383,12 +445,18 @@ public class BakedStructure
      * template. With an Iris shaderpack active the builder's actual format is EXTENDED (bigger
      * stride, extra attributes appended), so the vanilla attributes are extracted by their real
      * offsets; returns null if the format misses any of them.
+     *
+     * <p>The copy lives on the heap. It used to be off-heap for the raw replay path, which
+     * bulk-copied it into the builder's own direct buffer; that path is gone and every remaining
+     * reader is an absolute {@code get}, which a heap buffer serves just as well. Off-heap would
+     * now only buy a second memory budget to exhaust and a {@code Cleaner} to wait on — a bake
+     * replaced on every biome change or resource reload is much better left to the GC.</p>
      */
     private static ByteBuffer normalize(ByteBuffer source, VertexFormat format, int count)
     {
         int stride = format.getVertexSizeByte();
         int base = source.position();
-        ByteBuffer copy = ByteBuffer.allocateDirect(count * BakedBuffer.STRIDE).order(ByteOrder.nativeOrder());
+        ByteBuffer copy = ByteBuffer.allocate(count * BakedBuffer.STRIDE).order(ByteOrder.nativeOrder());
 
         if (stride == BakedBuffer.STRIDE && VertexFormats.POSITION_COLOR_TEXTURE_LIGHT_NORMAL.equals(format))
         {
@@ -448,81 +516,4 @@ public class BakedStructure
             .next();
     }
 
-    /** Bulk copy the baked layer into the builder's internal buffer, then transform/tint/relight the
-     *  copied bytes in place — no per-vertex virtual calls. */
-    private static boolean replayRaw(BufferBuilder builder, ByteBuffer src, int count, Matrix4f pose,
-        Matrix3f normalMatrix, int contextBlock, int contextSky, int tint)
-    {
-        if (count == 0)
-        {
-            return true;
-        }
-
-        int bytes = count * BakedBuffer.STRIDE;
-
-        builder.grow(bytes);
-
-        ByteBuffer dst = builder.buffer;
-        int start = builder.elementOffset;
-
-        dst.put(start, src, 0, bytes);
-
-        float m00 = pose.m00(), m01 = pose.m01(), m02 = pose.m02();
-        float m10 = pose.m10(), m11 = pose.m11(), m12 = pose.m12();
-        float m20 = pose.m20(), m21 = pose.m21(), m22 = pose.m22();
-        float m30 = pose.m30(), m31 = pose.m31(), m32 = pose.m32();
-
-        float n00 = normalMatrix.m00(), n01 = normalMatrix.m01(), n02 = normalMatrix.m02();
-        float n10 = normalMatrix.m10(), n11 = normalMatrix.m11(), n12 = normalMatrix.m12();
-        float n20 = normalMatrix.m20(), n21 = normalMatrix.m21(), n22 = normalMatrix.m22();
-
-        boolean hasTint = tint != 0xFFFFFFFF;
-        int tintA = tint >>> 24;
-        int tintR = (tint >> 16) & 0xFF;
-        int tintG = (tint >> 8) & 0xFF;
-        int tintB = tint & 0xFF;
-
-        int skyBits = contextSky << 16;
-
-        for (int i = 0, vbase = start; i < count; i++, vbase += BakedBuffer.STRIDE)
-        {
-            float x = dst.getFloat(vbase);
-            float y = dst.getFloat(vbase + 4);
-            float z = dst.getFloat(vbase + 8);
-
-            dst.putFloat(vbase, m00 * x + m10 * y + m20 * z + m30);
-            dst.putFloat(vbase + 4, m01 * x + m11 * y + m21 * z + m31);
-            dst.putFloat(vbase + 8, m02 * x + m12 * y + m22 * z + m32);
-
-            if (hasTint)
-            {
-                dst.put(vbase + 12, (byte) ((dst.get(vbase + 12) & 0xFF) * tintR / 255));
-                dst.put(vbase + 13, (byte) ((dst.get(vbase + 13) & 0xFF) * tintG / 255));
-                dst.put(vbase + 14, (byte) ((dst.get(vbase + 14) & 0xFF) * tintB / 255));
-                dst.put(vbase + 15, (byte) ((dst.get(vbase + 15) & 0xFF) * tintA / 255));
-            }
-
-            int bakedBlock = dst.getInt(vbase + 24) & 0xFFFF;
-
-            dst.putInt(vbase + 24, Math.max(bakedBlock, contextBlock) | skyBits);
-
-            float nx = dst.get(vbase + 28) / 127F;
-            float ny = dst.get(vbase + 29) / 127F;
-            float nz = dst.get(vbase + 30) / 127F;
-
-            dst.put(vbase + 28, packNormal(n00 * nx + n10 * ny + n20 * nz));
-            dst.put(vbase + 29, packNormal(n01 * nx + n11 * ny + n21 * nz));
-            dst.put(vbase + 30, packNormal(n02 * nx + n12 * ny + n22 * nz));
-        }
-
-        builder.vertexCount += count;
-        builder.elementOffset += bytes;
-
-        return true;
-    }
-
-    private static byte packNormal(float value)
-    {
-        return (byte) ((int) (Math.min(1F, Math.max(-1F, value)) * 127F) & 0xFF);
-    }
 }

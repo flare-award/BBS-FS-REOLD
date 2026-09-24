@@ -39,8 +39,6 @@ public class UISliderTrackpad extends UINumericInput<UISliderTrackpad>
 {
     private static final float VALUE_ALPHA = 0.75F;
     private static final float DRAG_VALUE_ALPHA = 0.92F;
-    private static final float HANDLE_ALPHA = 0.8F;
-    private static final float HANDLE_HOVER_ALPHA = 0.95F;
     private static final float MARKER_ALPHA = 0.55F;
 
     /** How much travel the modifiers shave off a positional drag. */
@@ -406,20 +404,11 @@ public class UISliderTrackpad extends UINumericInput<UISliderTrackpad>
         {
             if (this.textbox.isFocused())
             {
-                if (this.wasInside)
-                {
-                    /* The track owns the left button even while the value is
-                     * being typed — submit the text and take the click */
-                    context.focus(null);
-                }
-                else
-                {
-                    this.textbox.mouseClicked(context.mouseX, context.mouseY, context.mouseButton);
+                this.textbox.mouseClicked(context.mouseX, context.mouseY, context.mouseButton);
 
-                    if (!this.textbox.isFocused())
-                    {
-                        context.focus(null);
-                    }
+                if (!this.textbox.isFocused())
+                {
+                    context.focus(null);
                 }
             }
 
@@ -525,17 +514,16 @@ public class UISliderTrackpad extends UINumericInput<UISliderTrackpad>
         {
             int primary = BBSSettings.primaryColor.get();
             int fillX = MathUtils.clamp(this.getHandleCenter(), this.area.x, this.area.ex());
-            int fillAlpha = (int) ((this.dragging ? DRAG_VALUE_ALPHA : VALUE_ALPHA) * 255F) << 24;
-            int handleColor = this.dragging ? Colors.WHITE : Colors.setA(Colors.WHITE, this.handleArea.isInside(context) ? HANDLE_HOVER_ALPHA : HANDLE_ALPHA);
+            int fillColor = Colors.setA(primary, this.dragging ? DRAG_VALUE_ALPHA : VALUE_ALPHA);
 
             this.area.render(context.batcher, BBSSettings.inputSurface());
 
             if (this.hasSliderRange())
             {
-                context.batcher.primaryBox(this.area.x, this.area.y, fillX, this.area.ey(), fillAlpha);
+                context.batcher.box(this.area.x, this.area.y, fillX, this.area.ey(), fillColor);
                 context.batcher.box(fillX - 1, this.area.y, fillX + 1, this.area.ey(), Colors.setA(primary, MARKER_ALPHA));
 
-                context.batcher.box(this.handleArea.x, this.handleArea.y, this.handleArea.ex(), this.handleArea.ey(), handleColor);
+                context.batcher.box(this.handleArea.x, this.handleArea.y, this.handleArea.ex(), this.handleArea.ey(), Colors.WHITE);
             }
 
             FontRenderer font = context.batcher.getFont();

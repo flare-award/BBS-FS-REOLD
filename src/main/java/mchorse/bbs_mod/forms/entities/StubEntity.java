@@ -1,8 +1,10 @@
 package mchorse.bbs_mod.forms.entities;
 
+import mchorse.bbs_mod.cubic.jem.CemVariables;
 import mchorse.bbs_mod.film.replays.ReplayKeyframes;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.utils.AABB;
+import mchorse.bbs_mod.utils.interps.Lerps;
 import net.minecraft.entity.EntityPose;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.LimbAnimator;
@@ -23,8 +25,24 @@ public class StubEntity implements IEntity
     private boolean sneaking;
     private boolean sprinting;
     private boolean onGround = true;
+    private boolean swimming;
+    private boolean riding;
+    private boolean flying;
+    private boolean fallFlying;
     private float fallDistance;
     private int hurtTimer;
+    private int deathTime;
+
+    /** Hands every stub its own {@link #getId()}: a number that stays put for the life of the instance. */
+    private static int nextId;
+
+    private final int id = nextId++;
+
+    private float prevLeaningPitch;
+    private float leaningPitch;
+    private int roll;
+
+    private Vec3d prevVelocity = Vec3d.ZERO;
 
     private double prevX;
     private double prevY;
@@ -169,6 +187,42 @@ public class StubEntity implements IEntity
     }
 
     @Override
+    public boolean isSwimming()
+    {
+        return this.swimming;
+    }
+
+    @Override
+    public void setSwimming(boolean swimming)
+    {
+        this.swimming = swimming;
+    }
+
+    @Override
+    public boolean isRiding()
+    {
+        return this.riding;
+    }
+
+    @Override
+    public void setRiding(boolean riding)
+    {
+        this.riding = riding;
+    }
+
+    @Override
+    public boolean isFlying()
+    {
+        return this.flying;
+    }
+
+    @Override
+    public void setFlying(boolean flying)
+    {
+        this.flying = flying;
+    }
+
+    @Override
     public void swingArm()
     {
         this.armSwing = 6;
@@ -178,6 +232,31 @@ public class StubEntity implements IEntity
     public float getHandSwingProgress(float tickDelta)
     {
         return this.armSwing <= 0 ? 0F : 1F - (this.armSwing - tickDelta) / 6F;
+    }
+
+    /** This one stands in for an actor; it never spawned. See {@link IEntity#isStandIn()}. */
+    @Override
+    public boolean isStandIn()
+    {
+        return true;
+    }
+
+    /** Lazily made: an entity that never renders a CEM model never allocates one. */
+    private CemVariables cemVariables;
+
+    /**
+     * The CEM variables of this entity, made on first use — every CEM model rendered on it shares them,
+     * which is how a pack's cape follows its body. See {@link CemVariables}.
+     */
+    @Override
+    public CemVariables getCemVariables()
+    {
+        if (this.cemVariables == null)
+        {
+            this.cemVariables = new CemVariables();
+        }
+
+        return this.cemVariables;
     }
 
     @Override
@@ -214,6 +293,24 @@ public class StubEntity implements IEntity
     public void setHurtTimer(int hurtTimer)
     {
         this.hurtTimer = hurtTimer;
+    }
+
+    @Override
+    public int getDeathTime()
+    {
+        return this.deathTime;
+    }
+
+    @Override
+    public void setDeathTime(int deathTime)
+    {
+        this.deathTime = deathTime;
+    }
+
+    @Override
+    public int getId()
+    {
+        return this.id;
     }
 
     @Override
@@ -451,6 +548,8 @@ public class StubEntity implements IEntity
         this.prevZ = this.z;
 
         this.prevPrevBodyYaw = this.prevBodyYaw;
+        this.prevLeaningPitch = this.leaningPitch;
+        this.prevVelocity = this.velocity;
 
         this.prevYaw = this.yaw;
         this.prevHeadYaw = this.headYaw;
@@ -484,43 +583,69 @@ public class StubEntity implements IEntity
     @Override
     public float getLeaningPitch(float tickDelta)
     {
-        return 0;
+        return Lerps.lerp(this.prevLeaningPitch, this.leaningPitch, tickDelta);
     }
 
     @Override
+    public void setLeaningPitch(float leaningPitch)
+    {
+        this.leaningPitch = leaningPitch;
+    }
+
+    /**
+     * A stub is never anywhere, so being in water is read off the lean: vanilla only grows it
+     * while swimming, and swimming is what the flag is asked about - it picks whether the body
+     * lies flat or follows the pitch.
+     */
+    @Override
     public boolean isTouchingWater()
     {
-        return false;
+        return this.leaningPitch > 0F;
     }
 
     @Override
     public EntityPose getEntityPose()
     {
-        return EntityPose.STANDING;
+        return EntityState.pose(this);
     }
 
     @Override
     public int getRoll()
     {
-        return 0;
+        return this.roll;
+    }
+
+    @Override
+    public void setRoll(int roll)
+    {
+        this.roll = roll;
     }
 
     @Override
     public boolean isFallFlying()
     {
-        return false;
+        return this.fallFlying;
+    }
+
+    @Override
+    public void setFallFlying(boolean fallFlying)
+    {
+        this.fallFlying = fallFlying;
     }
 
     @Override
     public Vec3d getRotationVec(float transition)
     {
-        return Vec3d.ZERO;
+        float pitch = Lerps.lerp(this.prevPitch, this.pitch, transition);
+        float yaw = Lerps.lerp(this.prevYaw, this.yaw, transition);
+
+        return Vec3d.fromPolar(pitch, yaw);
     }
 
     @Override
     public Vec3d lerpVelocity(float transition)
     {
-        return Vec3d.ZERO;
+        return this.prevVelocity.lerp(this.velocity, transition);
     }
 
     @Override

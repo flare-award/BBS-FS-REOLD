@@ -1,5 +1,7 @@
 package mchorse.bbs_mod.utils.joml;
 
+import mchorse.bbs_mod.utils.pose.Transform;
+import mchorse.bbs_mod.utils.pose.Transform.RotationMode;
 import org.joml.Matrix3d;
 import org.joml.Matrix3f;
 import org.joml.Matrix4d;
@@ -23,12 +25,55 @@ public class Matrices
     private static final Matrix3f rotation = new Matrix3f();
     private static final Vector3f forward = new Vector3f();
 
-    private static final Matrix3f lerpA = new Matrix3f();
-    private static final Matrix3f lerpB = new Matrix3f();
-    private static final Quaternionf lerpQa = new Quaternionf();
-    private static final Quaternionf lerpQb = new Quaternionf();
-    private static final Vector3f lerpVa = new Vector3f();
-    private static final Vector3f lerpVb = new Vector3f();
+    /**
+     * Build a matrix taking each component of a transform from whichever matrix is named for it.
+     * Passing the same matrix three times reproduces it; naming a second one for a component makes
+     * that component come from there instead — which is how an attachment drops a part of the frame
+     * it hangs off (a form that follows a bone's position without turning with it, an anchor that
+     * ignores its target's scale) and falls back to the frame it would have had without it.
+     *
+     * <p>Rotation and scale are separated by column: the direction of a column is the rotation, its
+     * length is the scale. A column with no length left has no direction to keep either, so the axis
+     * is restored instead of normalized — normalizing it would put NaN in the matrix and everything
+     * drawn under it would vanish.</p>
+     */
+    public static Matrix4f compose(Matrix4f position, Matrix4f rotation, Matrix4f scale)
+    {
+        Matrix3f basis = new Matrix3f();
+
+        if (rotation == scale)
+        {
+            rotation.get3x3(basis);
+        }
+        else
+        {
+            Matrix3f rotationBasis = rotation.get3x3(new Matrix3f());
+            Matrix3f scaleBasis = scale.get3x3(new Matrix3f());
+            Vector3f axis = new Vector3f();
+            Vector3f other = new Vector3f();
+
+            for (int i = 0; i < 3; i++)
+            {
+                rotationBasis.getColumn(i, axis);
+                scaleBasis.getColumn(i, other);
+
+                float length = axis.length();
+
+                if (length < 1E-6F)
+                {
+                    axis.set(i == 0 ? 1F : 0F, i == 1 ? 1F : 0F, i == 2 ? 1F : 0F);
+                }
+                else
+                {
+                    axis.mul(other.length() / length);
+                }
+
+                basis.setColumn(i, axis);
+            }
+        }
+
+        return new Matrix4f().set(basis).setTranslation(position.getTranslation(new Vector3f()));
+    }
 
     public static Vector3f rotate(Vector3f vector, float pitch, float yaw)
     {
@@ -79,15 +124,23 @@ public class Matrices
 
     public static Matrix4f lerp(Matrix4f a, Matrix4f b, float t, Matrix4f dest)
     {
-        Quaternionf q1 = lerpQa.setFromNormalized(lerpA.set(a));
-        Quaternionf q2 = lerpQb.setFromNormalized(lerpB.set(b));
+        if (t == 0F) return dest.set(a);
+        if (t == 1F) return dest.set(b);
 
-        q1.slerp(q2, t);
+        /* Reuse the signed-scale decomposition used by anchor rebasing. Reading a scaled
+         * basis as a normalized rotation corrupts both its rotation and its scale.
+         * As with Transform.fromMatrix, shear is approximated by TRS between endpoints. */
+        Transform first = new Transform();
+        Transform second = new Transform();
 
-        dest.identity().rotate(q1);
-        dest.setTranslation(a.getTranslation(lerpVa).lerp(b.getTranslation(lerpVb), t));
+        first.rotationMode = second.rotationMode = RotationMode.QUATERNION;
+        first.fromMatrix(a);
+        second.fromMatrix(b);
+        first.quat.normalize();
+        second.quat.normalize();
+        first.lerp(second, t);
 
-        return dest;
+        return first.setupMatrix(dest.identity());
     }
 
     public static String toString(Matrix3f m)

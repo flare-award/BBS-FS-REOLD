@@ -11,13 +11,15 @@ import mchorse.bbs_mod.ui.film.IUIClipsDelegate;
 import mchorse.bbs_mod.ui.film.UIClipsPanel;
 import mchorse.bbs_mod.ui.film.replays.UIReplaysEditor;
 import mchorse.bbs_mod.ui.film.utils.keyframes.UIFilmKeyframes;
+import mchorse.bbs_mod.ui.film.utils.shader.ShaderCurvePicker;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeEditor;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeSheet;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UILabelListOverlayPanel;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
-import mchorse.bbs_mod.ui.utils.Label;import mchorse.bbs_mod.ui.utils.icons.Icons;
+import mchorse.bbs_mod.ui.utils.Label;
+import mchorse.bbs_mod.ui.utils.context.MenuVerb;
 import mchorse.bbs_mod.utils.clips.Clips;
 import mchorse.bbs_mod.utils.colors.Colors;
 import mchorse.bbs_mod.utils.iris.ShaderCurves;
@@ -41,13 +43,21 @@ public class UICurveClip extends UIClip<CurveClip>
 
     public static void offerCurveKeys(UIContext context, List<String> existing, Consumer<String> callback)
     {
+        if (!ShaderCurvePicker.open(context, existing, callback))
+        {
+            offerCurveKeyList(context, existing, callback);
+        }
+    }
+
+    public static void offerCurveKeyList(UIContext context, List<String> existing, Consumer<String> callback)
+    {
         List<Label<String>> list = new ArrayList<>();
         String language = BBSModClient.getLanguageKey();
         Map<String, String> languageMap = BBSRendering.getShadersLanguageMap(language);
 
         for (ShaderCurves.ShaderVariable value : ShaderCurves.variableMap.values())
         {
-            if (existing.contains(value.name))
+            if (existing.contains(CurveClip.SHADER_CURVES_PREFIX + value.name))
             {
                 continue;
             }
@@ -65,6 +75,7 @@ public class UICurveClip extends UIClip<CurveClip>
 
         if (!existing.contains(ShaderCurves.BRIGHTNESS)) list.add(new Label<>(UIKeys.CAMERA_PANELS_CURVES_BRIGHTNESS, ShaderCurves.BRIGHTNESS));
         if (!existing.contains(ShaderCurves.SUN_ROTATION)) list.add(new Label<>(UIKeys.CAMERA_PANELS_CURVES_SUN_ROTATION, ShaderCurves.SUN_ROTATION));
+        if (!existing.contains(ShaderCurves.SUN_HORIZONTAL_ROTATION)) list.add(new Label<>(UIKeys.CAMERA_PANELS_CURVES_SUN_HORIZONTAL_ROTATION, ShaderCurves.SUN_HORIZONTAL_ROTATION));
         if (!existing.contains(ShaderCurves.WEATHER)) list.add(new Label<>(UIKeys.CAMERA_PANELS_CURVES_WEATHER, ShaderCurves.WEATHER));
         if (!existing.contains(CurveClip.CHROMA_SKY_COLOR)) list.add(new Label<>(UIKeys.CAMERA_PANELS_CURVES_CHROMA_SKY_COLOR, CurveClip.CHROMA_SKY_COLOR));
 
@@ -90,7 +101,7 @@ public class UICurveClip extends UIClip<CurveClip>
 
         this.keyframes.view.context((menu) ->
         {
-            menu.action(Icons.ADD, UIKeys.CAMERA_PANELS_CURVE_ADD, () ->
+            menu.icon(MenuVerb.ADD, () ->
             {
                 List<String> existing = new ArrayList<>();
 
@@ -112,18 +123,15 @@ public class UICurveClip extends UIClip<CurveClip>
 
                     this.fillData();
                 });
-            }).order(-3);
+            }).label(UIKeys.CAMERA_PANELS_CURVE_ADD);
 
             UIKeyframeSheet sheet = this.keyframes.view.getDopeSheet().getSheet(this.getContext().mouseY);
 
-            if (sheet != null)
+            menu.icon(MenuVerb.REMOVE, () ->
             {
-                menu.action(Icons.REMOVE, UIKeys.CAMERA_PANELS_CURVE_REMOVE, Colors.RED, () ->
-                {
-                    this.clip.channels.removeChannel(sheet.channel);
-                    this.fillData();
-                });
-            }
+                this.clip.channels.removeChannel(sheet.channel);
+                this.fillData();
+            }).label(UIKeys.CAMERA_PANELS_CURVE_REMOVE).enabled(sheet != null);
         });
 
         this.edit = new UIButton(UIKeys.CAMERA_PANELS_EDIT_KEYFRAMES, (b) ->
@@ -139,7 +147,7 @@ public class UICurveClip extends UIClip<CurveClip>
     {
         int sheetColor = channel.getId().hashCode() & Colors.RGB;
 
-        this.keyframes.view.addSheet(new UIKeyframeSheet(channel.getId(), IKey.constant(channel.getId()), sheetColor, false, channel, null));
+        this.keyframes.view.addSheet(new UIKeyframeSheet(channel.getId(), IKey.constant(channel.getId()), sheetColor, channel, null));
     }
 
     @Override

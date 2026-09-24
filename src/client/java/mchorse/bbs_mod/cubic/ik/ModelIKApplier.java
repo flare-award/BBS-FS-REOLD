@@ -2,6 +2,7 @@ package mchorse.bbs_mod.cubic.ik;
 
 import mchorse.bbs_mod.bobj.BOBJBone;
 import mchorse.bbs_mod.cubic.IModel;
+import mchorse.bbs_mod.cubic.RigBone;
 import mchorse.bbs_mod.cubic.data.model.Model;
 import mchorse.bbs_mod.cubic.data.model.ModelGroup;
 import mchorse.bbs_mod.cubic.ik.solver.IKJoint;
@@ -54,7 +55,7 @@ final class ModelIKApplier
      * exactly the drag being complained about and stays small enough to read
      * whole. Same discipline as the drag log.
      */
-    private static final boolean LOG_IK = true;
+    private static final boolean LOG_IK = false;
 
     /** How many INTERESTING solves the log keeps before it stops writing. */
     private static final int LOG_FRAMES = 200;
@@ -138,7 +139,7 @@ final class ModelIKApplier
     {
     }
 
-    public static void apply(IModel model, List<ModelIKCache.CompiledChain> chains, Map<String, ModelIKConfig.JointDoF> jointDoF, Map<String, Vector3f> controllerTargets, Map<String, Vector3f> poleTargets, Map<String, Float> targetWeights, Map<String, Float> poleWeights, Map<String, IKControl> controlOverrides)
+    public static void apply(IModel model, List<ModelIKCache.CompiledChain> chains, Map<String, JointDoF> jointDoF, Map<String, Vector3f> controllerTargets, Map<String, Vector3f> poleTargets, Map<String, Float> targetWeights, Map<String, Float> poleWeights, Map<String, IKControl> controls)
     {
         if (model == null || chains == null || chains.isEmpty())
         {
@@ -181,20 +182,20 @@ final class ModelIKApplier
             if (group.size() == 1 && group.get(0).classic())
             {
                 ModelIKCache.CompiledChain chain = group.get(0);
-                ResolvedChain r = resolveChain(model, chain, frames, controllerTargets, poleTargets, targetWeights, poleWeights, controlOverrides);
+                ResolvedChain r = resolveChain(model, chain, frames, controllerTargets, poleTargets, targetWeights, poleWeights, controls);
 
                 if (r == null)
                 {
                     continue;
                 }
 
-                if (ClassicLimbSolver.apply(model, r.workIds(), frames, r.target(), r.tipTarget(), r.polePoint(), r.poleAngle(), r.softness(), r.weight(), chain.stretch()))
+                if (ClassicLimbSolver.apply(model, r.workIds(), frames, r.target(), r.tipTarget(), r.polePoint(), r.poleAngle(), r.softness(), r.weight(), chain.stretch(), chain.squash()))
                 {
                     continue;
                 }
             }
 
-            applyGroup(model, group, frames, jointDoF, controllerTargets, poleTargets, targetWeights, poleWeights, controlOverrides);
+            applyGroup(model, group, frames, jointDoF, controllerTargets, poleTargets, targetWeights, poleWeights, controls);
         }
 
         if (LOG_IK && logging && LOG.length() > 0)
@@ -331,23 +332,28 @@ final class ModelIKApplier
      * {@code null} when the chain is off this frame (disabled, weightless, or
      * its target frame is missing).
      */
-    private static ResolvedChain resolveChain(IModel model, ModelIKCache.CompiledChain chain, Map<String, PivotFrame> frames, Map<String, Vector3f> controllerTargets, Map<String, Vector3f> poleTargets, Map<String, Float> targetWeights, Map<String, Float> poleWeights, Map<String, IKControl> controlOverrides)
+    private static ResolvedChain resolveChain(IModel model, ModelIKCache.CompiledChain chain, Map<String, PivotFrame> frames, Map<String, Vector3f> controllerTargets, Map<String, Vector3f> poleTargets, Map<String, Float> targetWeights, Map<String, Float> poleWeights, Map<String, IKControl> controls)
     {
-        /* The film's `ik` track may override the chain's static config scalars.
-         * IK weight is independent of pose `fix` — freezing a bone pins it to rest
-         * (changing the FK pose IK reads from) but no longer gates IK weight, which
-         * comes only from the config and the `ik` track. */
-        IKControl control = controlOverrides == null ? null : controlOverrides.get(chain.tip());
+        /* The chain's animatable scalars, read live from the bone's `ik` property by the runtime:
+         * the form's static setting, or the film's `ik` track when one drives the bone. IK weight
+         * is independent of pose `fix` — freezing a bone pins it to rest (changing the FK pose IK
+         * reads from) but never gates IK weight. */
+        IKControl control = controls == null ? null : controls.get(chain.tip());
 
-        if (control != null && !control.enabled)
+        if (control == null)
+        {
+            control = IKControl.DEFAULT;
+        }
+
+        if (!control.enabled)
         {
             return null;
         }
 
-        boolean pole = control != null ? control.pole : chain.pole();
-        float softness = control != null ? control.softness : chain.softness();
-        float weight = control != null ? control.weight : chain.weight();
-        float poleAngle = (float) Math.toRadians(control != null ? control.poleAngle : chain.poleAngle());
+        boolean pole = control.pole;
+        float softness = control.softness;
+        float weight = control.weight;
+        float poleAngle = (float) Math.toRadians(control.poleAngle);
 
         if (weight <= 0F)
         {
@@ -417,13 +423,13 @@ final class ModelIKApplier
      * contract), and the solved angles START from them, so the twist the
      * animator posed survives into the solve by construction.
      */
-    private static void applyGroup(IModel model, List<ModelIKCache.CompiledChain> group, Map<String, PivotFrame> frames, Map<String, ModelIKConfig.JointDoF> jointDoF, Map<String, Vector3f> controllerTargets, Map<String, Vector3f> poleTargets, Map<String, Float> targetWeights, Map<String, Float> poleWeights, Map<String, IKControl> controlOverrides)
+    private static void applyGroup(IModel model, List<ModelIKCache.CompiledChain> group, Map<String, PivotFrame> frames, Map<String, JointDoF> jointDoF, Map<String, Vector3f> controllerTargets, Map<String, Vector3f> poleTargets, Map<String, Float> targetWeights, Map<String, Float> poleWeights, Map<String, IKControl> controls)
     {
         List<ResolvedChain> resolved = new ArrayList<>(group.size());
 
         for (ModelIKCache.CompiledChain chain : group)
         {
-            ResolvedChain r = resolveChain(model, chain, frames, controllerTargets, poleTargets, targetWeights, poleWeights, controlOverrides);
+            ResolvedChain r = resolveChain(model, chain, frames, controllerTargets, poleTargets, targetWeights, poleWeights, controls);
 
             if (r != null)
             {
@@ -481,7 +487,7 @@ final class ModelIKApplier
             joint.angles.set(joint.startAngles);
             tree.parentIndex[i] = nearestAncestor(model, nodes.get(i), nodeIndex);
 
-            ModelIKConfig.JointDoF dof = jointDoF == null ? null : jointDoF.get(nodes.get(i));
+            JointDoF dof = jointDoF == null ? null : jointDoF.get(nodes.get(i));
 
             if (dof != null)
             {
@@ -616,126 +622,70 @@ final class ModelIKApplier
      */
     private static Vector3f sourceAngles(IModel model, String id, Vector3f dest)
     {
-        if (model instanceof Model cubic)
+        RigBone bone = model.getBone(id);
+
+        if (bone == null)
         {
-            ModelGroup bone = cubic.getGroup(id);
-
-            if (bone == null)
-            {
-                return null;
-            }
-
-            float toRad = (float) (Math.PI / 180.0);
-            Vector3f channels = dest.set(bone.current.rotate).mul(toRad);
-
-            if (bone.orient == null && bone.current.rotationMode != Transform.RotationMode.QUATERNION)
-            {
-                return channels;
-            }
-
-            return Matrices.toCompatibleEulerZYXRadians(bone.evaluatedRotation(), new Vector3f(channels), dest);
+            return null;
         }
 
-        if (model instanceof BOBJModel bobj)
+        Vector3f channels = bone.getChannelRotation(dest);
+
+        if (bone.getOrient() == null && bone.getBoneTransform().rotationMode != Transform.RotationMode.QUATERNION)
         {
-            BOBJBone bone = bobj.getArmature().bones.get(id);
-
-            if (bone == null)
-            {
-                return null;
-            }
-
-            Vector3f channels = dest.set(bone.transform.rotate);
-
-            if (bone.orient == null && bone.transform.rotationMode != Transform.RotationMode.QUATERNION)
-            {
-                return channels;
-            }
-
-            return Matrices.toCompatibleEulerZYXRadians(bone.evaluatedRotation(), new Vector3f(channels), dest);
+            return channels;
         }
 
-        return null;
+        return Matrices.toCompatibleEulerZYXRadians(bone.evaluatedRotation(), new Vector3f(channels), dest);
     }
 
     /** The bone's evaluated FK local rotation (fresh instance); {@code null} when it does not exist. */
     private static Quaternionf evaluatedRotation(IModel model, String id)
     {
-        if (model instanceof Model cubic)
-        {
-            ModelGroup bone = cubic.getGroup(id);
+        RigBone bone = model.getBone(id);
 
-            return bone == null ? null : bone.evaluatedRotation();
-        }
-
-        if (model instanceof BOBJModel bobj)
-        {
-            BOBJBone bone = bobj.getArmature().bones.get(id);
-
-            return bone == null ? null : bone.evaluatedRotation();
-        }
-
-        return null;
+        return bone == null ? null : bone.evaluatedRotation();
     }
 
     /** Writes the solved local rotation to the bone's {@code orient}; false when it does not exist. */
     private static boolean writeOrient(IModel model, String id, Quaternionf orient)
     {
-        if (model instanceof Model cubic)
+        RigBone bone = model.getBone(id);
+
+        if (bone == null)
         {
-            ModelGroup bone = cubic.getGroup(id);
-
-            if (bone == null)
-            {
-                return false;
-            }
-
-            bone.orient = orient;
-
-            return true;
+            return false;
         }
 
-        if (model instanceof BOBJModel bobj)
-        {
-            BOBJBone bone = bobj.getArmature().bones.get(id);
+        bone.setOrient(orient);
 
-            if (bone == null)
-            {
-                return false;
-            }
-
-            bone.orient = orient;
-
-            return true;
-        }
-
-        return false;
+        return true;
     }
 
     /** Copies the config's per-bone freedom onto a solver joint; limits are authored in degrees. */
-    private static void applyDoF(IKJoint joint, ModelIKConfig.JointDoF dof)
+    private static void applyDoF(IKJoint joint, JointDoF dof)
     {
         float toRad = (float) (Math.PI / 180.0);
 
-        joint.locked[0] = dof.lockX();
-        joint.locked[1] = dof.lockY();
-        joint.locked[2] = dof.lockZ();
+        joint.locked[0] = dof.lockX;
+        joint.locked[1] = dof.lockY;
+        joint.locked[2] = dof.lockZ;
 
-        joint.limited[0] = dof.limitX();
-        joint.limited[1] = dof.limitY();
-        joint.limited[2] = dof.limitZ();
+        joint.limited[0] = dof.limitX;
+        joint.limited[1] = dof.limitY;
+        joint.limited[2] = dof.limitZ;
 
-        joint.limitMin[0] = dof.minX() * toRad;
-        joint.limitMin[1] = dof.minY() * toRad;
-        joint.limitMin[2] = dof.minZ() * toRad;
+        joint.limitMin[0] = dof.minX * toRad;
+        joint.limitMin[1] = dof.minY * toRad;
+        joint.limitMin[2] = dof.minZ * toRad;
 
-        joint.limitMax[0] = dof.maxX() * toRad;
-        joint.limitMax[1] = dof.maxY() * toRad;
-        joint.limitMax[2] = dof.maxZ() * toRad;
+        joint.limitMax[0] = dof.maxX * toRad;
+        joint.limitMax[1] = dof.maxY * toRad;
+        joint.limitMax[2] = dof.maxZ * toRad;
 
-        joint.stiffness[0] = dof.stiffnessX();
-        joint.stiffness[1] = dof.stiffnessY();
-        joint.stiffness[2] = dof.stiffnessZ();
+        joint.stiffness[0] = dof.stiffnessX;
+        joint.stiffness[1] = dof.stiffnessY;
+        joint.stiffness[2] = dof.stiffnessZ;
     }
 
     /**
@@ -743,6 +693,7 @@ final class ModelIKApplier
      * rest positions (absolute model rest space) plus the {@code lift}
      * rotation folding rest-space directions into the current pose.
      */
+    /** {@code elbow} is null on a chain with no interior joint — a single directed bone. */
     private record RestChain(Vector3f root, Vector3f elbow, Vector3f effector, Quaternionf lift)
     {
     }
@@ -754,22 +705,29 @@ final class ModelIKApplier
      * BOBJ rest geometry lives in the bind matrices, and the lift subtracts
      * the bind frame the same way (BOBJ ancestors carry authored rest
      * rotations, so the raw parent frame alone would double-count them).
-     * {@code null} when the chain is too short or a bone is missing.
+     * {@code null} when the chain is too short or a bone is missing. A chain of
+     * one directed bone has no interior joint, so it loads with a null elbow
+     * rather than not at all: the elbow is what a virtual pole needs (which side
+     * the knee bulges), while an authored pole target needs only the axis and its
+     * own rest spot — and on such a chain the pole is the only handle on the
+     * bone's twist, since the solve owns its rotation.
      */
     private static RestChain restChain(IModel model, List<String> workIds, Quaternionf rootParentRotation)
     {
-        if (workIds.size() < 3)
+        if (workIds.size() < 2)
         {
             return null;
         }
 
+        boolean bent = workIds.size() >= 3;
+
         if (model instanceof Model cubic)
         {
             ModelGroup root = cubic.getGroup(workIds.get(0));
-            ModelGroup elbow = cubic.getGroup(workIds.get(1));
+            ModelGroup elbow = bent ? cubic.getGroup(workIds.get(1)) : null;
             ModelGroup effector = cubic.getGroup(workIds.get(workIds.size() - 1));
 
-            if (root == null || elbow == null || effector == null)
+            if (root == null || effector == null || (bent && elbow == null))
             {
                 return null;
             }
@@ -781,16 +739,16 @@ final class ModelIKApplier
              * chain's ancestors carry, tilting the result even in rest pose. */
             Quaternionf restParent = cubicRestParentRotation(cubic, workIds.get(0));
 
-            return new RestChain(root.initial.translate, elbow.initial.translate, effector.initial.translate, new Quaternionf(rootParentRotation).mul(restParent.conjugate()));
+            return new RestChain(root.initial.translate, elbow == null ? null : elbow.initial.translate, effector.initial.translate, new Quaternionf(rootParentRotation).mul(restParent.conjugate()));
         }
         else if (model instanceof BOBJModel bobj)
         {
             Map<String, BOBJBone> bones = bobj.getArmature().bones;
             BOBJBone root = bones.get(workIds.get(0));
-            BOBJBone elbow = bones.get(workIds.get(1));
+            BOBJBone elbow = bent ? bones.get(workIds.get(1)) : null;
             BOBJBone effector = bones.get(workIds.get(workIds.size() - 1));
 
-            if (root == null || elbow == null || effector == null)
+            if (root == null || effector == null || (bent && elbow == null))
             {
                 return null;
             }
@@ -799,7 +757,7 @@ final class ModelIKApplier
              * rotation, so the current-vs-bind delta is the exact world lift. */
             Quaternionf bindParent = root.boneMat.getUnnormalizedRotation(new Quaternionf());
 
-            return new RestChain(root.boneMat.getTranslation(new Vector3f()), elbow.boneMat.getTranslation(new Vector3f()), effector.boneMat.getTranslation(new Vector3f()), new Quaternionf(rootParentRotation).mul(bindParent.conjugate()));
+            return new RestChain(root.boneMat.getTranslation(new Vector3f()), elbow == null ? null : elbow.boneMat.getTranslation(new Vector3f()), effector.boneMat.getTranslation(new Vector3f()), new Quaternionf(rootParentRotation).mul(bindParent.conjugate()));
         }
 
         return null;
@@ -829,6 +787,13 @@ final class ModelIKApplier
         }
 
         axis.normalize();
+
+        /* No interior joint, no bulge to read a side off: a single-bone chain can
+         * only be poled by an authored target. */
+        if (rest.elbow() == null)
+        {
+            return null;
+        }
 
         Vector3f side = perpendicularTo(new Vector3f(rest.elbow()).sub(rest.root()), axis);
         // (axis and side are in absolute model rest space; `lift` folds them into the current pose.)
@@ -883,7 +848,7 @@ final class ModelIKApplier
         Vector3f poleRest = restPosition(model, poleTarget);
         Vector3f side = poleRest == null ? null : perpendicularTo(new Vector3f(poleRest).sub(rest.root()), axis);
 
-        if (side == null)
+        if (side == null && rest.elbow() != null)
         {
             side = perpendicularTo(new Vector3f(rest.elbow()).sub(rest.root()), axis);
         }
@@ -916,21 +881,9 @@ final class ModelIKApplier
             return null;
         }
 
-        if (model instanceof Model cubic)
-        {
-            ModelGroup bone = cubic.getGroup(id);
+        RigBone bone = model.getBone(id);
 
-            return bone == null ? null : bone.initial.translate;
-        }
-
-        if (model instanceof BOBJModel bobj)
-        {
-            BOBJBone bone = bobj.getArmature().bones.get(id);
-
-            return bone == null ? null : bone.boneMat.getTranslation(new Vector3f());
-        }
-
-        return null;
+        return bone == null ? null : bone.getRestTranslation();
     }
 
     /**
@@ -1091,7 +1044,7 @@ final class ModelIKApplier
 
         for (ResolvedChain r : resolved)
         {
-            if (r.chain().stretch())
+            if (r.chain().stretch() || r.chain().squash())
             {
                 stretchToTarget(model, nodes, tree, r, frames, blendedParentOf, blendedWorld);
             }
@@ -1115,7 +1068,9 @@ final class ModelIKApplier
      * <p>The share is distributed only up to the last bone carrying GEOMETRY: a
      * chain ending in a bare end-marker (the auto-tail convention) would
      * otherwise open its last seam BEFORE the marker and leave the last visible
-     * bone short of the controller.
+     * bone short of the controller. When that bone is the chain's ROOT — a single
+     * visible bone reaching for its controller — the seam has nowhere to go but
+     * the root's own joint, so the root takes the whole gap and the limb slides.
      */
     private static void stretchToTarget(IModel model, List<String> nodes, IKTree tree, ResolvedChain r, Map<String, PivotFrame> frames, Quaternionf[] blendedParentOf, Quaternionf[] blendedWorld)
     {
@@ -1162,11 +1117,6 @@ final class ModelIKApplier
 
         int reach = lastGeometryIndex(model, workIds);
 
-        if (reach < 1)
-        {
-            return;
-        }
-
         /* Solved positions along the chain: the nodes from the tree, the effector
          * point for the last id. */
         Vector3f[] solved = new Vector3f[workIds.size()];
@@ -1184,6 +1134,19 @@ final class ModelIKApplier
             }
         }
 
+        /* Which half of the gap this is decides which box has to be ticked: a
+         * chain that fell SHORT of its goal telescopes out only with "stretch",
+         * one that OVERSHOT (the goal sits closer than the chain can fold, so the
+         * tip swings past it) folds in only with "squash". Independent on
+         * purpose: a leg that keeps its foot planted while the body squats must
+         * not turn rubbery when the body rises. */
+        boolean shortfall = fellShort(gap, solved[0], tree.effectors[effectorIndex].position);
+
+        if (!(shortfall ? r.chain().stretch() : r.chain().squash()))
+        {
+            return;
+        }
+
         float total = 0F;
 
         for (int i = 0; i < reach; i++)
@@ -1191,16 +1154,20 @@ final class ModelIKApplier
             total += solved[i].distance(solved[i + 1]);
         }
 
-        if (total < EPS)
+        boolean rootOnly = reach == 0;
+
+        if (!rootOnly && total < EPS)
         {
             return;
         }
 
         Vector3f cumulative = new Vector3f();
 
-        for (int i = 1; i <= reach && i < workIds.size(); i++)
+        for (int i = rootOnly ? 0 : 1; i <= reach && i < workIds.size(); i++)
         {
-            Vector3f share = new Vector3f(gap).mul(solved[i - 1].distance(solved[i]) / total);
+            Vector3f share = rootOnly
+                ? new Vector3f(gap)
+                : new Vector3f(gap).mul(solved[i - 1].distance(solved[i]) / total);
 
             String bone = workIds.get(i);
             int node = indexOf(nodes, bone);
@@ -1209,6 +1176,21 @@ final class ModelIKApplier
             cumulative.add(share);
             writeStretchOffset(model, bone, frames.get(bone), parentFrame, share, cumulative);
         }
+    }
+
+    /**
+     * Which side of the reach a gap sits on: {@code true} when the tip fell SHORT
+     * of the goal (the chain has to telescope OUT to close it), {@code false} when
+     * it overshot — the goal sits closer to the root than the chain can fold, so
+     * the tip swung past it and the chain has to fold IN. Read radially, along the
+     * root-to-tip line the solve already aimed at the goal: an unreachable goal
+     * leaves a purely radial gap, and a reachable one leaves no gap at all.
+     */
+    private static boolean fellShort(Vector3f gap, Vector3f root, Vector3f tip)
+    {
+        Vector3f radial = new Vector3f(tip).sub(root);
+
+        return radial.lengthSquared() < EPS * EPS || gap.dot(radial) >= 0F;
     }
 
     /**
@@ -1222,35 +1204,34 @@ final class ModelIKApplier
      */
     private static void writeStretchOffset(IModel model, String bone, PivotFrame frame, Quaternionf parentFrame, Vector3f share, Vector3f cumulative)
     {
-        if (model instanceof BOBJModel bobj)
-        {
-            BOBJBone bobjBone = bobj.getArmature().bones.get(bone);
+        RigBone target = model.getBone(bone);
 
-            if (bobjBone != null)
-            {
-                bobjBone.offset = new Vector3f(cumulative);
-            }
+        if (target == null)
+        {
+            return;
+        }
+
+        if (target.usesWorldStretchOffset())
+        {
+            target.setOffset(new Vector3f(cumulative));
 
             return;
         }
 
-        if (model instanceof Model cubic && parentFrame != null)
+        if (parentFrame == null)
         {
-            ModelGroup group = cubic.getGroup(bone);
-
-            if (group != null)
-            {
-                Vector3f local = new Quaternionf(parentFrame).conjugate().transform(new Vector3f(share));
-                Vector3f scale = frame == null ? null : frame.scale();
-
-                if (scale != null)
-                {
-                    local.set(divide(local.x, scale.x), divide(local.y, scale.y), divide(local.z, scale.z));
-                }
-
-                group.offset = local;
-            }
+            return;
         }
+
+        Vector3f local = new Quaternionf(parentFrame).conjugate().transform(new Vector3f(share));
+        Vector3f scale = frame == null ? null : frame.scale();
+
+        if (scale != null)
+        {
+            local.set(divide(local.x, scale.x), divide(local.y, scale.y), divide(local.z, scale.z));
+        }
+
+        target.setOffset(local);
     }
 
     private static float divide(float value, float by)

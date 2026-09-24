@@ -3,6 +3,7 @@ package mchorse.bbs_mod.ui.utils;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer;
 import mchorse.bbs_mod.ui.framework.UIContext;
+import mchorse.bbs_mod.ui.framework.elements.input.drag.TransformGesture;
 import mchorse.bbs_mod.utils.Pair;
 import mchorse.bbs_mod.utils.colors.Colors;
 import org.joml.Matrix4f;
@@ -148,8 +149,26 @@ public class GizmoInteraction
      */
     public void update(UIContext context)
     {
+        this.pumpDrag(context);
         this.promotePendingPick(context);
         this.updateSphereHover(context);
+    }
+
+    /**
+     * Keep a running gesture moving when the editor that owns it is NOT drawn — the film's
+     * replay-root gizmo edits a transform with no visible fields at all, and a bone drag
+     * froze the moment its keyframe panel was closed. The session itself decides whether it
+     * is owed the pump (see {@link TransformGesture#pumpIfHidden}); a drawn editor pumps
+     * from its own render.
+     */
+    private void pumpDrag(UIContext context)
+    {
+        TransformGesture gesture = Gizmo.INSTANCE.getTrackedGesture();
+
+        if (gesture != null)
+        {
+            gesture.pumpIfHidden(context);
+        }
     }
 
     /**

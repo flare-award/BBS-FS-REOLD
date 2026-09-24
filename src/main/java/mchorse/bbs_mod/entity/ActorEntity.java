@@ -4,6 +4,8 @@ import mchorse.bbs_mod.forms.entities.MCEntity;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.network.ServerNetwork;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityDimensions;
+import net.minecraft.entity.EntityPose;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.ItemEntity;
@@ -19,6 +21,7 @@ import net.minecraft.util.Arm;
 import net.minecraft.util.math.Box;
 import net.minecraft.world.World;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,11 +41,39 @@ public class ActorEntity extends LivingEntity implements IEntityFormProvider
     private MCEntity entity = new MCEntity(this);
     private Form form;
 
+    /**
+     * Which replay of which film put this body here. A client needs the pairing to know that this
+     * entity is a replay's body rather than a creature, and it has to be able to learn that from
+     * the entity alone - the map of actors is broadcast when they spawn, which is of no use to
+     * anyone who starts seeing one later.
+     */
+    private String filmId = "";
+    private String replayId = "";
+
+    private boolean pickUpItems = true;
+    private final List<ItemStack> pickedUp = new ArrayList<>();
+
     private Map<EquipmentSlot, ItemStack> equipment = new HashMap<>();
 
     public ActorEntity(EntityType<? extends LivingEntity> entityType, World world)
     {
         super(entityType, world);
+    }
+
+    public void setReplay(String filmId, String replayId)
+    {
+        this.filmId = filmId;
+        this.replayId = replayId;
+    }
+
+    public String getFilmId()
+    {
+        return this.filmId;
+    }
+
+    public String getReplayId()
+    {
+        return this.replayId;
     }
 
     public MCEntity getEntity()
@@ -74,6 +105,45 @@ public class ActorEntity extends LivingEntity implements IEntityFormProvider
             if (lastForm != null) lastForm.onDemorph(this);
             if (form != null) form.onMorph(this);
         }
+
+        /* The body changed, so the box around it has to change too */
+        this.calculateDimensions();
+    }
+
+    /**
+     * The form's own hitbox, when it declares one. An actor exists so blows land on it, and a box
+     * of vanilla's player size around a four-block model means only its ankles can be hit - the
+     * flag promised a body in the world and delivered a shin. Same properties the picking box in
+     * the editor already reads, so the two agree.
+     */
+    @Override
+    public EntityDimensions getDimensions(EntityPose pose)
+    {
+        if (this.form == null || !this.form.hitbox.get())
+        {
+            return super.getDimensions(pose);
+        }
+
+        float width = this.form.hitboxWidth.get();
+        float height = this.form.hitboxHeight.get();
+
+        if (pose == EntityPose.CROUCHING)
+        {
+            height *= this.form.hitboxSneakMultiplier.get();
+        }
+
+        return EntityDimensions.changing(width, height);
+    }
+
+    @Override
+    protected float getActiveEyeHeight(EntityPose pose, EntityDimensions dimensions)
+    {
+        if (this.form == null || !this.form.hitbox.get())
+        {
+            return super.getActiveEyeHeight(pose, dimensions);
+        }
+
+        return this.form.hitboxEyeHeight.get();
     }
 
     @Override
@@ -136,6 +206,11 @@ public class ActorEntity extends LivingEntity implements IEntityFormProvider
             return;
         }
 
+        if (!this.pickUpItems)
+        {
+            return;
+        }
+
         /* Pickup items */
         Box box = this.getBoundingBox().expand(1D, 0.5D, 1D);
         List<Entity> list = this.getWorld().getOtherEntities(this, box);
@@ -150,10 +225,40 @@ public class ActorEntity extends LivingEntity implements IEntityFormProvider
                 if (!entity.isRemoved() && !itemEntity.cannotPickup())
                 {
                     ((ServerWorld) this.getWorld()).getChunkManager().sendToOtherNearbyPlayers(entity, new ItemPickupAnimationS2CPacket(entity.getId(), this.getId(), i));
+
+                    /* Kept, not destroyed: an actor has no inventory to put this in, so what it
+                     * swept up used to simply cease to exist - a take rolling near someone's
+                     * dropped things ate them. Held until the film stops, then put back. */
+                    this.pickedUp.add(itemStack.copy());
+
                     entity.discard();
                 }
             }
         }
+    }
+
+    public void setPickUpItems(boolean pickUpItems)
+    {
+        this.pickUpItems = pickUpItems;
+    }
+
+    /** Put back everything this body swept up, where it now stands. */
+    public void dropPickedUp()
+    {
+        if (this.pickedUp.isEmpty() || this.getWorld().isClient())
+        {
+            return;
+        }
+
+        for (ItemStack stack : this.pickedUp)
+        {
+            ItemEntity item = new ItemEntity(this.getWorld(), this.getX(), this.getY() + 0.5D, this.getZ(), stack);
+
+            item.setToDefaultPickupDelay();
+            this.getWorld().spawnEntity(item);
+        }
+
+        this.pickedUp.clear();
     }
 
     @Override
@@ -173,6 +278,14 @@ public class ActorEntity extends LivingEntity implements IEntityFormProvider
         super.onStartedTrackingBy(player);
 
         ServerNetwork.sendEntityForm(player, this);
+
+        /* Who this body belongs to, told to whoever just came within sight of it. The cast map is
+         * broadcast when the actors spawn and never again, so a player who joined, changed
+         * dimension or simply walked over later had no way of pairing this entity with its replay. */
+        if (!this.replayId.isEmpty())
+        {
+            ServerNetwork.sendActor(player, this.filmId, this.replayId, this.getId());
+        }
     }
 
     @Override

@@ -5,33 +5,24 @@ import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.forms.editors.forms.UIForm;
 import mchorse.bbs_mod.ui.framework.elements.input.UITrackpad;
 import mchorse.bbs_mod.ui.utils.UI;
+import mchorse.bbs_mod.ui.utils.values.UIValues;
 
 public class UIFramebufferFormPanel extends UIFormPanel<FramebufferForm>
 {
-    public UITrackpad width;
-    public UITrackpad height;
-    public UITrackpad scale;
-
     public UIFramebufferFormPanel(UIForm editor)
     {
         super(editor);
 
-        this.width = new UITrackpad((v) -> this.form.width.set(v.intValue()));
-        this.width.limit(2, 4096, true).tooltip(UIKeys.VIDEO_SETTINGS_WIDTH);
-        this.height = new UITrackpad((v) -> this.form.height.set(v.intValue()));
-        this.height.limit(2, 4096, true).tooltip(UIKeys.VIDEO_SETTINGS_HEIGHT);
-        this.scale = new UITrackpad((v) -> this.form.scale.set(v.floatValue()));
+        UITrackpad width = UIValues.trackpad(() -> this.form.width);
+        UITrackpad height = UIValues.trackpad(() -> this.form.height);
 
-        this.options.add(UI.label(UIKeys.VIDEO_SETTINGS_RESOLUTION), UI.row(this.width, this.height), UI.labelRow(UIKeys.TRANSFORMS_SCALE, this.scale));
-    }
+        width.limit(2, 4096, true).tooltip(UIKeys.VIDEO_SETTINGS_WIDTH);
+        height.limit(2, 4096, true).tooltip(UIKeys.VIDEO_SETTINGS_HEIGHT);
 
-    @Override
-    public void startEdit(FramebufferForm form)
-    {
-        super.startEdit(form);
-
-        this.width.setValue(form.width.get());
-        this.height.setValue(form.height.get());
-        this.scale.setValue(form.scale.get());
+        this.options.add(
+            UI.label(UIKeys.VIDEO_SETTINGS_RESOLUTION),
+            UI.row(width, height),
+            UI.labelRow(UIKeys.TRANSFORMS_SCALE, UIValues.trackpad(() -> this.form.scale))
+        );
     }
 }

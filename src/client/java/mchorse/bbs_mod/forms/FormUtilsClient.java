@@ -1,11 +1,12 @@
 package mchorse.bbs_mod.forms;
 
+import com.mojang.logging.LogUtils;
 import it.unimi.dsi.fastutil.objects.Object2ObjectLinkedOpenHashMap;
 import mchorse.bbs_mod.forms.forms.AnchorForm;
 import mchorse.bbs_mod.forms.forms.BillboardForm;
 import mchorse.bbs_mod.forms.forms.BlockForm;
-import mchorse.bbs_mod.forms.forms.FilterBoardForm;
 import mchorse.bbs_mod.forms.forms.ExtrudedForm;
+import mchorse.bbs_mod.cubic.IBoneHierarchy;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.forms.forms.FramebufferForm;
 import mchorse.bbs_mod.forms.forms.ItemForm;
@@ -16,13 +17,14 @@ import mchorse.bbs_mod.forms.forms.ParticleForm;
 import mchorse.bbs_mod.forms.forms.StructureForm;
 import mchorse.bbs_mod.forms.forms.TrailForm;
 import mchorse.bbs_mod.forms.forms.VanillaParticleForm;
-import mchorse.bbs_mod.forms.forms.WebForm;
+import mchorse.bbs_mod.forms.forms.VideoForm;
 import mchorse.bbs_mod.forms.renderers.AnchorFormRenderer;
 import mchorse.bbs_mod.forms.renderers.BillboardFormRenderer;
 import mchorse.bbs_mod.forms.renderers.BlockFormRenderer;
 import mchorse.bbs_mod.forms.renderers.ExtrudedFormRenderer;
-import mchorse.bbs_mod.forms.renderers.FilterBoardFormRenderer;
 import mchorse.bbs_mod.forms.renderers.FormRenderer;
+import mchorse.bbs_mod.utils.profiler.BBSProfiler;
+import mchorse.bbs_mod.api.client.events.FormRenderEvents;
 import mchorse.bbs_mod.forms.renderers.FormRenderingContext;
 import mchorse.bbs_mod.forms.renderers.FramebufferFormRenderer;
 import mchorse.bbs_mod.forms.renderers.ItemFormRenderer;
@@ -33,7 +35,8 @@ import mchorse.bbs_mod.forms.renderers.ParticleFormRenderer;
 import mchorse.bbs_mod.forms.renderers.StructureFormRenderer;
 import mchorse.bbs_mod.forms.renderers.TrailFormRenderer;
 import mchorse.bbs_mod.forms.renderers.VanillaParticleFormRenderer;
-import mchorse.bbs_mod.forms.renderers.WebFormRenderer;
+import mchorse.bbs_mod.forms.renderers.VideoFormRenderer;
+import mchorse.bbs_mod.forms.structure.BakedStructure;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.RenderLayer;
@@ -41,21 +44,34 @@ import net.minecraft.client.render.TexturedRenderLayers;
 import net.minecraft.client.render.chunk.BlockBufferBuilderStorage;
 import net.minecraft.client.render.model.ModelLoader;
 import net.minecraft.util.Util;
+import org.slf4j.Logger;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.Stack;
 
 public class FormUtilsClient
 {
+    private static final Logger LOGGER = LogUtils.getLogger();
+
+    /**
+     * Render failures already reported, keyed by form class, exception class and throw
+     * site. Rendering runs every frame, so an unguarded log buries the game in one
+     * repeating stack trace — which is why this used to be a silent catch, and why
+     * thousands of lines of IK, physics and material code could fail invisibly.
+     */
+    private static final Set<String> reportedRenderFailures = new HashSet<>();
+
     private static Map<Class, IFormRendererFactory> map = new HashMap<>();
     private static CustomVertexConsumerProvider customVertexConsumerProvider;
     private static Stack<Form> currentForm = new Stack<>();
 
-    static
+    private static CustomVertexConsumerProvider createProvider()
     {
         BlockBufferBuilderStorage storage = new BlockBufferBuilderStorage();
         SortedMap sortedMap = Util.make(new Object2ObjectLinkedOpenHashMap(), map -> {
@@ -72,6 +88,9 @@ public class FormUtilsClient
             assignBufferBuilder(map, RenderLayer.getCutout());
             assignBufferBuilder(map, RenderLayer.getCutoutMipped());
             map.put(TexturedRenderLayers.getEntityTranslucentCull(), storage.get(RenderLayer.getTranslucent()));
+            /* Right behind the layer it stands in for while a block form carries a color overlay,
+             * so the swap does not move when the geometry draws. */
+            assignBufferBuilder(map, BlockFormRenderer.OVERLAY_TRANSLUCENT_LAYER);
             assignBufferBuilder(map, TexturedRenderLayers.getShieldPatterns());
             assignBufferBuilder(map, TexturedRenderLayers.getBeds());
             assignBufferBuilder(map, TexturedRenderLayers.getShulkerBoxes());
@@ -87,12 +106,25 @@ public class FormUtilsClient
             assignBufferBuilder(map, RenderLayer.getDirectEntityGlint());
             assignBufferBuilder(map, RenderLayer.getWaterMask());
             ModelLoader.BLOCK_DESTRUCTION_RENDER_LAYERS.forEach(renderLayer -> assignBufferBuilder(map, renderLayer));
+            /* Last: the structure form's color overlay is a second pass over the whole structure,
+             * so it has to flush after every layer the structure itself drew into. */
+            assignBufferBuilder(map, BakedStructure.OVERLAY_LAYER);
         });
 
-        customVertexConsumerProvider = new CustomVertexConsumerProvider(new BufferBuilder(1536), sortedMap);
+        return new CustomVertexConsumerProvider(new BufferBuilder(1536), sortedMap);
+    }
 
-        register(BillboardForm.class, BillboardFormRenderer<BillboardForm>::new);
-        register(FilterBoardForm.class, FilterBoardFormRenderer::new);
+    /**
+     * Fills the registry. Called by BBS while it initialises, and followed by the event that
+     * lets addons add to it.
+     *
+     * <p>This used to be a static initialiser, which ran whenever something first touched the
+     * class — a moment nobody chose and an addon could not aim at.</p>
+     */
+    public static void setup()
+    {
+        register(BillboardForm.class, BillboardFormRenderer::new);
+        register(VideoForm.class, VideoFormRenderer::new);
         register(ExtrudedForm.class, ExtrudedFormRenderer::new);
         register(LabelForm.class, LabelFormRenderer::new);
         register(ModelForm.class, ModelFormRenderer::new);
@@ -105,7 +137,6 @@ public class FormUtilsClient
         register(TrailForm.class, TrailFormRenderer::new);
         register(FramebufferForm.class, FramebufferFormRenderer::new);
         register(StructureForm.class, StructureFormRenderer::new);
-        register(WebForm.class, WebFormRenderer::new);
     }
 
     private static void assignBufferBuilder(Object2ObjectLinkedOpenHashMap<RenderLayer, BufferBuilder> builderStorage, RenderLayer layer)
@@ -115,12 +146,44 @@ public class FormUtilsClient
 
     public static CustomVertexConsumerProvider getProvider()
     {
+        /* Built on first use rather than while the mod initialises: it allocates the render
+         * layers' buffers, and doing that before the game is ready is the kind of thing that
+         * goes wrong in the game instead of in the build. */
+        if (customVertexConsumerProvider == null)
+        {
+            customVertexConsumerProvider = createProvider();
+        }
+
         return customVertexConsumerProvider;
     }
 
     public static <T extends Form> void register(Class<T> clazz, IFormRendererFactory<T> function)
     {
         map.put(clazz, function);
+    }
+
+    /**
+     * The renderer registered for a form's own class, or for the nearest class it extends.
+     *
+     * <p>Without the walk up, extending one of BBS's forms bought nothing: the subclass
+     * inherited the shape and the data and then drew as nothing at all, until it registered a
+     * renderer that was usually a copy of its parent's.</p>
+     */
+    private static IFormRendererFactory findFactory(Class clazz)
+    {
+        while (clazz != null && clazz != Object.class)
+        {
+            IFormRendererFactory factory = map.get(clazz);
+
+            if (factory != null)
+            {
+                return factory;
+            }
+
+            clazz = clazz.getSuperclass();
+        }
+
+        return null;
     }
 
     public static Form getCurrentForm()
@@ -140,7 +203,7 @@ public class FormUtilsClient
             return renderer;
         }
 
-        IFormRendererFactory factory = map.get(form.getClass());
+        IFormRendererFactory factory = findFactory(form.getClass());
 
         if (factory != null)
         {
@@ -156,31 +219,90 @@ public class FormUtilsClient
 
     public static void renderUI(Form form, UIContext context, int x1, int y1, int x2, int y2)
     {
+        BBSProfiler.count(BBSProfiler.Section.UI_PREVIEW_RENDERS);
+        BBSProfiler.begin(BBSProfiler.Timer.UI_PREVIEWS);
+
         FormRenderer renderer = getRenderer(form);
 
         if (renderer != null)
         {
             renderer.renderUI(context, x1, y1, x2, y2);
         }
+
+        BBSProfiler.end(BBSProfiler.Timer.UI_PREVIEWS);
+    }
+
+    /** The form's picture alone; see {@link FormRenderer#renderPreview}. */
+    public static void renderPreview(Form form, UIContext context, int x1, int y1, int x2, int y2)
+    {
+        BBSProfiler.count(BBSProfiler.Section.UI_PREVIEW_RENDERS);
+        BBSProfiler.begin(BBSProfiler.Timer.UI_PREVIEWS);
+
+        FormRenderer renderer = getRenderer(form);
+
+        if (renderer != null)
+        {
+            renderer.renderPreview(context, x1, y1, x2, y2);
+        }
+
+        BBSProfiler.end(BBSProfiler.Timer.UI_PREVIEWS);
     }
 
     public static void render(Form form, FormRenderingContext context)
     {
+        /* A form set to render last skips its turn here and draws when the pass closes its
+         * scope — through this very method, so the events fire once, at the real draw. */
+        if (FormRenderLast.postpone(form, context))
+        {
+            return;
+        }
+
         FormRenderer renderer = getRenderer(form);
 
         if (renderer != null)
         {
             currentForm.push(form);
 
+            FormRenderEvents.BEFORE.invoker().onFormRender(form, context);
+
             try
             {
                 renderer.render(context);
             }
             catch (Exception e)
-            {}
+            {
+                reportRenderFailure(form, e);
+            }
+
+            /* After the catch, so a listener that pushed something in BEFORE still gets to
+             * pop it when the form's own renderer threw. */
+            FormRenderEvents.AFTER.invoker().onFormRender(form, context);
 
             currentForm.pop();
         }
+    }
+
+    /**
+     * Reports the first occurrence of each distinct render failure and drops the repeats.
+     * The frame is still let through: a form that throws must not take the rest of the
+     * scene with it, which is what the swallow was for.
+     */
+    private static void reportRenderFailure(Form form, Exception e)
+    {
+        StackTraceElement[] trace = e.getStackTrace();
+        String key = form.getClass().getName() + "|" + e.getClass().getName() + "|" + (trace.length == 0 ? "" : trace[0].toString());
+
+        if (reportedRenderFailures.add(key))
+        {
+            LOGGER.error("[BBS form] {} failed to render - further repeats of this failure are silenced.", form.getClass().getSimpleName(), e);
+        }
+    }
+
+    public static IBoneHierarchy getBoneHierarchy(Form form)
+    {
+        FormRenderer renderer = getRenderer(form);
+
+        return renderer == null ? null : renderer.getBoneHierarchy();
     }
 
     public static List<String> getBones(Form form)

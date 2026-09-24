@@ -2,16 +2,12 @@ package mchorse.bbs_mod.utils.keyframes;
 
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.data.types.BaseType;
-import mchorse.bbs_mod.data.types.ListType;
 import mchorse.bbs_mod.data.types.MapType;
 import mchorse.bbs_mod.settings.values.base.BaseValue;
-import mchorse.bbs_mod.utils.colors.Color;
 import mchorse.bbs_mod.utils.interps.Interpolation;
 import mchorse.bbs_mod.utils.interps.Interpolations;
 import mchorse.bbs_mod.utils.keyframes.factories.IKeyframeFactory;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 
 public class Keyframe <T> extends BaseValue
@@ -24,19 +20,16 @@ public class Keyframe <T> extends BaseValue
     public float rx = 5;
     public float ry;
 
-    public List<Float> lx_m;
-    public List<Float> ly_m;
-    public List<Float> rx_m;
-    public List<Float> ry_m;
-
-    private KeyframeShape shape = BBSSettings.getDefaultKeyframeShape();
-    private Color color;
+    /** How this keyframe is drawn. Fresh keyframes start from whatever the settings say. */
+    private final KeyframeStyle style = BBSSettings.getDefaultKeyframeStyle();
 
     /**
      * Forced duration that would be used instead of the difference
      * between two keyframes, if not 0
      */
     private float duration;
+    /** Displacement of the transition's midpoint from 0.5, in normalized time. */
+    private float motionShift;
     private final Interpolation interp = new Interpolation("interp", Interpolations.MAP);
 
     private final IKeyframeFactory<T> factory;
@@ -66,6 +59,31 @@ public class Keyframe <T> extends BaseValue
     public IKeyframeFactory<T> getFactory()
     {
         return this.factory;
+    }
+
+    /**
+     * Content hash over everything this keyframe serializes: tick, value, interpolation with its
+     * easing arguments, bezier handles. Built by field mixing so per-frame signature checks
+     * (the motion path cache key) cost integer math, not a serialization.
+     */
+    public int contentHash()
+    {
+        int hash = Float.floatToIntBits(this.tick);
+
+        hash = 31 * hash + Float.floatToIntBits(this.duration);
+        hash = 31 * hash + Float.floatToIntBits(this.motionShift);
+        hash = 31 * hash + Float.floatToIntBits(this.lx);
+        hash = 31 * hash + Float.floatToIntBits(this.ly);
+        hash = 31 * hash + Float.floatToIntBits(this.rx);
+        hash = 31 * hash + Float.floatToIntBits(this.ry);
+        hash = 31 * hash + System.identityHashCode(this.interp.getInterp());
+        hash = 31 * hash + Double.hashCode(this.interp.getV1());
+        hash = 31 * hash + Double.hashCode(this.interp.getV2());
+        hash = 31 * hash + Double.hashCode(this.interp.getV3());
+        hash = 31 * hash + Double.hashCode(this.interp.getV4());
+        hash = 31 * hash + (this.value == null || this.factory == null ? 0 : this.factory.contentHash(this.value));
+
+        return hash;
     }
 
     public float getTick()
@@ -104,7 +122,41 @@ public class Keyframe <T> extends BaseValue
         return this.value;
     }
 
-    public double getY(int index)
+    public float getMotionShift()
+    {
+        return this.motionShift;
+    }
+
+    public void setMotionShift(float shift)
+    {
+        this.setMotionShift(shift, true);
+    }
+
+    public void setMotionShift(float shift, boolean dirty)
+    {
+        float value = Float.isFinite(shift) ? Math.max(-0.49F, Math.min(0.49F, shift)) : 0F;
+        if (value == this.motionShift) return;
+        if (dirty) this.preNotify();
+        this.motionShift = value;
+        if (dirty) this.postNotify();
+    }
+
+    public boolean supportsMotionShift()
+    {
+        /* Model animation keys have no factory: CubicModelAnimator evaluates
+         * their numeric Molang expressions directly. */
+        return (this.factory == null || !this.factory.isStepped()) && !this.interp.has(Interpolations.CONST);
+    }
+
+    /** Smooth monotonic time warp: endpoints stay fixed and f(0.5 + shift) = 0.5. */
+    public float remapMotion(float progress)
+    {
+        if (this.motionShift == 0F || progress <= 0F || progress >= 1F || !this.supportsMotionShift()) return progress;
+        double midpoint = 0.5D + this.motionShift;
+        return (float) (progress * (1D - midpoint) / (midpoint + (1D - 2D * midpoint) * progress));
+    }
+
+    public double getY()
     {
         return this.factory.getY(this.value);
     }
@@ -123,134 +175,25 @@ public class Keyframe <T> extends BaseValue
         if (dirty) this.postNotify();
     }
 
-    public float getLx(int axis)
-    {
-        return this.getHandle(this.lx_m, axis, this.lx);
-    }
-
-    public float getLy(int axis)
-    {
-        return this.getHandle(this.ly_m, axis, this.ly);
-    }
-
-    public float getRx(int axis)
-    {
-        return this.getHandle(this.rx_m, axis, this.rx);
-    }
-
-    public float getRy(int axis)
-    {
-        return this.getHandle(this.ry_m, axis, this.ry);
-    }
-
-    public void setLx(int axis, float value)
-    {
-        if (axis < 0)
-        {
-            this.lx = value;
-            return;
-        }
-
-        this.ensureMultiHandles(axis + 1);
-        this.lx_m.set(axis, value);
-    }
-
-    public void setLy(int axis, float value)
-    {
-        if (axis < 0)
-        {
-            this.ly = value;
-            return;
-        }
-
-        this.ensureMultiHandles(axis + 1);
-        this.ly_m.set(axis, value);
-    }
-
-    public void setRx(int axis, float value)
-    {
-        if (axis < 0)
-        {
-            this.rx = value;
-            return;
-        }
-
-        this.ensureMultiHandles(axis + 1);
-        this.rx_m.set(axis, value);
-    }
-
-    public void setRy(int axis, float value)
-    {
-        if (axis < 0)
-        {
-            this.ry = value;
-            return;
-        }
-
-        this.ensureMultiHandles(axis + 1);
-        this.ry_m.set(axis, value);
-    }
-
-    public void ensureMultiHandles(int size)
-    {
-        if (size <= 0)
-        {
-            return;
-        }
-
-        if (this.lx_m == null)
-        {
-            this.lx_m = new ArrayList<>();
-            this.ly_m = new ArrayList<>();
-            this.rx_m = new ArrayList<>();
-            this.ry_m = new ArrayList<>();
-        }
-
-        this.ensureHandleSize(this.lx_m, size, this.lx);
-        this.ensureHandleSize(this.ly_m, size, this.ly);
-        this.ensureHandleSize(this.rx_m, size, this.rx);
-        this.ensureHandleSize(this.ry_m, size, this.ry);
-    }
-
-    private float getHandle(List<Float> list, int axis, float fallback)
-    {
-        return axis >= 0 && list != null && axis < list.size() ? list.get(axis) : fallback;
-    }
-
-    private void ensureHandleSize(List<Float> list, int size, float fallback)
-    {
-        while (list.size() < size)
-        {
-            list.add(fallback);
-        }
-    }
-
     public Interpolation getInterpolation()
     {
         return this.interp;
     }
 
-    public KeyframeShape getShape()
+    /**
+     * The style this keyframe is drawn with. Read it freely; to change it, hand a modified copy to
+     * {@link #setStyle(KeyframeStyle)} - editing this one in place skips the change notification
+     * and the edit goes unrecorded.
+     */
+    public KeyframeStyle getStyle()
     {
-        return this.shape;
+        return this.style;
     }
 
-    public void setShape(KeyframeShape shape)
+    public void setStyle(KeyframeStyle style)
     {
         this.preNotify();
-        this.shape = shape;
-        this.postNotify();
-    }
-
-    public Color getColor()
-    {
-        return this.color;
-    }
-
-    public void setColor(Color color)
-    {
-        this.preNotify();
-        this.color = color;
+        this.style.copy(style);
         this.postNotify();
     }
 
@@ -258,20 +201,15 @@ public class Keyframe <T> extends BaseValue
     {
         this.tick = keyframe.tick;
         this.duration = keyframe.duration;
+        this.motionShift = keyframe.motionShift;
         this.value = this.factory.copy(keyframe.value);
         this.interp.copy(keyframe.interp);
-        this.shape = keyframe.shape;
-        this.color = keyframe.color;
+        this.style.copy(keyframe.style);
 
         this.lx = keyframe.lx;
         this.ly = keyframe.ly;
         this.rx = keyframe.rx;
         this.ry = keyframe.ry;
-
-        if (keyframe.lx_m != null) this.lx_m = new ArrayList<>(keyframe.lx_m);
-        if (keyframe.ly_m != null) this.ly_m = new ArrayList<>(keyframe.ly_m);
-        if (keyframe.rx_m != null) this.rx_m = new ArrayList<>(keyframe.rx_m);
-        if (keyframe.ry_m != null) this.ry_m = new ArrayList<>(keyframe.ry_m);
     }
 
     @Override
@@ -290,11 +228,8 @@ public class Keyframe <T> extends BaseValue
                 && this.ly == kf.ly
                 && this.rx == kf.rx
                 && this.ry == kf.ry
-                && Objects.equals(this.lx_m, kf.lx_m)
-                && Objects.equals(this.ly_m, kf.ly_m)
-                && Objects.equals(this.rx_m, kf.rx_m)
-                && Objects.equals(this.ry_m, kf.ry_m)
                 && this.duration == kf.duration
+                && this.motionShift == kf.motionShift
                 && Objects.equals(this.interp, kf.interp);
         }
 
@@ -310,31 +245,13 @@ public class Keyframe <T> extends BaseValue
         data.put("value", this.factory.toData(this.value));
 
         if (this.duration != 0F) data.putFloat("duration", this.duration);
+        if (this.motionShift != 0F) data.putFloat("motion_shift", this.motionShift);
         if (this.interp.getInterp() != Interpolations.LINEAR) data.put("interp", this.interp.toData());
         if (this.lx != 5F) data.putFloat("lx", this.lx);
         if (this.ly != 0F) data.putFloat("ly", this.ly);
         if (this.rx != 5F) data.putFloat("rx", this.rx);
         if (this.ry != 0F) data.putFloat("ry", this.ry);
-        if (this.color != null) data.putInt("color", this.color.getRGBColor());
-        if (this.shape != KeyframeShape.SQUARE) data.putString("shape", this.shape.toString().toUpperCase());
-
-        if (this.lx_m != null)
-        {
-            ListType lx = new ListType();
-            ListType ly = new ListType();
-            ListType rx = new ListType();
-            ListType ry = new ListType();
-
-            for (Float f : this.lx_m) lx.addFloat(f);
-            for (Float f : this.ly_m) ly.addFloat(f);
-            for (Float f : this.rx_m) rx.addFloat(f);
-            for (Float f : this.ry_m) ry.addFloat(f);
-
-            data.put("lx_m", lx);
-            data.put("ly_m", ly);
-            data.put("rx_m", rx);
-            data.put("ry_m", ry);
-        }
+        this.style.toData(data);
 
         return data;
     }
@@ -349,8 +266,9 @@ public class Keyframe <T> extends BaseValue
 
         MapType map = data.asMap();
 
-        this.shape = KeyframeShape.SQUARE;
-        this.color = null;
+        this.setMotionShift(map.getFloat("motion_shift"), false);
+
+        this.style.fromData(map);
 
         if (map.has("tick")) this.tick = map.getFloat("tick");
         if (map.has("duration")) this.duration = map.getFloat("duration");
@@ -360,43 +278,18 @@ public class Keyframe <T> extends BaseValue
         if (map.has("ly")) this.ly = map.getFloat("ly");
         if (map.has("rx")) this.rx = map.getFloat("rx");
         if (map.has("ry")) this.ry = map.getFloat("ry");
-        if (map.has("shape")) this.shape = KeyframeShape.fromString(map.getString("shape"));
-        if (map.has("color")) this.color = Color.rgb(map.getInt("color"));
-
-        if (map.has("lx_m"))
-        {
-            this.lx_m = new ArrayList<>();
-            this.ly_m = new ArrayList<>();
-            this.rx_m = new ArrayList<>();
-            this.ry_m = new ArrayList<>();
-
-            ListType lx = map.getList("lx_m");
-            ListType ly = map.getList("ly_m");
-            ListType rx = map.getList("rx_m");
-            ListType ry = map.getList("ry_m");
-
-            for (int i = 0; i < lx.size(); i++) this.lx_m.add(lx.getFloat(i));
-            for (int i = 0; i < ly.size(); i++) this.ly_m.add(ly.getFloat(i));
-            for (int i = 0; i < rx.size(); i++) this.rx_m.add(rx.getFloat(i));
-            for (int i = 0; i < ry.size(); i++) this.ry_m.add(ry.getFloat(i));
-        }
     }
 
     public void copyOverExtra(Keyframe<?> a)
     {
         this.getInterpolation().copy(a.getInterpolation());
-        this.setShape(a.getShape());
-        this.setColor(a.getColor() != null ? a.getColor().copy() : null);
+        this.setStyle(a.getStyle());
         this.setDuration(a.getDuration());
+        this.setMotionShift(a.getMotionShift());
 
         this.lx = a.lx;
         this.ly = a.ly;
         this.rx = a.rx;
         this.ry = a.ry;
-
-        if (a.lx_m != null) this.lx_m = new ArrayList<>(a.lx_m);
-        if (a.ly_m != null) this.ly_m = new ArrayList<>(a.ly_m);
-        if (a.rx_m != null) this.rx_m = new ArrayList<>(a.rx_m);
-        if (a.ry_m != null) this.ry_m = new ArrayList<>(a.ry_m);
     }
 }

@@ -1,7 +1,5 @@
 package mchorse.bbs_mod.utils.keyframes.factories;
 
-import org.joml.Vector3f;
-
 import java.util.HashMap;
 import java.util.Map;
 
@@ -23,8 +21,6 @@ public class KeyframeFactories
     public static final IntegerKeyframeFactory INTEGER = new IntegerKeyframeFactory();
     public static final LongKeyframeFactory LONG = new LongKeyframeFactory();
     public static final LinkKeyframeFactory LINK = new LinkKeyframeFactory();
-    public static final Vector3fKeyframeFactory VECTOR3F = new Vector3fKeyframeFactory(new Vector3f());
-    public static final Vector3fKeyframeFactory VECTOR3F_SCALE = new Vector3fKeyframeFactory(new Vector3f(1F, 1F, 1F));
     public static final Vector4fKeyframeFactory VECTOR4F = new Vector4fKeyframeFactory();
     public static final AnchorKeyframeFactory ANCHOR = new AnchorKeyframeFactory();
     public static final BlockStateKeyframeFactory BLOCK_STATE = new BlockStateKeyframeFactory();
@@ -32,17 +28,24 @@ public class KeyframeFactories
     public static final ActionsConfigKeyframeFactory ACTIONS_CONFIG = new ActionsConfigKeyframeFactory();
     public static final ShapeKeysKeyframeFactory SHAPE_KEYS = new ShapeKeysKeyframeFactory();
     public static final ParticleSettingsKeyframeFactory PARTICLE_SETTINGS = new ParticleSettingsKeyframeFactory();
+    public static final BoneConstraintKeyframeFactory BONE_CONSTRAINT = new BoneConstraintKeyframeFactory();
 
     public static boolean isNumeric(IKeyframeFactory factory)
     {
         return factory instanceof DoubleKeyframeFactory
             || factory instanceof FloatKeyframeFactory
             || factory instanceof IntegerKeyframeFactory
-            || factory instanceof LongKeyframeFactory
-            || factory instanceof Vector3fKeyframeFactory;
+            || factory instanceof LongKeyframeFactory;
     }
 
-    static
+    /**
+     * Fills the registry. Called by BBS while it initialises, and followed by the event that
+     * lets addons add to it.
+     *
+     * <p>This used to be a static initialiser, which ran whenever something first touched the
+     * class — a moment nobody chose and an addon could not aim at.</p>
+     */
+    public static void setup()
     {
         FACTORIES.put("color", COLOR);
         FACTORIES.put("transform", TRANSFORM);
@@ -58,8 +61,6 @@ public class KeyframeFactories
         FACTORIES.put("integer", INTEGER);
         FACTORIES.put("long", LONG);
         FACTORIES.put("link", LINK);
-        FACTORIES.put("vector3f", VECTOR3F);
-        FACTORIES.put("vector3f_scale", VECTOR3F_SCALE);
         FACTORIES.put("vector4f", VECTOR4F);
         FACTORIES.put("anchor", ANCHOR);
         FACTORIES.put("block_state", BLOCK_STATE);
@@ -67,5 +68,6 @@ public class KeyframeFactories
         FACTORIES.put("actions_config", ACTIONS_CONFIG);
         FACTORIES.put("shape_keys", SHAPE_KEYS);
         FACTORIES.put("particle_settings", PARTICLE_SETTINGS);
+        FACTORIES.put("bone_constraint", BONE_CONSTRAINT);
     }
 }

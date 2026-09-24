@@ -9,44 +9,45 @@ import mchorse.bbs_mod.client.BBSShaders;
 import mchorse.bbs_mod.graphics.Draw;
 import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.resources.Link;
+import mchorse.bbs_mod.settings.values.numeric.ValueBoolean;
 import mchorse.bbs_mod.ui.framework.UIBaseMenu;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform;
 import mchorse.bbs_mod.ui.framework.elements.input.drag.DragStrategy;
+import mchorse.bbs_mod.ui.framework.elements.input.drag.TransformGesture;
 import mchorse.bbs_mod.ui.framework.elements.input.drag.TransformOp;
 import mchorse.bbs_mod.ui.framework.elements.input.drag.TransformSpace;
-import mchorse.bbs_mod.ui.framework.elements.utils.StencilMap;
 import mchorse.bbs_mod.utils.Axis;
 import mchorse.bbs_mod.utils.MatrixStackUtils;
 import mchorse.bbs_mod.utils.colors.Colors;
-import mchorse.bbs_mod.utils.MathUtils;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.BufferRenderer;
 import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.Tessellator;
 import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
+import com.mojang.blaze3d.platform.GlStateManager;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.client.gl.GlUniform;
 import net.minecraft.client.gl.ShaderProgram;
-import net.minecraft.client.gl.VertexBuffer;
-import net.minecraft.util.math.RotationAxis;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
-import org.joml.Quaternionf;
 import org.joml.Vector2f;
 import org.joml.Vector3d;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
 import org.lwjgl.opengl.GL11;
 
+import java.util.EnumSet;
+import java.util.function.Supplier;
+
 public class Gizmo
 {
-    /* Every pickable gizmo handle owns a distinct stencil id so the combined
-     * mode can show move/scale/rotate at once and a pick unambiguously names
-     * both the operation and the axis. {@link Handle} ties these together;
-     * single-operation modes simply render a subset of them. {@link #STENCIL_MAX}
+    /* Every pickable gizmo handle owns a distinct stencil id, so the gizmo can show
+     * move, scale and rotate at once and a pick unambiguously names both the
+     * operation and the axis. {@link Handle} ties these together; hiding an
+     * {@link Element} simply drops its handles from both passes. {@link #STENCIL_MAX}
      * stays the highest id so form parts (which begin right after it) never
      * collide with a handle. */
     public final static int STENCIL_X = 1;
@@ -68,31 +69,34 @@ public class Gizmo
     public final static int STENCIL_VIEW = 17;
     /** Screen-space translate handle: the big centre cube that grabs in the view plane. */
     public final static int STENCIL_SCREEN = 18;
-    /** Uniform-scale handle: the centre cube in scale mode that scales all three axes at once. */
+    /** Uniform-scale handle: the centre cube that scales all three axes at once. */
     public final static int STENCIL_SCALE_ALL = 19;
 
     /** Highest gizmo handle id; form-part stencil ids begin right after it. */
     public final static int STENCIL_MAX = STENCIL_SCALE_ALL;
 
     /** Radius of the view-plane ring relative to the per-axis rings. */
-    private final static float VIEW_RING_SCALE = 1.2F;
 
-    /** Move/scale handles shrink inside the rotation rings in combined mode. */
-    private final static float COMBINED_INNER_SCALE = 0.6F;
+    /** Move/scale handles shrink so they nest inside the rotation rings. */
+    private final static float INNER_SCALE = 0.6F;
 
     /** How much a ring is allowed to reach past the sphere's silhouette so a
      *  ring seen face-on still draws in full. {@code 0} would cut every ring
      *  dead on the silhouette (a face-on ring, sitting exactly on it, would
      *  flicker to half); a small value keeps face-on rings whole while a tilted
      *  ring's far half still ends right at the silhouette. */
-    private final static float RING_FACE_ON_BIAS = 0.18F;
 
     /** Angular resolution used to find a ring's camera-facing (visible) arc. */
-    private final static int RING_OCCLUSION_SAMPLES = 180;
 
     /** Half-size of the scale handle's end cube, in gizmo-local units (× axes scale × thickness).
      *  Based on scale/thickness rather than the per-pass line offset, so the cube is the same
      *  size in the visual and stencil passes and its hitbox matches the drawn cube exactly. */
+    /** Axis bar length before the scale and ring-nesting factors, in gizmo-local units. */
+    private final static float AXIS_SIZE = 0.25F;
+
+    /** Half-thickness of the axis bars before the scale and thickness settings. */
+    private final static float AXIS_OFFSET = 0.008F;
+
     private final static float SCALE_CUBE_HALF = 0.032F;
 
     /** Half-size of the centre cube shared by the screen-space (view-plane) translate
@@ -104,15 +108,14 @@ public class Gizmo
 
     public final static Gizmo INSTANCE = new Gizmo();
 
-    private Mode mode = Mode.COMBINED;
-    /** The mode to return to when combined mode is toggled off. */
-    private Mode previousMode = Mode.TRANSLATE;
-
     private int index;
     private int mouseX;
     private int mouseY;
 
-    private UIPropTransform currentTransform;
+    /** The edit session a gizmo interaction is currently running, or {@code null}. The gizmo
+     *  holds the GESTURE, not the editor widget: every question it asks is a gesture question,
+     *  and the widget that owns the session may well not be drawn at all. */
+    private TransformGesture currentGesture;
 
     /* Snapshot of the matrix stack at the moment the gizmo is rendered.
      * Combined with a camera (whose view matrix matches the one applied to
@@ -130,18 +133,15 @@ public class Gizmo
     private final Matrix4f bakedRotationMatrix = new Matrix4f();
     private DragStrategy bakedGesture;
 
-    /** The frame the handles were last placed in ({@link #reorientForSpace}), or
-     *  {@code null} when the placement was left untouched. Only the draw passes
-     *  read it, to flatten {@link TransformSpace#VIEW} onto the eye ray
-     *  ({@link #applyViewShear}); the drag math takes its frames from
-     *  {@link GizmoDrag} as before. */
-    private TransformSpace lastSpace;
+    /** The camera view {@link #reorientForSpace} was handed last — the same one the
+     *  stack it reoriented already carries. Kept so the constraint guide can be put back
+     *  onto the drag's own frame ({@link #orientGuide}); unset without a scene camera,
+     *  and forgotten with the placement at the frame boundary. */
+    private final Matrix4f lastCameraView = new Matrix4f();
+    private boolean hasLastCameraView;
 
-    /* VBO caching for rotation rings to save resources */
-    private VertexBuffer rotateRingVbo;
-    private VertexBuffer rotateSphereVbo;
-    private float lastScale = -1F;
-    private float lastThickness = -1F;
+    /** The rings, the view ring and the sphere, with their settings-driven geometry cache. */
+    private final GizmoRings rings = new GizmoRings();
     /** World-space radius the sphere is drawn at, expressed in
      *  the local coordinate frame {@link #lastRenderMatrix} describes
      *  (i.e. already includes axesScale and the per-frame distanceScale).
@@ -166,14 +166,16 @@ public class Gizmo
      *  overlay, the same look bones/handles get from the pick stencil). */
     private boolean sphereHovered;
 
-    /** Per-frame on-screen size compensation, {@code menu.height / viewportArea.h}.
-     *  {@link #getAxesDistanceScale} otherwise keeps the gizmo a constant fraction
-     *  of its viewport, so it shrinks in a small preview (the film) versus a
-     *  full-screen editor (forms); this factor makes it a constant fraction of the
-     *  window instead, i.e. the same on-screen size in every editor. Each viewport
-     *  sets it via {@link #setViewportScale} before BOTH its visual and stencil
-     *  pass so the drawn gizmo and its pick hitbox scale together. */
-    private float viewportScale = 1F;
+    /** Height in UI pixels of the final viewport, shared by drawing and picking. */
+    private float viewportHeight;
+
+    /** What the edited target can actually accept this frame ({@link HandleMask}).
+     *  Captured together with the render matrix, because both draw passes run
+     *  later, in the UI pass, and must be laid out from the same description as
+     *  the world pass that placed the gizmo. Reset to {@link HandleMask#ALL} by
+     *  the plain capture calls, so a restricted target cannot leak its mask into
+     *  the next editor's gizmo. */
+    private HandleMask mask = HandleMask.ALL;
 
     private Gizmo()
     {}
@@ -242,17 +244,12 @@ public class Gizmo
         return true;
     }
 
-    public Mode getMode()
-    {
-        return this.mode;
-    }
-
     /** The active drag's on-screen readout (angle / offset / scale delta), or
      *  {@code null} when nothing is being dragged. See
-     *  {@link UIPropTransform#getDragReadout()}. */
+     *  {@link TransformGesture#getReadout()}. */
     public String getDragReadout()
     {
-        return this.currentTransform == null ? null : this.currentTransform.getDragReadout();
+        return this.currentGesture == null ? null : this.currentGesture.getReadout();
     }
 
 
@@ -267,30 +264,19 @@ public class Gizmo
      * viewport, with the same value for both, so the drawn gizmo and its pick
      * hitbox stay the same constant on-screen size across editors.
      */
-    public void setViewportScale(float viewportScale)
+    public void setViewportHeight(float viewportHeight)
     {
-        this.viewportScale = viewportScale > 0F && Float.isFinite(viewportScale) ? viewportScale : 1F;
-    }
-
-    /** The trackball sphere shows in the dedicated rotate mode and in combined. */
-    public boolean hasSphere()
-    {
-        return this.mode == Mode.ROTATE || this.mode == Mode.COMBINED;
+        this.viewportHeight = viewportHeight;
     }
 
     public boolean isSphereInteractive()
     {
-        if (!BBSSettings.gizmos.get() || !BBSSettings.rotate3dSphere.get())
+        if (!BBSSettings.gizmos.get() || !Element.SPHERE.isVisible() || !this.mask.allows(Op.TRACKBALL))
         {
             return false;
         }
 
-        if (!this.hasSphere())
-        {
-            return false;
-        }
-
-        if (this.currentTransform != null && this.currentTransform.isEditing() && !this.currentTransform.isSphereRotate())
+        if (this.currentGesture != null && this.currentGesture.isEditing() && !this.currentGesture.isSphereRotate())
         {
             return false;
         }
@@ -300,10 +286,10 @@ public class Gizmo
 
     public boolean isSphereDragging()
     {
-        return this.currentTransform != null && this.currentTransform.isEditing() && this.currentTransform.isSphereRotate();
+        return this.currentGesture != null && this.currentGesture.isEditing() && this.currentGesture.isSphereRotate();
     }
 
-    /** World-space radius the rotate sphere was last drawn at ({@code 0} until rendered). */
+    /** World-space radius shared by the drawn sphere and camera-space dragging. */
     public float getSphereWorldRadius()
     {
         return this.hasLastRenderMatrix ? this.lastSphereLocalRadius : 0F;
@@ -346,7 +332,7 @@ public class Gizmo
     }
 
     /**
-     * Effective pixel radius of the rotate-mode sphere on screen, so the
+     * Effective pixel radius of the rotation sphere on screen, so the
      * hover/pick disc in {@link mchorse.bbs_mod.ui.film.controller.UIFilmController}
      * matches the sphere's actual visual size at the current camera
      * distance and axes scale.
@@ -416,39 +402,122 @@ public class Gizmo
      * are the same pair {@link #computeScreenCenter} uses, so the mask lands on
      * the sphere's footprint regardless of mask resolution.
      */
+    /* What the hover mask currently holds, so a still sphere is not re-drawn every hovered
+     * frame — the mask used to be a window-sized clear plus a full-viewport composite per
+     * frame; now it is the sphere's own rectangle, re-drawn only when that moved. */
+    private final Matrix4f lastMaskMatrix = new Matrix4f();
+    private final Matrix4f lastMaskProjection = new Matrix4f();
+    private int lastMaskX;
+    private int lastMaskY;
+    private int lastMaskW;
+    private int lastMaskH;
+    private boolean maskValid;
+
     public void renderSphereHighlight(UIContext context, Matrix4f projection, Area area)
     {
         if (!this.sphereHovered || !this.hasLastSphereMatrix || !this.isSphereInteractive()
-            || !UIBaseMenu.shouldRenderAxes() || this.rotateSphereVbo == null || projection == null || area == null)
+            || !UIBaseMenu.shouldRenderAxes() || projection == null || area == null)
+        {
+            return;
+        }
+
+        /* The highlight only ever lights the sphere's own footprint, so both the mask and the
+         * composite live in that footprint's rectangle rather than the whole viewport. */
+        Vector2f center = new Vector2f();
+
+        if (!this.computeScreenCenter(projection, area.x, area.y, area.w, area.h, center))
+        {
+            return;
+        }
+
+        float radius = this.computeScreenRadius(projection, area.x, area.y, area.w, area.h);
+
+        if (radius <= 0F)
+        {
+            return;
+        }
+
+        int margin = 4;
+        int rectX = Math.max(area.x, (int) Math.floor(center.x - radius) - margin);
+        int rectY = Math.max(area.y, (int) Math.floor(center.y - radius) - margin);
+        int rectEndX = Math.min(area.ex(), (int) Math.ceil(center.x + radius) + margin);
+        int rectEndY = Math.min(area.ey(), (int) Math.ceil(center.y + radius) + margin);
+        int rw = rectEndX - rectX;
+        int rh = rectEndY - rectY;
+
+        if (rw <= 0 || rh <= 0)
         {
             return;
         }
 
         MinecraftClient mc = MinecraftClient.getInstance();
+        float pixelScale = mc.getWindow().getFramebufferWidth() / (float) Math.max(1, context.menu.width);
+        int pw = Math.max(1, Math.min(512, Math.round(rw * pixelScale)));
+        int ph = Math.max(1, Math.min(512, Math.round(rh * pixelScale)));
+        float scaleX = pw / (float) rw;
+        float scaleY = ph / (float) rh;
 
         this.sphereHighlight.setup(Link.bbs("gizmo_sphere_highlight"));
 
-        int w = mc.getWindow().getWidth();
-        int h = mc.getWindow().getHeight();
         Texture texture = this.sphereHighlight.getFramebuffer().getMainTexture();
 
-        if (texture.width != w || texture.height != h)
+        /* Grow-only, so a pixel of rectangle jitter doesn't reallocate the texture per frame. */
+        if (texture.width < pw || texture.height < ph)
         {
-            this.sphereHighlight.resize(w, h);
+            this.sphereHighlight.resize(Math.max(texture.width, pw), Math.max(texture.height, ph));
         }
 
-        this.sphereHighlight.apply();
+        boolean moved = !this.maskValid
+            || this.lastMaskX != rectX || this.lastMaskY != rectY
+            || this.lastMaskW != pw || this.lastMaskH != ph
+            || !this.lastMaskMatrix.equals(this.lastSphereMatrix)
+            || !this.lastMaskProjection.equals(projection);
 
-        RenderSystem.disableDepthTest();
-        RenderSystem.setShaderColor(STENCIL_TRACKBALL / 255F, 0F, 0F, 1F);
-        this.rotateSphereVbo.bind();
-        this.rotateSphereVbo.draw(this.lastSphereMatrix, projection, GameRenderer.getPositionColorProgram());
-        VertexBuffer.unbind();
-        RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
-        RenderSystem.enableDepthTest();
+        if (moved)
+        {
+            context.batcher.flush();
 
-        this.sphereHighlight.unbind();
-        mc.getFramebuffer().beginWrite(true);
+            boolean scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
+
+            if (scissor)
+            {
+                GlStateManager._disableScissorTest();
+            }
+
+            this.sphereHighlight.getFramebuffer().bind();
+            this.sphereHighlight.getFramebuffer().clear();
+
+            /* The sphere projects in the viewport's NDC; the viewport is oversized and offset so
+             * the rectangle's slice of it lands on the mask (GUI y runs down, GL y runs up). */
+            GL11.glViewport(
+                Math.round(-(rectX - area.x) * scaleX),
+                Math.round(-(area.ey() - rectY - rh) * scaleY),
+                Math.round(area.w * scaleX),
+                Math.round(area.h * scaleY)
+            );
+
+            RenderSystem.disableDepthTest();
+            RenderSystem.setShaderColor(STENCIL_TRACKBALL / 255F, 0F, 0F, 1F);
+            this.rings.drawSphere(this.lastSphereMatrix, projection);
+            RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+            RenderSystem.enableDepthTest();
+
+            this.sphereHighlight.unbind();
+            mc.getFramebuffer().beginWrite(true);
+
+            if (scissor)
+            {
+                GlStateManager._enableScissorTest();
+            }
+
+            this.lastMaskMatrix.set(this.lastSphereMatrix);
+            this.lastMaskProjection.set(projection);
+            this.lastMaskX = rectX;
+            this.lastMaskY = rectY;
+            this.lastMaskW = pw;
+            this.lastMaskH = ph;
+            this.maskValid = true;
+        }
 
         ShaderProgram previewProgram = BBSShaders.getPickerPreviewProgram();
         GlUniform target = previewProgram.getUniform("Target");
@@ -468,52 +537,7 @@ public class Gizmo
         }
 
         RenderSystem.enableBlend();
-        context.batcher.texturedBox(BBSShaders::getPickerPreviewProgram, texture.id, Colors.WHITE, area.x, area.y, area.w, area.h, 0, texture.height, texture.width, 0, texture.width, texture.height);
-    }
-
-    /**
-     * Set the persistent gizmo mode. Returns {@code true} iff the mode
-     * actually changed — callers (notably the tool-switch hotkey
-     * helper) use this to distinguish a real switch from a no-op press
-     * on the already-active tool.
-     */
-    public boolean setMode(Mode mode)
-    {
-        if (!BBSSettings.gizmos.get())
-        {
-            return false;
-        }
-
-        boolean same = this.mode == mode;
-
-        this.mode = mode;
-
-        return !same;
-    }
-
-    /**
-     * Toggle the combined mode: entering it remembers the mode left behind so a
-     * second press returns there. This is the only way out of combined, since
-     * in that mode the G/S/R hotkeys run their operation without switching the
-     * displayed handles.
-     */
-    public boolean toggleCombined()
-    {
-        if (this.mode == Mode.COMBINED)
-        {
-            return this.setMode(this.previousMode);
-        }
-
-        Mode previous = this.mode;
-
-        if (this.setMode(Mode.COMBINED))
-        {
-            this.previousMode = previous;
-
-            return true;
-        }
-
-        return false;
+        context.batcher.texturedBox(BBSShaders::getPickerPreviewProgram, texture.id, Colors.WHITE, rectX, rectY, rw, rh, 0, ph, pw, 0, texture.width, texture.height);
     }
 
     public boolean start(int index, int mouseX, int mouseY, UIPropTransform transform)
@@ -530,7 +554,10 @@ public class Gizmo
 
         Handle handle = Handle.byIndex(index);
 
-        if (handle == null)
+        /* The mask already keeps a forbidden handle out of both draw passes, so a pick
+         * can't name one; the hotkey walk and any programmatic start bypass the stencil
+         * though, so the refusal lives here too. */
+        if (handle == null || !this.mask.allows(handle))
         {
             return false;
         }
@@ -539,28 +566,30 @@ public class Gizmo
         this.mouseX = mouseX;
         this.mouseY = mouseY;
 
-        this.currentTransform = transform;
+        this.currentGesture = transform == null ? null : transform.getGesture();
 
-        if (transform != null)
+        if (this.currentGesture != null)
         {
+            TransformGesture gesture = this.currentGesture;
+
             switch (handle.op)
             {
                 case MOVE:
                 case SCALE:
                 case ROTATE:
-                    transform.enableMode(handle.op.transformOp, handle.axis, handle.axis2, drag);
+                    gesture.enableMode(handle.op.transformOp, handle.axis, handle.axis2, drag);
                     break;
                 case SCALE_ALL:
-                    transform.enableUniformScale(drag);
+                    gesture.enableUniformScale(drag);
                     break;
                 case SCREEN:
-                    transform.enableScreenTranslate(drag);
+                    gesture.enableScreenTranslate(drag);
                     break;
                 case TRACKBALL:
-                    if (BBSSettings.rotate3dSphere.get()) transform.enableSphereRotate(drag);
+                    if (Element.SPHERE.isVisible()) gesture.enableSphereRotate(drag);
                     break;
                 case VIEW:
-                    transform.enableViewRotate(drag);
+                    gesture.enableViewRotate(drag);
                     break;
             }
         }
@@ -568,16 +597,24 @@ public class Gizmo
         return true;
     }
 
-    public void trackTransform(UIPropTransform transform)
+    public void trackGesture(TransformGesture gesture)
     {
-        this.currentTransform = transform;
+        this.currentGesture = gesture;
     }
 
-    public void clearTrackedTransform(UIPropTransform transform)
+    /** The session a gesture is currently running in, or {@code null}. Its owner may
+     *  well be off screen (the replay-root gizmo has no fields at all), which is why
+     *  {@link GizmoInteraction#update} drives it from here rather than from a render. */
+    public TransformGesture getTrackedGesture()
     {
-        if (this.currentTransform == transform)
+        return this.currentGesture;
+    }
+
+    public void clearTrackedGesture(TransformGesture gesture)
+    {
+        if (this.currentGesture == gesture)
         {
-            this.currentTransform = null;
+            this.currentGesture = null;
             this.bakedGesture = null;
 
             if (this.index < STENCIL_X || this.index > STENCIL_MAX)
@@ -591,23 +628,30 @@ public class Gizmo
     {
         this.index = -1;
 
-        if (this.currentTransform != null)
+        if (this.currentGesture != null)
         {
-            this.currentTransform.acceptChanges();
+            this.currentGesture.accept();
         }
 
-        this.currentTransform = null;
+        this.currentGesture = null;
     }
 
     public void render(MatrixStack stack)
+    {
+        this.render(stack, HandleMask.ALL);
+    }
+
+    public void render(MatrixStack stack, HandleMask mask)
     {
         if (BBSRendering.isIrisShadowPass())
         {
             return;
         }
 
+        this.mask = mask == null ? HandleMask.ALL : mask;
+
         stack.push();
-        MatrixStackUtils.scaleBack(stack);
+        this.removePlacementScale(stack);
         this.captureRenderMatrix(stack);
         this.drawGizmo(stack);
         stack.pop();
@@ -622,13 +666,20 @@ public class Gizmo
      */
     public void captureVisual(MatrixStack stack)
     {
+        this.captureVisual(stack, HandleMask.ALL);
+    }
+
+    public void captureVisual(MatrixStack stack, HandleMask mask)
+    {
         if (BBSRendering.isIrisShadowPass())
         {
             return;
         }
 
+        this.mask = mask == null ? HandleMask.ALL : mask;
+
         stack.push();
-        MatrixStackUtils.scaleBack(stack);
+        this.removePlacementScale(stack);
         this.captureRenderMatrix(stack);
         stack.pop();
     }
@@ -652,7 +703,7 @@ public class Gizmo
      * blit), leaving it nearly invisible.
      *
      * <p>The projection is applied before drawing because
-     * {@link #getAxesDistanceScale} reads it back from {@link RenderSystem} to
+     * {@link #getDistanceScale} reads it back from {@link RenderSystem} to
      * keep the gizmo a constant on-screen size.
      */
     public void renderInterface(UIContext context, Matrix4f projection, Area area)
@@ -665,7 +716,7 @@ public class Gizmo
 
         MinecraftClient mc = MinecraftClient.getInstance();
 
-        this.setViewportScale(context.menu.height / (float) area.h);
+        this.setViewportHeight(area.h);
 
         context.batcher.flush();
 
@@ -696,20 +747,14 @@ public class Gizmo
     {
         this.applyBakedRotation(stack);
 
-        float distanceScale = this.getAxesDistanceScale(stack);
+        float distanceScale = this.getDistanceScale(stack);
 
         stack.push();
-        this.applyViewShear(stack);
         stack.scale(distanceScale, distanceScale, distanceScale);
 
         if (BBSSettings.gizmos.get())
         {
-            /* Cache the sphere's effective world radius (in
-             * {@link #lastRenderMatrix}'s coordinate frame) so
-             * {@link #computeScreenRadius} can report the real on-screen
-             * pixel size for hover/pick distance checks. */
             this.lastSphereLocalRadius = 0.22F * BBSSettings.axesScale.get() * distanceScale;
-
             this.lastSphereMatrix.set(stack.peek().getPositionMatrix());
             this.hasLastSphereMatrix = true;
             this.drawOccludedGizmo(stack);
@@ -720,62 +765,7 @@ public class Gizmo
         }
 
         stack.pop();
-
-        /* Deliberately outside the shear: the constraint guide is a world-space line
-         * showing the axis the drag actually slides along, and that axis comes from
-         * {@link GizmoDrag#frameBasis} — the unsheared frame. */
         this.drawInfiniteLine(stack);
-    }
-
-    /**
-     * Flatten the handles' third axis onto the eye ray while they are drawn in
-     * {@link TransformSpace#VIEW}, so a screen-space tool reads as one wherever it
-     * sits in the frame.
-     *
-     * <p>VIEW places the handles on the camera's own axes
-     * ({@link GizmoDrag#stackBasisForSpace}), which makes them PARALLEL to the screen
-     * but not FACING it: under perspective a gizmo away from the centre is seen a
-     * little from the side. Measured at a 70&deg; FOV, the Z bar — a dot dead centre —
-     * grows to about three quarters of a handle's length by the corner of the frame,
-     * and the billboarded view ring goes a quarter oval and drifts off the origin,
-     * while the axis rings beside it stay perfect circles. That mismatch is the whole
-     * "not quite straight on" look.
-     *
-     * <p>Replacing the third column with the unit ray from the gizmo back to the eye
-     * cancels exactly that, and nothing else: the Z bar collapses to a point at every
-     * screen position, everything drawn in the screen plane (the rings, the billboard,
-     * the plane quads) projects perfectly circular and concentric, and the X/Y bars
-     * keep the exact horizontal/vertical they already had, since their columns are not
-     * touched. At the centre the eye ray IS the camera's Z, so the frame is the
-     * identity again and nothing jumps as the gizmo crosses the middle. The column
-     * stays unit length, so {@link MatrixStackUtils#scaleBack} is unaffected, and the
-     * determinant stays positive (~0.82 at the corner), so depth order and winding hold.
-     *
-     * <p>Only the DRAWING frame is sheared, and both draw passes take it, so the pick
-     * stencil keeps matching the visual pixel for pixel. {@link #lastRenderMatrix} is
-     * captured before this runs, so the gizmo's world axes, the drag frames and the
-     * pick projections all keep the orthonormal camera basis they had.
-     */
-    private void applyViewShear(MatrixStack stack)
-    {
-        if (this.lastSpace != TransformSpace.VIEW)
-        {
-            return;
-        }
-
-        Matrix4f matrix = stack.peek().getPositionMatrix();
-        Vector3f toCamera = matrix.getTranslation(new Vector3f()).negate();
-
-        if (toCamera.lengthSquared() < 1.0E-8F)
-        {
-            return;
-        }
-
-        toCamera.normalize();
-
-        matrix.m20(toCamera.x);
-        matrix.m21(toCamera.y);
-        matrix.m22(toCamera.z);
     }
 
     /**
@@ -800,7 +790,7 @@ public class Gizmo
         GL11.glDepthRange(1D, 1D);
         RenderSystem.depthFunc(GL11.GL_ALWAYS);
         RenderSystem.colorMask(false, false, false, false);
-        this.drawAxes(stack, 0.25F, 0.008F);
+        this.drawAxes(stack);
 
         GL11.glDepthRange(0D, 1D);
         RenderSystem.colorMask(true, true, true, true);
@@ -812,180 +802,41 @@ public class Gizmo
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         RenderSystem.setShaderColor(1F, 1F, 1F, opacity);
-        this.drawAxes(stack, 0.25F, 0.008F);
+        this.drawAxes(stack);
 
         /* The sweep pie overlays the handles and must not write depth. */
         RenderSystem.depthMask(false);
         RenderSystem.depthFunc(GL11.GL_ALWAYS);
         RenderSystem.setShaderColor(1F, 1F, 1F, opacity);
-        this.drawRotatePieIfActive(stack);
+        GizmoPie.draw(stack, this.currentGesture, this.ringDragGesture());
         RenderSystem.depthMask(true);
 
         RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
         RenderSystem.depthFunc(GL11.GL_LEQUAL);
     }
 
-    /**
-     * Draw the rotation sweep pie when an axis ring is being dragged. Split out
-     * of the handle pass so it can be composited last, on top of and without
-     * disturbing the depth-sorted handles.
-     */
-    private void drawRotatePieIfActive(MatrixStack stack)
+    private float getDistanceScale(MatrixStack stack)
     {
-        UIPropTransform transform = this.currentTransform;
-
-        if (transform == null || !transform.isEditing() || transform.getOp() != TransformOp.ROTATE)
-        {
-            return;
-        }
-
-        if (transform.isSphereRotate())
-        {
-            return;
-        }
-
-        if (transform.isViewRotate())
-        {
-            this.drawViewPie(stack);
-
-            return;
-        }
-
-        Axis axis = transform.getAxis();
-
-        if (axis != null)
-        {
-            this.drawRotatePie(stack, axis);
-        }
+        return GizmoSize.getScale(stack.peek().getPositionMatrix(), RenderSystem.getProjectionMatrix(), this.viewportHeight);
     }
 
-    /**
-     * Sweep pie for the view (screen-plane) ring. Built straight from the cursor's
-     * screen angles using the gizmo's local directions that map to screen right and
-     * down, so it starts exactly under the grab, its leading edge follows the cursor,
-     * and — being in the gizmo's own (distance-scaled) frame — its radius rides the
-     * ring at any FOV.
-     */
-    private void drawViewPie(MatrixStack stack)
-    {
-        float sweepRad = this.currentTransform.getViewScreenSweepRad();
-
-        if (Math.abs(sweepRad) < 1.0E-4F)
-        {
-            return;
-        }
-
-        Matrix4f mat = stack.peek().getPositionMatrix();
-        Matrix3f basis = mat.get3x3(new Matrix3f());
-
-        if (Math.abs(basis.determinant()) < 1.0E-8F)
-        {
-            return;
-        }
-
-        /* Local directions mapping to screen right and screen down. Unit vectors,
-         * so a step of {@code radius} along them lands on the ring. */
-        Matrix3f inverse = basis.invert();
-        Vector3f right = inverse.transform(new Vector3f(1F, 0F, 0F)).normalize();
-        Vector3f down = inverse.transform(new Vector3f(0F, -1F, 0F)).normalize();
-
-        float startRad = this.currentTransform.getViewGrabScreenAngle();
-        float scale = BBSSettings.axesScale.get();
-        float radius = 0.22F * scale * VIEW_RING_SCALE;
-
-        int color = Colors.LIGHTEST_GRAY;
-        float r = Colors.getR(color);
-        float g = Colors.getG(color);
-        float b = Colors.getB(color);
-
-        BufferBuilder builder = Tessellator.getInstance().getBuffer();
-
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.setShader(GameRenderer::getPositionColorProgram);
-        RenderSystem.disableCull();
-
-        int segments = Math.max(2, (int) (Math.abs(sweepRad) / (float) (2D * Math.PI) * 64F));
-        float step = sweepRad / segments;
-        Vector3f p1 = new Vector3f();
-        Vector3f p2 = new Vector3f();
-
-        builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
-
-        for (int i = 0; i < segments; i++)
-        {
-            this.pieRim(p1, right, down, startRad + step * i, radius);
-            this.pieRim(p2, right, down, startRad + step * (i + 1), radius);
-
-            builder.vertex(mat, 0, 0, 0).color(r, g, b, 0.25F).next();
-            builder.vertex(mat, p1.x, p1.y, p1.z).color(r, g, b, 0.25F).next();
-            builder.vertex(mat, p2.x, p2.y, p2.z).color(r, g, b, 0.25F).next();
-        }
-
-        BufferRenderer.drawWithGlobalProgram(builder.end());
-
-        /* Bright radial edges at the grab angle and the leading angle, like the axis pie. */
-        float thickness = 0.005F * scale;
-        builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
-        this.pieEdge(builder, mat, right, down, startRad, radius, thickness, r, g, b);
-        this.pieEdge(builder, mat, right, down, startRad + sweepRad, radius, thickness, r, g, b);
-        BufferRenderer.drawWithGlobalProgram(builder.end());
-
-        RenderSystem.enableCull();
-        RenderSystem.disableBlend();
-    }
-
-    /** Point at screen angle {@code angle} and {@code radius} in the screen right/down
-     *  basis, written into {@code out}. */
-    private void pieRim(Vector3f out, Vector3f right, Vector3f down, float angle, float radius)
-    {
-        float c = (float) Math.cos(angle) * radius;
-        float s = (float) Math.sin(angle) * radius;
-
-        out.set(right.x * c + down.x * s, right.y * c + down.y * s, right.z * c + down.z * s);
-    }
-
-    /** One radial boundary line of the view pie: a thin quad from centre to the rim at
-     *  screen {@code angle}, built from the screen right/down basis. */
-    private void pieEdge(BufferBuilder builder, Matrix4f mat, Vector3f right, Vector3f down, float angle, float radius, float thickness, float r, float g, float b)
-    {
-        Vector3f rim = new Vector3f();
-        Vector3f perp = new Vector3f();
-
-        this.pieRim(rim, right, down, angle, radius);
-        this.pieRim(perp, right, down, angle + (float) (Math.PI / 2D), thickness);
-
-        builder.vertex(mat, perp.x, perp.y, perp.z).color(r, g, b, 1F).next();
-        builder.vertex(mat, -perp.x, -perp.y, -perp.z).color(r, g, b, 1F).next();
-        builder.vertex(mat, rim.x - perp.x, rim.y - perp.y, rim.z - perp.z).color(r, g, b, 1F).next();
-
-        builder.vertex(mat, perp.x, perp.y, perp.z).color(r, g, b, 1F).next();
-        builder.vertex(mat, rim.x - perp.x, rim.y - perp.y, rim.z - perp.z).color(r, g, b, 1F).next();
-        builder.vertex(mat, rim.x + perp.x, rim.y + perp.y, rim.z + perp.z).color(r, g, b, 1F).next();
-    }
-
-    private float getAxesDistanceScale(MatrixStack stack)
-    {
-        Vector3f cameraRelative = stack.peek().getPositionMatrix().getTranslation(new Vector3f());
-        Matrix4f proj = com.mojang.blaze3d.systems.RenderSystem.getProjectionMatrix();
-        float fov = proj.m33() == 0 ? (float) (2.0 * Math.atan(1.0 / proj.m11())) : BBSSettings.getFov();
-
-        return BBSSettings.getAxesDistanceScale(cameraRelative.length(), fov) * this.viewportScale;
-    }
-
+    /** The constraint guide: a world-space line along the dragged axis, drawn by the
+     *  scene camera (see {@link #drawGizmo}) and outside the gizmo's distance scale. */
     private void drawInfiniteLine(MatrixStack stack)
     {
-        int debugIndex = this.index;
-
-        if ((debugIndex < STENCIL_X || debugIndex > STENCIL_ZY) && this.currentTransform != null)
-        {
-            debugIndex = this.currentTransform.getDebugLineStencilIndex();
-        }
+        /* While editing, the gesture owns the constraint; a hovered handle
+         * must not add an axis to an unconstrained operation such as uniform scale. */
+        int debugIndex = this.currentGesture != null && this.currentGesture.isEditing()
+            ? this.currentGesture.getDebugLineStencilIndex()
+            : this.index;
 
         if (debugIndex < STENCIL_X || debugIndex > STENCIL_ZY)
         {
             return;
         }
+
+        stack.push();
+        this.orientGuide(stack);
 
         BufferBuilder builder = Tessellator.getInstance().getBuffer();
         builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
@@ -1012,362 +863,41 @@ public class Gizmo
         RenderSystem.depthFunc(GL11.GL_ALWAYS);
         BufferRenderer.drawWithGlobalProgram(builder.end());
         RenderSystem.depthFunc(GL11.GL_LEQUAL);
-    }
 
-    private void updateVbos()
-    {
-        float scale = BBSSettings.axesScale.get();
-        float thickness = BBSSettings.axesThickness.get();
-
-        if (this.rotateRingVbo == null || scale != this.lastScale || thickness != this.lastThickness)
-        {
-            if (this.rotateRingVbo != null)
-            {
-                this.rotateRingVbo.close();
-                this.rotateSphereVbo.close();
-            }
-
-            this.rotateRingVbo = new VertexBuffer(VertexBuffer.Usage.STATIC);
-            this.rotateSphereVbo = new VertexBuffer(VertexBuffer.Usage.STATIC);
-
-            BufferBuilder builder = Tessellator.getInstance().getBuffer();
-
-            float radius = 0.22F * scale;
-            float thicknessRing = 0.02F * scale * thickness;
-
-            builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
-            Draw.arc3D(builder, new MatrixStack(), Axis.Y, radius, thicknessRing, 1F, 1F, 1F, 0F, 360F);
-            this.rotateRingVbo.bind();
-            this.rotateRingVbo.upload(builder.end());
-
-            builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
-            Draw.sphere(builder, new MatrixStack(), radius, 24, 24, 1F, 1F, 1F, 1F);
-            this.rotateSphereVbo.bind();
-            this.rotateSphereVbo.upload(builder.end());
-
-            VertexBuffer.unbind();
-
-            this.lastScale = scale;
-            this.lastThickness = thickness;
-        }
-    }
-
-    private void drawCachedRing(MatrixStack stack, VertexBuffer vbo, Axis axis, int color)
-    {
-        float alpha = Colors.getA(color);
-
-        if (alpha <= 0F)
-        {
-            alpha = 1F;
-        }
-
-        this.drawCachedRing(stack, vbo, axis, Colors.getR(color), Colors.getG(color), Colors.getB(color), alpha);
-    }
-
-    private void drawCachedRing(MatrixStack stack, VertexBuffer vbo, Axis axis, float r, float g, float b, float a)
-    {
-        stack.push();
-        
-        if (axis == Axis.X) stack.multiply(RotationAxis.POSITIVE_Z.rotation(MathUtils.PI / 2F));
-        if (axis == Axis.Z) stack.multiply(RotationAxis.POSITIVE_X.rotation(MathUtils.PI / 2F));
-
-        RenderSystem.setShaderColor(r, g, b, a);
-        vbo.bind();
-        vbo.draw(stack.peek().getPositionMatrix(), RenderSystem.getProjectionMatrix(), GameRenderer.getPositionColorProgram());
-        VertexBuffer.unbind();
-        RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
-        
         stack.pop();
     }
 
     /**
-     * Compute a rotation ring's camera-facing arc — the part not hidden behind
-     * the central sphere — as {@code [startDeg, sweepDeg]} in the ring's own
-     * plane (the angle convention {@link Draw#arc3D} draws in). A ring seen
-     * face-on returns the full {@code 360}; an edge-on ring returns roughly
-     * half. Writes the result into {@code out}; returns {@code false} only in
-     * the degenerate case where the whole ring is hidden.
+     * Put the guide on the axes the drag really slides along, rather than on whichever
+     * ones the stack happens to carry.
+     *
+     * <p>In every reoriented frame those are the same matrix by construction:
+     * {@link #reorientForSpace} writes {@link GizmoDrag#stackBasisForSpace}, the drawn
+     * twin of {@link GizmoDrag#frameBasis}. {@link TransformSpace#LOCAL} and
+     * {@link TransformSpace#PARENT} are the two it deliberately leaves alone, and there
+     * the guide was inheriting the bone's LIVE placement — recomposed from euler angles
+     * every frame, at the frame's own partial tick — while the drag solves on the
+     * snapshot taken when the gesture started. Any wobble in it (an animated or
+     * physics-driven parent, an IK chain the drag itself turns, the placement sampled a
+     * partial tick later) swung a 10000-block line by metres at its far end, so the
+     * guide drifted off the line the object actually travels on and never sat still.
+     * Reading the same snapshot the drag does pins it there.
      */
-    private boolean visibleRingArc(MatrixStack stack, Axis axis, float radius, Vector2f out)
+    private void orientGuide(MatrixStack stack)
     {
-        Matrix4f matrix = stack.peek().getPositionMatrix();
+        TransformGesture gesture = this.currentGesture;
+        GizmoDrag drag = gesture == null ? null : gesture.drag();
 
-        /* Camera position expressed in the gizmo's local frame (the inverse of
-         * the model-view applied to the view-space origin), as the billboard
-         * ring already does. */
-        Vector3f camera = matrix.getTranslation(new Vector3f()).negate();
-        Matrix3f basis = matrix.get3x3(new Matrix3f());
-
-        if (Math.abs(basis.determinant()) > 1.0E-8F)
-        {
-            basis.invert().transform(camera);
-        }
-
-        /* Move it into the ring's own plane frame, matching the axis rotation
-         * arc3D applies, so the arc angles line up with what it draws. */
-        Quaternionf rot = new Quaternionf();
-
-        if (axis == Axis.X) rot.rotationZ(MathUtils.PI / 2F);
-        else if (axis == Axis.Z) rot.rotationX(MathUtils.PI / 2F);
-
-        rot.conjugate().transform(camera);
-
-        /* A ring point (unit direction in the ring's plane) is on the near side
-         * of the sphere when its in-plane dot with the camera is positive; the
-         * cut then lands exactly on the sphere's silhouette. The out-of-plane
-         * bias lifts that cut just enough that a ring viewed face-on — where the
-         * in-plane dot is ~0 all the way round — stays fully drawn. */
-        float length = camera.length();
-        float bias = length > 1.0E-6F ? RING_FACE_ON_BIAS * (camera.y * camera.y) / length : 0F;
-        int n = RING_OCCLUSION_SAMPLES;
-        boolean[] visible = new boolean[n];
-        int count = 0;
-
-        for (int i = 0; i < n; i++)
-        {
-            float angle = (float) (i * 2D * Math.PI / n);
-            float ct = (float) Math.cos(angle);
-            float st = (float) Math.sin(angle);
-            boolean vis = camera.x * ct + camera.z * st + bias > 0F;
-
-            visible[i] = vis;
-
-            if (vis) count++;
-        }
-
-        if (count == 0)
-        {
-            return false;
-        }
-
-        if (count == n)
-        {
-            out.set(0F, 360F);
-
-            return true;
-        }
-
-        /* The visible region is one contiguous arc; find where it begins after a
-         * hidden sample and how far it runs, wrapping around. */
-        int hidden = 0;
-
-        while (visible[hidden]) hidden++;
-
-        int start = hidden;
-
-        while (!visible[start % n]) start++;
-
-        int run = 0;
-
-        while (visible[(start + run) % n]) run++;
-
-        float step = 360F / n;
-
-        out.set(start * step, run * step);
-
-        return true;
-    }
-
-    /**
-     * Draw a rotation ring with its far half (behind the central sphere) culled,
-     * so it reads like the rings in a typical 3D gizmo. Immediate mode, since the
-     * visible arc changes with the camera every frame.
-     */
-    private void drawOccludedRing(MatrixStack stack, Axis axis, float radius, float thickness, float r, float g, float b)
-    {
-        Vector2f arc = new Vector2f();
-
-        if (!this.visibleRingArc(stack, axis, radius, arc))
+        if (drag == null || !this.hasLastCameraView)
         {
             return;
         }
 
-        BufferBuilder builder = Tessellator.getInstance().getBuffer();
-
-        builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
-        Draw.arc3D(builder, stack, axis, radius, thickness, r, g, b, arc.x, arc.y);
-        RenderSystem.setShader(GameRenderer::getPositionColorProgram);
-        BufferRenderer.drawWithGlobalProgram(builder.end());
-    }
-
-    private void drawCachedRingBillboard(MatrixStack stack, VertexBuffer vbo, float r, float g, float b, float a)
-    {
-        stack.push();
-
         Matrix4f matrix = stack.peek().getPositionMatrix();
-        Vector3f toCamera = matrix.getTranslation(new Vector3f()).negate();
-        Matrix3f basis = matrix.get3x3(new Matrix3f());
+        Vector3f translation = matrix.getTranslation(new Vector3f());
+        Matrix3f basis = this.lastCameraView.get3x3(new Matrix3f()).mul(drag.frameBasis(gesture.space()));
 
-        if (Math.abs(basis.determinant()) > 1.0E-8F)
-        {
-            basis.invert().transform(toCamera);
-        }
-
-        if (toCamera.lengthSquared() > 1.0E-8F)
-        {
-            toCamera.normalize();
-            stack.multiply(new Quaternionf().rotationTo(0F, 1F, 0F, toCamera.x, toCamera.y, toCamera.z));
-        }
-
-        stack.scale(VIEW_RING_SCALE, VIEW_RING_SCALE, VIEW_RING_SCALE);
-
-        RenderSystem.setShaderColor(r, g, b, a);
-        vbo.bind();
-        vbo.draw(stack.peek().getPositionMatrix(), RenderSystem.getProjectionMatrix(), GameRenderer.getPositionColorProgram());
-        VertexBuffer.unbind();
-        RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
-
-        stack.pop();
-    }
-
-    private void drawRotatePie(MatrixStack stack, Axis axis)
-    {
-        if (this.currentTransform == null || this.currentTransform.getDrag() == null) return;
-
-        float scale = BBSSettings.axesScale.get();
-        float radius = 0.22F * scale;
-
-        Vector3f initialVec = this.currentTransform.getInitialDragRingVec();
-        
-        Vector3f axisX = this.currentTransform.getDrag().gizmoWorldAxes.getColumn(0, new Vector3f());
-        Vector3f axisY = this.currentTransform.getDrag().gizmoWorldAxes.getColumn(1, new Vector3f());
-        Vector3f axisZ = this.currentTransform.getDrag().gizmoWorldAxes.getColumn(2, new Vector3f());
-        /* The ring's actual world rotation axis in the active space — the same
-         * basis the ring is drawn in (Gizmo.reorientForSpace) and the drag turns
-         * about. The axis comes from the GESTURE itself (its anchored turn axis),
-         * so the pie can never disagree with the rotation — the drawn frame axis
-         * and the real turn axis differ on the channel path (PARENT / the pole
-         * fallback), where cubic models flip the channels' X/Z response. */
-        DragStrategy ringGesture = this.ringDragGesture();
-        Vector3f dragAxisDir = ringGesture != null ? ringGesture.ringAxisDir() : null;
-
-        if (dragAxisDir == null)
-        {
-            dragAxisDir = this.currentTransform.getDrag().frameBasis(this.currentTransform.getSpace()).getColumn(axis.ordinal(), new Vector3f());
-        }
-
-        float gx = initialVec.dot(axisX);
-        float gy = initialVec.dot(axisY);
-        float gz = initialVec.dot(axisZ);
-
-        float px = 0;
-        float pz = 0;
-        float sweepDir = 1;
-
-        if (axis == Axis.Y)
-        {
-            px = gx;
-            pz = gz;
-            sweepDir = Math.signum(dragAxisDir.dot(new Vector3f(axisY).mul(-1)));
-        }
-        else if (axis == Axis.X)
-        {
-            px = gy;
-            pz = gz;
-            sweepDir = Math.signum(dragAxisDir.dot(axisX));
-        }
-        else if (axis == Axis.Z)
-        {
-            px = gx;
-            pz = -gy;
-            sweepDir = Math.signum(dragAxisDir.dot(new Vector3f(axisZ).mul(-1)));
-        }
-
-        if (sweepDir == 0) sweepDir = 1;
-
-        /* The ring is baked static for the whole drag (see applyBakedRotation),
-         * so the pie grows from the fixed grab angle in every space — no
-         * counter-rotation to cancel a live-rotating frame is needed. */
-        float startDeg = MathUtils.toDeg((float) Math.atan2(pz, px));
-        float sweepDeg = this.currentTransform.getAccumulatedRotateDeg() * sweepDir;
-
-        stack.push();
-        
-        if (axis == Axis.X) stack.multiply(RotationAxis.POSITIVE_Z.rotation(MathUtils.PI / 2F));
-        if (axis == Axis.Z) stack.multiply(RotationAxis.POSITIVE_X.rotation(MathUtils.PI / 2F));
-
-        int color = axis == Axis.X ? Colors.RED : (axis == Axis.Y ? Colors.GREEN : Colors.BLUE);
-        float r = Colors.getR(color);
-        float g = Colors.getG(color);
-        float b = Colors.getB(color);
-        float a = 0.25F;
-
-        BufferBuilder builder = Tessellator.getInstance().getBuffer();
-        Matrix4f mat = stack.peek().getPositionMatrix();
-
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.setShader(GameRenderer::getPositionColorProgram);
-        RenderSystem.depthFunc(GL11.GL_ALWAYS);
-        RenderSystem.disableCull();
-
-        builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
-
-        int segments = Math.max(12, (int) (Math.abs(sweepDeg) / 360F * 64F));
-        float step = sweepDeg / segments;
-
-        for (int i = 0; i < segments; i++)
-        {
-            float a1 = MathUtils.toRad(startDeg + step * i);
-            float a2 = MathUtils.toRad(startDeg + step * (i + 1));
-
-            float x1 = (float) Math.cos(a1) * radius;
-            float z1 = (float) Math.sin(a1) * radius;
-            float x2 = (float) Math.cos(a2) * radius;
-            float z2 = (float) Math.sin(a2) * radius;
-
-            builder.vertex(mat, 0, 0, 0).color(r, g, b, a).next();
-            
-            if (sweepDeg > 0)
-            {
-                builder.vertex(mat, x1, 0, z1).color(r, g, b, a).next();
-                builder.vertex(mat, x2, 0, z2).color(r, g, b, a).next();
-            }
-            else
-            {
-                builder.vertex(mat, x2, 0, z2).color(r, g, b, a).next();
-                builder.vertex(mat, x1, 0, z1).color(r, g, b, a).next();
-            }
-        }
-        
-        BufferRenderer.drawWithGlobalProgram(builder.end());
-
-        float lineThickness = 0.005F * scale;
-        builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
-        
-        float endDeg = startDeg + sweepDeg;
-        
-        float sx = (float) Math.cos(MathUtils.toRad(startDeg)) * radius;
-        float sz = (float) Math.sin(MathUtils.toRad(startDeg)) * radius;
-        float ex = (float) Math.cos(MathUtils.toRad(endDeg)) * radius;
-        float ez = (float) Math.sin(MathUtils.toRad(endDeg)) * radius;
-        
-        Vector3f p1 = new Vector3f(-sz, 0, sx).normalize().mul(lineThickness);
-        
-        builder.vertex(mat, p1.x, 0, p1.z).color(r, g, b, 1F).next();
-        builder.vertex(mat, -p1.x, 0, -p1.z).color(r, g, b, 1F).next();
-        builder.vertex(mat, sx - p1.x, 0, sz - p1.z).color(r, g, b, 1F).next();
-        
-        builder.vertex(mat, p1.x, 0, p1.z).color(r, g, b, 1F).next();
-        builder.vertex(mat, sx - p1.x, 0, sz - p1.z).color(r, g, b, 1F).next();
-        builder.vertex(mat, sx + p1.x, 0, sz + p1.z).color(r, g, b, 1F).next();
-        
-        Vector3f p2 = new Vector3f(-ez, 0, ex).normalize().mul(lineThickness);
-        builder.vertex(mat, p2.x, 0, p2.z).color(r, g, b, 1F).next();
-        builder.vertex(mat, -p2.x, 0, -p2.z).color(r, g, b, 1F).next();
-        builder.vertex(mat, ex - p2.x, 0, ez - p2.z).color(r, g, b, 1F).next();
-        
-        builder.vertex(mat, p2.x, 0, p2.z).color(r, g, b, 1F).next();
-        builder.vertex(mat, ex - p2.x, 0, ez - p2.z).color(r, g, b, 1F).next();
-        builder.vertex(mat, ex + p2.x, 0, ez + p2.z).color(r, g, b, 1F).next();
-
-        BufferRenderer.drawWithGlobalProgram(builder.end());
-
-        RenderSystem.enableCull();
-        RenderSystem.depthFunc(GL11.GL_LEQUAL);
-        RenderSystem.disableBlend();
-        
-        stack.pop();
+        matrix.set(new Matrix4f(basis).setTranslation(translation));
     }
 
     /**
@@ -1378,20 +908,20 @@ public class Gizmo
      */
     private Handle activeDragHandle()
     {
-        UIPropTransform transform = this.currentTransform;
+        TransformGesture gesture = this.currentGesture;
 
-        if (!BBSSettings.hideInactiveHandles.get() || transform == null || !transform.isEditing())
+        if (!BBSSettings.hideInactiveHandles.get() || gesture == null || !gesture.isEditing())
         {
             return null;
         }
 
-        TransformOp op = transform.getOp();
-        Axis axis = transform.getAxis();
+        TransformOp op = gesture.getOp();
+        Axis axis = gesture.getAxis();
 
         if (op == TransformOp.ROTATE)
         {
-            if (transform.isSphereRotate()) return Handle.TRACKBALL;
-            if (transform.isViewRotate()) return Handle.VIEW;
+            if (gesture.isSphereRotate()) return Handle.TRACKBALL;
+            if (gesture.isViewRotate()) return Handle.VIEW;
             if (axis == Axis.X) return Handle.ROTATE_X;
             if (axis == Axis.Y) return Handle.ROTATE_Y;
             if (axis == Axis.Z) return Handle.ROTATE_Z;
@@ -1399,18 +929,18 @@ public class Gizmo
             return null;
         }
 
-        if (op == TransformOp.TRANSLATE && transform.isScreenTranslate())
+        if (op == TransformOp.TRANSLATE && gesture.isScreenTranslate())
         {
             return Handle.SCREEN;
         }
 
-        if (op == TransformOp.SCALE && transform.isScaleAll())
+        if (op == TransformOp.SCALE && gesture.isScaleAll())
         {
             return Handle.SCALE_ALL;
         }
 
         Op handleOp = op == TransformOp.SCALE ? Op.SCALE : Op.MOVE;
-        Axis axis2 = transform.getAxis2();
+        Axis axis2 = gesture.getAxis2();
 
         for (Handle handle : Handle.values())
         {
@@ -1434,50 +964,12 @@ public class Gizmo
 
     /**
      * Factor the move/scale handles shrink by so they nest inside the rotation
-     * rings in combined mode. With "hide rotation rings" on there is nothing to
-     * nest inside, so they keep their full (larger) size.
+     * rings. With the rings hidden there is nothing to nest inside, so they keep
+     * their full (larger) size.
      */
-    private float combinedInnerScale()
+    private float innerScale()
     {
-        return this.mode == Mode.COMBINED && !BBSSettings.rotateHideRings.get() ? COMBINED_INNER_SCALE : 1F;
-    }
-
-    private void drawRotateHandles(MatrixStack stack, Handle active)
-    {
-        this.updateVbos();
-
-        /* The 3D sphere itself is invisible — it only acts as the trackball grab
-         * area. Hover feedback is a screen-space glow composited in
-         * {@link #renderSphereHighlight}. Depth state is owned by the caller
-         * ({@link #drawOccludedGizmo}) so the handles sort against each other. */
-
-        /* IK owns this bone's rotation: the rings render washed-out as the
-         * visible "not yours to turn" cue, matching the rotation strategies'
-         * refusal to start there (the pads still edit the FK channels). */
-        boolean constrained = this.currentTransform != null && this.currentTransform.isRotationConstrained();
-
-        if (!BBSSettings.rotateHideRings.get())
-        {
-            float scale = BBSSettings.axesScale.get();
-            float radius = 0.22F * scale;
-            float ringThickness = 0.02F * scale * BBSSettings.axesThickness.get();
-
-            if (active == null || active == Handle.ROTATE_Z) this.drawOccludedRing(stack, Axis.Z, radius, ringThickness, dimmed(Colors.getR(Colors.BLUE), constrained), dimmed(Colors.getG(Colors.BLUE), constrained), dimmed(Colors.getB(Colors.BLUE), constrained));
-            if (active == null || active == Handle.ROTATE_X) this.drawOccludedRing(stack, Axis.X, radius, ringThickness, dimmed(Colors.getR(Colors.RED), constrained), dimmed(Colors.getG(Colors.RED), constrained), dimmed(Colors.getB(Colors.RED), constrained));
-            if (active == null || active == Handle.ROTATE_Y) this.drawOccludedRing(stack, Axis.Y, radius, ringThickness, dimmed(Colors.getR(Colors.GREEN), constrained), dimmed(Colors.getG(Colors.GREEN), constrained), dimmed(Colors.getB(Colors.GREEN), constrained));
-        }
-
-        /* The screen-space (billboard) view-rotation ring is intentionally excluded from the
-         * "Hide rotation rings" option, so it is always drawn regardless of that setting. */
-        if (active == null || active == Handle.VIEW)
-        {
-            int color = Colors.LIGHTEST_GRAY;
-            float alpha = Colors.getA(color) * BBSSettings.gizmoOpacity.get() * (constrained ? 0.35F : 1F);
-
-            /* This VBO ring sets the shader colour itself, so the opacity modulator
-             * doesn't reach it — fold it into the alpha here instead. */
-            this.drawCachedRingBillboard(stack, this.rotateRingVbo, Colors.getR(color), Colors.getG(color), Colors.getB(color), alpha);
-        }
+        return Element.ROTATE.isVisible() && this.mask.allows(Op.ROTATE) ? INNER_SCALE : 1F;
     }
 
     /** Washes a ring colour channel toward flat gray for IK-owned rotations. */
@@ -1486,115 +978,12 @@ public class Gizmo
         return constrained ? channel * 0.25F + 0.3F : channel;
     }
 
-    private void drawAxes(MatrixStack stack, float axisSize, float axisOffset)
+    public void renderStencil(MatrixStack stack)
     {
-        float scale = BBSSettings.axesScale.get();
-        float thickness = BBSSettings.axesThickness.get();
-
-        Handle active = this.activeDragHandle();
-
-        boolean showMove = this.mode.shows(Op.MOVE) && (active == null || active.op == Op.MOVE || active.op == Op.SCREEN);
-        boolean showScale = this.mode.shows(Op.SCALE) && (active == null || active.op == Op.SCALE || active.op == Op.SCALE_ALL);
-        boolean showRotate = this.mode.shows(Op.ROTATE) && (active == null || active.op == Op.ROTATE || active.op == Op.VIEW || active.op == Op.TRACKBALL);
-
-        axisSize *= scale * this.combinedInnerScale();
-        axisOffset *= scale * thickness;
-
-        BufferBuilder builder = Tessellator.getInstance().getBuffer();
-        boolean building = false;
-
-        if (showRotate)
-        {
-            this.drawRotateHandles(stack, active);
-        }
-
-        if (showMove || showScale)
-        {
-            builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
-            building = true;
-
-            /* The bars and planes read as move when move is on screen and as
-             * scale only when scale stands alone — the same identity the pick
-             * stencil assigns, so the hide-inactive filter matches what a grab
-             * of that element actually drives. */
-            Handle barX = showMove ? Handle.MOVE_X : Handle.SCALE_X;
-            Handle barY = showMove ? Handle.MOVE_Y : Handle.SCALE_Y;
-            Handle barZ = showMove ? Handle.MOVE_Z : Handle.SCALE_Z;
-            Handle planeXZ = showMove ? Handle.MOVE_XZ : Handle.SCALE_XZ;
-            Handle planeXY = showMove ? Handle.MOVE_XY : Handle.SCALE_XY;
-            Handle planeZY = showMove ? Handle.MOVE_ZY : Handle.SCALE_ZY;
-
-            if (active == null || active == barX) Draw.fillBox(builder, stack, 0, -axisOffset, -axisOffset, axisSize, axisOffset, axisOffset, Colors.RED);
-            if (active == null || active == barY) Draw.fillBox(builder, stack, -axisOffset, 0, -axisOffset, axisOffset, axisSize, axisOffset, Colors.GREEN);
-            if (active == null || active == barZ) Draw.fillBox(builder, stack, -axisOffset, -axisOffset, 0, axisOffset, axisOffset, axisSize, Colors.BLUE);
-
-            /* Screen-space (view-plane) translate handle: a white cube at the centre,
-             * twice the bars' thickness. Drawn before the planes so they overlay it,
-             * and after the rotation sphere (above) so it stays visible in combined. */
-            if (showMove && (active == null || active == Handle.SCREEN))
-            {
-                float screenHalf = SCREEN_CUBE_HALF * scale * thickness;
-
-                Draw.fillBox(builder, stack, -screenHalf, -screenHalf, -screenHalf, screenHalf, screenHalf, screenHalf, Colors.WHITE);
-            }
-
-            /* Uniform-scale handle: the same centre cube, shown in scale mode only when
-             * move isn't (in combined the centre is the translate handle), so the pick
-             * is never ambiguous between the two. */
-            if (showScale && !showMove && (active == null || active == Handle.SCALE_ALL))
-            {
-                float scaleAllHalf = SCREEN_CUBE_HALF * scale * thickness;
-
-                Draw.fillBox(builder, stack, -scaleAllHalf, -scaleAllHalf, -scaleAllHalf, scaleAllHalf, scaleAllHalf, scaleAllHalf, Colors.WHITE);
-            }
-
-            /* The plane quad's footprint is a fixed fraction of the axis length,
-             * independent of axesThickness — thickness only fattens the bars and
-             * the flat slab depth, not how big the two-axis plane reads. */
-            float planeStart = axisSize * 0.2F;
-            float planeEnd = planeStart + axisSize * 0.2F;
-            float planeThickness = axisOffset * 0.5F;
-
-            if (active == null || active == planeXZ) Draw.fillBox(builder, stack, planeStart, -planeThickness, planeStart, planeEnd, planeThickness, planeEnd, Colors.PLANE_XZ);
-            if (active == null || active == planeXY) Draw.fillBox(builder, stack, planeStart, planeStart, -planeThickness, planeEnd, planeEnd, planeThickness, Colors.PLANE_XY);
-            if (active == null || active == planeZY) Draw.fillBox(builder, stack, -planeThickness, planeStart, planeStart, planeThickness, planeEnd, planeEnd, Colors.PLANE_ZY);
-
-            if (showScale)
-            {
-                float cubeHalf = SCALE_CUBE_HALF * scale * thickness;
-
-                if (active == null || active == Handle.SCALE_X) Draw.fillBox(builder, stack, axisSize - cubeHalf, -cubeHalf, -cubeHalf, axisSize + cubeHalf, cubeHalf, cubeHalf, Colors.RED);
-                if (active == null || active == Handle.SCALE_Y) Draw.fillBox(builder, stack, -cubeHalf, axisSize - cubeHalf, -cubeHalf, cubeHalf, axisSize + cubeHalf, cubeHalf, Colors.GREEN);
-                if (active == null || active == Handle.SCALE_Z) Draw.fillBox(builder, stack, -cubeHalf, -cubeHalf, axisSize - cubeHalf, cubeHalf, cubeHalf, axisSize + cubeHalf, Colors.BLUE);
-            }
-        }
-
-        /* The centre cube is decoration, not a handle, so any filtered drag hides it. */
-        if (active == null && (showMove || showScale || showRotate))
-        {
-            if (!building)
-            {
-                builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
-                building = true;
-            }
-
-            Draw.fillBox(builder, stack, -axisOffset, -axisOffset, -axisOffset, axisOffset, axisOffset, axisOffset, Colors.WHITE);
-        }
-
-        if (building)
-        {
-            /* Depth func/mask is owned by {@link #drawOccludedGizmo} so bars,
-             * planes and cubes depth-sort against the rings and each other.
-             * Re-assert the opacity modulator: the billboard view ring above sets
-             * the shader colour itself and leaves it opaque. */
-            RenderSystem.setShaderColor(1F, 1F, 1F, BBSSettings.gizmoOpacity.get());
-            RenderSystem.setShader(GameRenderer::getPositionColorProgram);
-
-            BufferRenderer.drawWithGlobalProgram(builder.end());
-        }
+        this.renderStencil(stack, HandleMask.ALL);
     }
 
-    public void renderStencil(MatrixStack stack, StencilMap map)
+    public void renderStencil(MatrixStack stack, HandleMask mask)
     {
         if (BBSRendering.isIrisShadowPass())
         {
@@ -1606,10 +995,12 @@ public class Gizmo
             return;
         }
 
+        this.mask = mask == null ? HandleMask.ALL : mask;
+
         stack.push();
-        MatrixStackUtils.scaleBack(stack);
+        this.removePlacementScale(stack);
         this.captureRenderMatrix(stack);
-        this.drawStencilAxes(stack, map);
+        this.drawStencilAxes(stack);
         stack.pop();
     }
 
@@ -1619,20 +1010,15 @@ public class Gizmo
      * the world-pass {@link #renderStencil} and the UI-pass
      * {@link #renderStencilInterface}.
      */
-    private void drawStencilAxes(MatrixStack stack, StencilMap map)
+    private void drawStencilAxes(MatrixStack stack)
     {
         this.applyBakedRotation(stack);
 
-        float distanceScale = this.getAxesDistanceScale(stack);
+        float distanceScale = this.getDistanceScale(stack);
 
         stack.push();
-        /* Same VIEW flattening as the visual pass, or the hitboxes would sit on the
-         * unsheared handles and picking would drift with the distance from centre. */
-        this.applyViewShear(stack);
         stack.scale(distanceScale, distanceScale, distanceScale);
-        /* Same axisOffset as the visual pass (Gizmo#drawGizmo) so the pick hitbox
-         * matches the drawn handles instead of overhanging them. */
-        this.drawAxes(stack, map, 0.25F, 0.008F);
+        this.drawStencilHandles(stack);
         stack.pop();
     }
 
@@ -1649,7 +1035,7 @@ public class Gizmo
      * back / unbinds afterwards); it must also flush the UI batcher first, since
      * this does not (the bound framebuffer is the pick buffer, not the screen).
      */
-    public void renderStencilInterface(UIContext context, Matrix4f projection, Area area, StencilMap map)
+    public void renderStencilInterface(UIContext context, Matrix4f projection, Area area)
     {
         if (BBSRendering.isIrisShadowPass() || !this.hasLastRenderMatrix
             || context == null || projection == null || area == null || !BBSSettings.gizmos.get())
@@ -1659,7 +1045,7 @@ public class Gizmo
 
         MinecraftClient mc = MinecraftClient.getInstance();
 
-        this.setViewportScale(context.menu.height / (float) area.h);
+        this.setViewportHeight(area.h);
 
         MatrixStackUtils.cacheMatrices();
         RenderSystem.setProjectionMatrix(projection, VertexSorter.BY_Z);
@@ -1673,16 +1059,46 @@ public class Gizmo
         MatrixStack stack = new MatrixStack();
         MatrixStackUtils.multiply(stack, this.lastRenderMatrix);
 
-        this.drawStencilAxes(stack, map);
+        this.drawStencilAxes(stack);
 
         RenderSystem.viewport(0, 0, mc.getWindow().getFramebufferWidth(), mc.getWindow().getFramebufferHeight());
         MatrixStackUtils.restoreMatrices();
+    }
+
+    /** Keep object stretch/shear out of both the visible handles and their pick geometry. */
+    private void removePlacementScale(MatrixStack stack)
+    {
+        Matrix4f matrix = stack.peek().getPositionMatrix();
+        Vector3f translation = matrix.getTranslation(new Vector3f());
+        Matrix3f basis = GizmoDrag.basisOf(matrix);
+
+        matrix.set(new Matrix4f(basis).setTranslation(translation));
+        stack.peek().getNormalMatrix().set(basis);
     }
 
     private void captureRenderMatrix(MatrixStack stack)
     {
         this.lastRenderMatrix.set(stack.peek().getPositionMatrix());
         this.hasLastRenderMatrix = true;
+    }
+
+    /**
+     * Frame boundary: drop the captured placement, so a gizmo is drawn only where something
+     * placed it THIS frame — which is what every reader of it already assumes.
+     *
+     * <p>The capture used to be set once and never cleared, and this is a singleton shared by
+     * every editor. So the film's last bone position survived into the form editor and the
+     * model-block panel, which draw from the capture in the UI pass ({@link #renderInterface}):
+     * the gizmo appeared at a place belonging to a scene that was no longer on screen. Placing
+     * and drawing are always the same frame — the world pass captures, the UI pass draws — so
+     * forgetting at the boundary costs a live gizmo nothing.
+     */
+    public void forgetPlacement()
+    {
+        this.hasLastRenderMatrix = false;
+        this.hasLastSphereMatrix = false;
+        this.hasLastCameraView = false;
+        this.lastSphereLocalRadius = 0F;
     }
 
     /**
@@ -1706,10 +1122,13 @@ public class Gizmo
      */
     public void reorientForSpace(MatrixStack stack, TransformSpace space, Matrix4f cameraView, Matrix3f globalAxes)
     {
-        /* Remembered for the draw passes ({@link #applyViewShear}). Without a camera
-         * nothing is reoriented, so the handles keep their placement frame and the
-         * remembered space must not claim otherwise. */
-        this.lastSpace = cameraView == null ? null : space;
+        /* Use the same camera frame for the handles and the drag guide. */
+        this.hasLastCameraView = cameraView != null;
+
+        if (cameraView != null)
+        {
+            this.lastCameraView.set(cameraView);
+        }
 
         if (space == null || space == TransformSpace.LOCAL || space == TransformSpace.PARENT || cameraView == null)
         {
@@ -1718,8 +1137,9 @@ public class Gizmo
 
         Matrix4f matrix = stack.peek().getPositionMatrix();
         Vector3f translation = matrix.getTranslation(new Vector3f());
+        Matrix3f basis = GizmoDrag.stackBasisForSpace(space, cameraView, globalAxes);
 
-        matrix.set(new Matrix4f(GizmoDrag.stackBasisForSpace(space, cameraView, globalAxes)).setTranslation(translation));
+        matrix.set(new Matrix4f(basis).setTranslation(translation));
     }
 
     /**
@@ -1759,114 +1179,329 @@ public class Gizmo
      */
     private DragStrategy ringDragGesture()
     {
-        UIPropTransform transform = this.currentTransform;
+        TransformGesture gesture = this.currentGesture;
 
-        if (transform == null
-            || !transform.isEditing()
-            || transform.getOp() != TransformOp.ROTATE
-            || transform.isSphereRotate()
-            || transform.isViewRotate())
+        if (gesture == null
+            || !gesture.isEditing()
+            || gesture.getOp() != TransformOp.ROTATE
+            || gesture.isSphereRotate()
+            || gesture.isViewRotate())
         {
             return null;
         }
 
-        return transform.getStrategy();
+        return gesture.getStrategy();
     }
 
-    private void drawAxes(MatrixStack stack, StencilMap map, float axisSize, float axisOffset)
+    /**
+     * Receives the gizmo's box-shaped elements — bars, plane quads, the centre cubes and the
+     * scale cubes. The geometry is written once, in {@link Gizmo#collectHandles}, and painted
+     * twice: the visual pass by the colour it is handed, the pick pass by the handle's id.
+     */
+    private interface HandleSink
     {
-        float scale = BBSSettings.axesScale.get();
-        float thickness = BBSSettings.axesThickness.get();
+        void box(Handle handle, float x1, float y1, float z1, float x2, float y2, float z2, int color);
 
-        Handle active = this.activeDragHandle();
+        /**
+         * The centre cube the pick pass masks the bars with, so a click in the middle of the
+         * gizmo lands on nothing rather than on whichever bar runs through it. Comes right
+         * after the bars and before anything that overlays the centre, which is why it is a
+         * step of the walk and not something the pass draws on its own. The visual pass has
+         * no use for it — its own centre cube is decoration, drawn last.
+         */
+        default void centreMask(float half) {}
+    }
 
-        boolean showMove = this.mode.shows(Op.MOVE) && (active == null || active.op == Op.MOVE || active.op == Op.SCREEN);
-        boolean showScale = this.mode.shows(Op.SCALE) && (active == null || active.op == Op.SCALE || active.op == Op.SCALE_ALL);
-        boolean showRotate = this.mode.shows(Op.ROTATE) && (active == null || active.op == Op.ROTATE || active.op == Op.VIEW || active.op == Op.TRACKBALL);
+    /** The same, for the rotation rings: the three axis ones and the camera-facing view ring. */
+    private interface RingSink
+    {
+        void ring(Handle handle, Axis axis, float radius, float thickness, int color);
 
-        axisSize *= scale * this.combinedInnerScale();
-        axisOffset *= scale * thickness;
+        void viewRing(Handle handle, int color);
+    }
+
+    /**
+     * Walks the rotation rings that should be on screen right now, in draw order.
+     *
+     * <p>Shared by the visual pass and the pick pass so a ring's radius and thickness — and
+     * which rings exist at all — are decided in ONE place. They used to be two copies kept in
+     * step by hand, with a comment in the pick pass reminding whoever changed one to change
+     * the other; a slip there means clicking a ring that is not where it is drawn.
+     */
+    private void collectRings(Layout layout, RingSink sink)
+    {
+        Handle active = layout.active;
+
+        /* The 3D sphere itself is invisible — it only acts as the trackball grab area. Hover
+         * feedback is a screen-space glow composited in {@link #renderSphereHighlight}. */
+
+        if (layout.showRings)
+        {
+            float scale = BBSSettings.axesScale.get();
+            float radius = 0.22F * scale;
+            float ringThickness = 0.02F * scale * BBSSettings.axesThickness.get();
+
+            /* A target may own only some of the three rotation axes (a replay's root turns
+             * about Y and pitches about X, but has nowhere to put roll), so each ring is
+             * filtered on its own axis rather than the group as a whole. */
+            if (layout.mask.allowsRotateAxis(Axis.Z) && (active == null || active == Handle.ROTATE_Z)) sink.ring(Handle.ROTATE_Z, Axis.Z, radius, ringThickness, Colors.BLUE);
+            if (layout.mask.allowsRotateAxis(Axis.X) && (active == null || active == Handle.ROTATE_X)) sink.ring(Handle.ROTATE_X, Axis.X, radius, ringThickness, Colors.RED);
+            if (layout.mask.allowsRotateAxis(Axis.Y) && (active == null || active == Handle.ROTATE_Y)) sink.ring(Handle.ROTATE_Y, Axis.Y, radius, ringThickness, Colors.GREEN);
+        }
+
+        /* The screen-space (billboard) view-rotation ring hides on its own element, not with
+         * the axis rings — the two are separate settings. */
+        if (layout.showViewRing)
+        {
+            sink.viewRing(Handle.VIEW, Colors.LIGHTEST_GRAY);
+        }
+    }
+
+    /**
+     * Walks the move/scale elements that should be on screen right now, in draw order. Same
+     * bargain as {@link #collectRings}: one description of where every handle sits, so the
+     * drawn gizmo and its pick hitboxes cannot drift apart.
+     */
+    private void collectHandles(Layout layout, HandleSink sink)
+    {
+        Handle active = layout.active;
+        boolean showMove = layout.showMove;
+        boolean showScale = layout.showScale;
+        float axisSize = layout.axisSize;
+        float axisOffset = layout.axisOffset;
+        float scale = layout.scale;
+        float thickness = layout.thickness;
+        float planeSize = layout.planeSize;
+
+        /* The bars and planes read as move when move is on screen and as scale only when
+         * scale stands alone — so a grab of that element drives what its colour promised,
+         * and move and scale never share an id under the cursor. */
+        Handle barX = showMove ? Handle.MOVE_X : Handle.SCALE_X;
+        Handle barY = showMove ? Handle.MOVE_Y : Handle.SCALE_Y;
+        Handle barZ = showMove ? Handle.MOVE_Z : Handle.SCALE_Z;
+        Handle planeXZ = showMove ? Handle.MOVE_XZ : Handle.SCALE_XZ;
+        Handle planeXY = showMove ? Handle.MOVE_XY : Handle.SCALE_XY;
+        Handle planeZY = showMove ? Handle.MOVE_ZY : Handle.SCALE_ZY;
+
+        if (active == null || active == barX) sink.box(barX, 0, -axisOffset, -axisOffset, axisSize, axisOffset, axisOffset, Colors.RED);
+        if (active == null || active == barY) sink.box(barY, -axisOffset, 0, -axisOffset, axisOffset, axisSize, axisOffset, Colors.GREEN);
+        if (active == null || active == barZ) sink.box(barZ, -axisOffset, -axisOffset, 0, axisOffset, axisOffset, axisSize, Colors.BLUE);
+
+        sink.centreMask(axisOffset);
+
+        /* Screen-space (view-plane) translate handle: a white cube at the centre, twice the
+         * bars' thickness. Drawn before the planes so they overlay it, and after the rotation
+         * rings so it stays visible when they are on screen too. */
+        if (showMove && layout.mask.allows(Op.SCREEN) && (active == null || active == Handle.SCREEN))
+        {
+            float screenHalf = SCREEN_CUBE_HALF * scale * thickness;
+
+            sink.box(Handle.SCREEN, -screenHalf, -screenHalf, -screenHalf, screenHalf, screenHalf, screenHalf, Colors.WHITE);
+        }
+
+        /* Uniform-scale handle: the same centre cube, shown only when move isn't (with
+         * both on screen the centre is the translate handle), so the pick is never
+         * ambiguous between the two. */
+        if (showScale && !showMove && layout.mask.allows(Op.SCALE_ALL) && (active == null || active == Handle.SCALE_ALL))
+        {
+            float scaleAllHalf = SCREEN_CUBE_HALF * scale * thickness;
+
+            sink.box(Handle.SCALE_ALL, -scaleAllHalf, -scaleAllHalf, -scaleAllHalf, scaleAllHalf, scaleAllHalf, scaleAllHalf, Colors.WHITE);
+        }
+
+        /* The plane quad's footprint is a fraction of the axis length, independent of
+         * axesThickness — thickness only fattens the bars and the flat slab depth, not how
+         * big the two-axis plane reads. Its own setting grows it outwards from a fixed start,
+         * so a bigger plane is easier to grab without walking away from the origin. */
+        float planeStart = axisSize * 0.2F;
+        float planeEnd = planeStart + axisSize * 0.2F * planeSize;
+        float planeThickness = axisOffset * 0.5F;
+
+        if (active == null || active == planeXZ) sink.box(planeXZ, planeStart, -planeThickness, planeStart, planeEnd, planeThickness, planeEnd, Colors.PLANE_XZ);
+        if (active == null || active == planeXY) sink.box(planeXY, planeStart, planeStart, -planeThickness, planeEnd, planeEnd, planeThickness, Colors.PLANE_XY);
+        if (active == null || active == planeZY) sink.box(planeZY, -planeThickness, planeStart, planeStart, planeThickness, planeEnd, planeEnd, Colors.PLANE_ZY);
+
+        if (showScale)
+        {
+            float cubeHalf = SCALE_CUBE_HALF * scale * thickness;
+
+            if (active == null || active == Handle.SCALE_X) sink.box(Handle.SCALE_X, axisSize - cubeHalf, -cubeHalf, -cubeHalf, axisSize + cubeHalf, cubeHalf, cubeHalf, Colors.RED);
+            if (active == null || active == Handle.SCALE_Y) sink.box(Handle.SCALE_Y, -cubeHalf, axisSize - cubeHalf, -cubeHalf, cubeHalf, axisSize + cubeHalf, cubeHalf, Colors.GREEN);
+            if (active == null || active == Handle.SCALE_Z) sink.box(Handle.SCALE_Z, -cubeHalf, -cubeHalf, axisSize - cubeHalf, cubeHalf, cubeHalf, axisSize + cubeHalf, Colors.BLUE);
+        }
+    }
+
+    /**
+     * What the gizmo shows this frame and at what size: which groups are on screen, which
+     * handle a running drag filters everything down to, and the settings-resolved dimensions.
+     * Taken once and used by both passes, so the pick can never be laid out from different
+     * numbers than the drawing — that used to be six lines copied into each.
+     */
+    private final class Layout
+    {
+        final Handle active = Gizmo.this.activeDragHandle();
+
+        /* Settings say what the user wants to see, the mask says what the target can
+         * accept at all — a handle needs both to reach the screen and the cursor. */
+        final HandleMask mask = Gizmo.this.mask;
+
+        final boolean showRings = Element.ROTATE.isVisible() && mask.allows(Op.ROTATE) && (this.active == null || this.active.op == Op.ROTATE);
+        final boolean showViewRing = Element.VIEW_ROTATE.isVisible() && mask.allows(Op.VIEW) && (this.active == null || this.active.op == Op.VIEW);
+
+        final boolean showMove = Element.TRANSLATE.isVisible() && mask.allows(Op.MOVE) && (this.active == null || this.active.op == Op.MOVE || this.active.op == Op.SCREEN);
+        final boolean showScale = Element.SCALE.isVisible() && mask.allows(Op.SCALE) && (this.active == null || this.active.op == Op.SCALE || this.active.op == Op.SCALE_ALL);
+        final boolean showRotate = this.showRings || this.showViewRing;
+
+        final float scale = BBSSettings.axesScale.get();
+        final float thickness = BBSSettings.axesThickness.get();
+
+        final float planeSize = BBSSettings.gizmoPlaneSize.get();
+
+        final float axisSize = AXIS_SIZE * this.scale * Gizmo.this.innerScale();
+        final float axisOffset = AXIS_OFFSET * this.scale * this.thickness;
+
+        boolean showsBoxes()
+        {
+            return this.showMove || this.showScale;
+        }
+    }
+
+    /** Draws the gizmo for the eye: the walks above, painted in the handles' own colours. */
+    private void drawAxes(MatrixStack stack)
+    {
+        Layout layout = new Layout();
+
+        Handle active = layout.active;
+        float axisOffset = layout.axisOffset;
+
+        BufferBuilder builder = Tessellator.getInstance().getBuffer();
+        boolean building = false;
+
+        if (layout.showRotate)
+        {
+            /* IK owns this bone's rotation: the rings render washed-out as the visible "not
+             * yours to turn" cue, matching the rotation strategies' refusal to start there
+             * (the pads still edit the FK channels). */
+            boolean constrained = this.currentGesture != null && this.currentGesture.rotationConstrained();
+
+            /* Depth state is owned by the caller ({@link #drawOccludedGizmo}) so the handles
+             * sort against each other. */
+            this.collectRings(layout, new RingSink()
+            {
+                @Override
+                public void ring(Handle handle, Axis axis, float radius, float ringThickness, int color)
+                {
+                    Gizmo.this.rings.drawOccluded(stack, axis, radius, ringThickness,
+                        dimmed(Colors.getR(color), constrained),
+                        dimmed(Colors.getG(color), constrained),
+                        dimmed(Colors.getB(color), constrained));
+                }
+
+                @Override
+                public void viewRing(Handle handle, int color)
+                {
+                    /* This VBO ring sets the shader colour itself, so the opacity modulator
+                     * doesn't reach it — fold it into the alpha here instead. */
+                    float alpha = Colors.getA(color) * BBSSettings.gizmoOpacity.get() * (constrained ? 0.35F : 1F);
+
+                    Gizmo.this.rings.drawBillboard(stack, Colors.getR(color), Colors.getG(color), Colors.getB(color), alpha);
+                }
+            });
+        }
+
+        if (layout.showsBoxes())
+        {
+            builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
+            building = true;
+
+            this.collectHandles(layout, (handle, x1, y1, z1, x2, y2, z2, color) ->
+                Draw.fillBox(builder, stack, x1, y1, z1, x2, y2, z2, color));
+        }
+
+        /* The centre cube is decoration, not a handle, so any filtered drag hides it — but
+         * nothing else does. With every element switched off it is all that is left, and it
+         * has to be: the gizmo's origin is where the selection is, and losing that marker
+         * means losing sight of what is being edited.
+         *
+         * Standing alone it takes the size the centre normally reads at — the screen-translate
+         * cube's. At the bar thickness it would be a speck: that size is chosen to sit in the
+         * crook of three axis bars, and with the bars gone there is nothing to be small against. */
+        if (active == null)
+        {
+            float centreHalf = layout.showsBoxes() || layout.showRotate
+                ? axisOffset
+                : SCREEN_CUBE_HALF * layout.scale * layout.thickness;
+
+            if (!building)
+            {
+                builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
+                building = true;
+            }
+
+            Draw.fillBox(builder, stack, -centreHalf, -centreHalf, -centreHalf, centreHalf, centreHalf, centreHalf, Colors.WHITE);
+        }
+
+        if (building)
+        {
+            /* Depth func/mask is owned by {@link #drawOccludedGizmo} so bars, planes and cubes
+             * depth-sort against the rings and each other. Re-assert the opacity modulator:
+             * the billboard view ring above sets the shader colour itself and leaves it opaque. */
+            RenderSystem.setShaderColor(1F, 1F, 1F, BBSSettings.gizmoOpacity.get());
+            RenderSystem.setShader(GameRenderer::getPositionColorProgram);
+
+            BufferRenderer.drawWithGlobalProgram(builder.end());
+        }
+    }
+
+    /**
+     * Draws the same gizmo for the picker: the same walks, painted with each handle's stencil
+     * id instead of its colour, so what the cursor lands on is by construction what the eye
+     * sees. Ids go in the red channel, the way the pick buffer is read back.
+     */
+    private void drawStencilHandles(MatrixStack stack)
+    {
+        Layout layout = new Layout();
 
         RenderSystem.disableDepthTest();
 
-        if (showRotate)
+        if (layout.showRotate)
         {
-            this.updateVbos();
-
-            if (!BBSSettings.rotateHideRings.get())
+            this.collectRings(layout, new RingSink()
             {
-                /* Match the visual ring thickness (Gizmo#drawRotateHandles) so the
-                 * pick tube lines up with the drawn ring. */
-                float stencilThickness = 0.02F * scale * thickness;
-                float radius = 0.22F * scale;
+                @Override
+                public void ring(Handle handle, Axis axis, float radius, float ringThickness, int color)
+                {
+                    Gizmo.this.rings.drawOccluded(stack, axis, radius, ringThickness, handle.index / 255F, 0F, 0F);
+                }
 
-                if (active == null || active == Handle.ROTATE_Z) this.drawOccludedRing(stack, Axis.Z, radius, stencilThickness, STENCIL_ROTATE_Z / 255F, 0F, 0F);
-                if (active == null || active == Handle.ROTATE_X) this.drawOccludedRing(stack, Axis.X, radius, stencilThickness, STENCIL_ROTATE_X / 255F, 0F, 0F);
-                if (active == null || active == Handle.ROTATE_Y) this.drawOccludedRing(stack, Axis.Y, radius, stencilThickness, STENCIL_ROTATE_Y / 255F, 0F, 0F);
-            }
-
-            /* View ring stays pickable even when the rings are hidden (see drawAxes visual pass).
-             * Uses the same ring VBO as the visual so the pick matches its thickness. */
-            if (active == null || active == Handle.VIEW) this.drawCachedRingBillboard(stack, this.rotateRingVbo, STENCIL_VIEW / 255F, 0F, 0F, 1F);
+                @Override
+                public void viewRing(Handle handle, int color)
+                {
+                    Gizmo.this.rings.drawBillboard(stack, handle.index / 255F, 0F, 0F, 1F);
+                }
+            });
         }
 
-        if (showMove || showScale)
+        if (layout.showsBoxes())
         {
             BufferBuilder builder = Tessellator.getInstance().getBuffer();
 
-            /* The bar reads as move when move is on screen (combined) and as scale
-             * only when scale stands alone; the scale handle then lives on the end
-             * cubes, so move and scale never share an id under the cursor. */
-            Handle barX = showMove ? Handle.MOVE_X : Handle.SCALE_X;
-            Handle barY = showMove ? Handle.MOVE_Y : Handle.SCALE_Y;
-            Handle barZ = showMove ? Handle.MOVE_Z : Handle.SCALE_Z;
-            Handle planeXZ = showMove ? Handle.MOVE_XZ : Handle.SCALE_XZ;
-            Handle planeXY = showMove ? Handle.MOVE_XY : Handle.SCALE_XY;
-            Handle planeZY = showMove ? Handle.MOVE_ZY : Handle.SCALE_ZY;
-
             builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
 
-            if (active == null || active == barX) Draw.fillBox(builder, stack, 0, -axisOffset, -axisOffset, axisSize, axisOffset, axisOffset, barX.index / 255F, 0F, 0F);
-            if (active == null || active == barY) Draw.fillBox(builder, stack, -axisOffset, 0, -axisOffset, axisOffset, axisSize, axisOffset, barY.index / 255F, 0F, 0F);
-            if (active == null || active == barZ) Draw.fillBox(builder, stack, -axisOffset, -axisOffset, 0, axisOffset, axisOffset, axisSize, barZ.index / 255F, 0F, 0F);
-            Draw.fillBox(builder, stack, -axisOffset, -axisOffset, -axisOffset, axisOffset, axisOffset, axisOffset, 0F, 0F, 0F);
-
-            /* Screen-space handle hitbox: drawn before the planes so they win the pick
-             * where they overlap (planes overlay the cube). Matches the visual cube. */
-            if (showMove && (active == null || active == Handle.SCREEN))
+            this.collectHandles(layout, new HandleSink()
             {
-                float screenHalf = SCREEN_CUBE_HALF * scale * thickness;
+                @Override
+                public void box(Handle handle, float x1, float y1, float z1, float x2, float y2, float z2, int color)
+                {
+                    Draw.fillBox(builder, stack, x1, y1, z1, x2, y2, z2, handle.index / 255F, 0F, 0F);
+                }
 
-                Draw.fillBox(builder, stack, -screenHalf, -screenHalf, -screenHalf, screenHalf, screenHalf, screenHalf, STENCIL_SCREEN / 255F, 0F, 0F);
-            }
-
-            /* Uniform-scale hitbox: matches the visual centre cube in scale-only mode. */
-            if (showScale && !showMove && (active == null || active == Handle.SCALE_ALL))
-            {
-                float scaleAllHalf = SCREEN_CUBE_HALF * scale * thickness;
-
-                Draw.fillBox(builder, stack, -scaleAllHalf, -scaleAllHalf, -scaleAllHalf, scaleAllHalf, scaleAllHalf, scaleAllHalf, STENCIL_SCALE_ALL / 255F, 0F, 0F);
-            }
-
-            /* The plane quad's footprint is a fixed fraction of the axis length,
-             * independent of axesThickness — thickness only fattens the bars and
-             * the flat slab depth, not how big the two-axis plane reads. */
-            float planeStart = axisSize * 0.2F;
-            float planeEnd = planeStart + axisSize * 0.2F;
-            float planeThickness = axisOffset * 0.5F;
-
-            if (active == null || active == planeXZ) Draw.fillBox(builder, stack, planeStart, -planeThickness, planeStart, planeEnd, planeThickness, planeEnd, planeXZ.index / 255F, 0F, 0F);
-            if (active == null || active == planeXY) Draw.fillBox(builder, stack, planeStart, planeStart, -planeThickness, planeEnd, planeEnd, planeThickness, planeXY.index / 255F, 0F, 0F);
-            if (active == null || active == planeZY) Draw.fillBox(builder, stack, -planeThickness, planeStart, planeStart, planeThickness, planeEnd, planeEnd, planeZY.index / 255F, 0F, 0F);
-
-            if (showScale)
-            {
-                float cubeHalf = SCALE_CUBE_HALF * scale * thickness;
-
-                if (active == null || active == Handle.SCALE_X) Draw.fillBox(builder, stack, axisSize - cubeHalf, -cubeHalf, -cubeHalf, axisSize + cubeHalf, cubeHalf, cubeHalf, STENCIL_SCALE_X / 255F, 0F, 0F);
-                if (active == null || active == Handle.SCALE_Y) Draw.fillBox(builder, stack, -cubeHalf, axisSize - cubeHalf, -cubeHalf, cubeHalf, axisSize + cubeHalf, cubeHalf, STENCIL_SCALE_Y / 255F, 0F, 0F);
-                if (active == null || active == Handle.SCALE_Z) Draw.fillBox(builder, stack, -cubeHalf, -cubeHalf, axisSize - cubeHalf, cubeHalf, cubeHalf, axisSize + cubeHalf, STENCIL_SCALE_Z / 255F, 0F, 0F);
-            }
+                @Override
+                public void centreMask(float half)
+                {
+                    Draw.fillBox(builder, stack, -half, -half, -half, half, half, half, 0F, 0F, 0F);
+                }
+            });
 
             RenderSystem.setShader(GameRenderer::getPositionColorProgram);
 
@@ -1876,25 +1511,96 @@ public class Gizmo
         RenderSystem.enableDepthTest();
     }
 
-    public static enum Mode
+    /**
+     * The parts the gizmo is made of. It always carries all of them — there are no
+     * display modes any more — and each one's setting decides only whether it reaches
+     * the screen and the cursor. Both draw passes read the same flags, so a hidden
+     * element is out of the pick stencil too and cannot be grabbed by mistake.
+     *
+     * <p>Deliberately NOT read by the G/S/R hotkey walk: the keyboard has its own
+     * cycle setting ({@code translate/scale/rotate_hotkey_order}), and hiding, say,
+     * every rotation element would otherwise leave no way to rotate by key at all.
+     */
+    public static enum Element
     {
-        TRANSLATE, SCALE, ROTATE, COMBINED;
+        /** Move: the axis bars, the two-axis planes and the screen-plane centre cube. */
+        TRANSLATE(() -> BBSSettings.gizmoShowTranslate),
+        /** Scale: the cubes at the ends of the axes and the uniform-scale centre cube. */
+        SCALE(() -> BBSSettings.gizmoShowScale),
+        /** The three axis rotation rings. */
+        ROTATE(() -> BBSSettings.gizmoShowRotate),
+        /** The camera-facing (billboard) rotation ring. */
+        VIEW_ROTATE(() -> BBSSettings.gizmoShowViewRotate),
+        /** The free-rotation sphere in the middle (trackball / arcball). */
+        SPHERE(() -> BBSSettings.gizmoShowSphere);
 
-        public boolean shows(Op op)
+        /* A supplier rather than the value itself: this enum may well be initialised
+         * before BBSSettings#register has filled its fields in. */
+        private final Supplier<ValueBoolean> setting;
+
+        Element(Supplier<ValueBoolean> setting)
         {
-            switch (this)
+            this.setting = setting;
+        }
+
+        public boolean isVisible()
+        {
+            ValueBoolean value = this.setting.get();
+
+            return value == null || value.get();
+        }
+    }
+
+    /**
+     * Which handles the edited target can accept at all, as opposed to which ones the
+     * user chose to see ({@link Element}). The two are separate questions: a setting
+     * hides a handle the target could have driven, a mask drops one the target has
+     * nowhere to write &mdash; a replay's root has no scale and no roll, so those
+     * handles must not be drawn, must not reach the pick stencil and must not start a
+     * gesture, whatever the settings say.
+     *
+     * <p>Passed to the capture calls rather than kept as a mode, so it travels with the
+     * frame it describes and both passes read the same one.
+     */
+    public static final class HandleMask
+    {
+        /** No restriction &mdash; a full {@link mchorse.bbs_mod.utils.pose.Transform} target. */
+        public static final HandleMask ALL = new HandleMask(EnumSet.allOf(Op.class), EnumSet.allOf(Axis.class));
+
+        private final EnumSet<Op> ops;
+        private final EnumSet<Axis> rotateAxes;
+
+        public static HandleMask of(EnumSet<Op> ops, EnumSet<Axis> rotateAxes)
+        {
+            return new HandleMask(ops, rotateAxes);
+        }
+
+        private HandleMask(EnumSet<Op> ops, EnumSet<Axis> rotateAxes)
+        {
+            this.ops = EnumSet.copyOf(ops);
+            this.rotateAxes = EnumSet.copyOf(rotateAxes);
+        }
+
+        public boolean allows(Op op)
+        {
+            return this.ops.contains(op);
+        }
+
+        public boolean allowsRotateAxis(Axis axis)
+        {
+            return this.rotateAxes.contains(axis);
+        }
+
+        /** Whether a picked or hotkeyed handle may start a gesture: its operation must be
+         *  allowed, and an axis ring's axis must be too. */
+        public boolean allows(Handle handle)
+        {
+            if (handle == null || !this.allows(handle.op))
             {
-                case TRANSLATE:
-                    return op == Op.MOVE || op == Op.SCREEN;
-                case SCALE:
-                    return op == Op.SCALE;
-                case ROTATE:
-                    return op == Op.ROTATE || op == Op.VIEW || op == Op.TRACKBALL;
-                case COMBINED:
-                    return op == Op.MOVE || op == Op.SCALE || op == Op.ROTATE || op == Op.VIEW || op == Op.SCREEN;
-                default:
-                    return false;
+                return false;
             }
+
+            return handle.op != Op.ROTATE || this.allowsRotateAxis(handle.axis);
         }
     }
 
@@ -1926,8 +1632,7 @@ public class Gizmo
     /**
      * A single pickable handle: its stencil id plus the operation and axes it
      * stands for. {@link #start} resolves a picked stencil id straight to one
-     * of these and dispatches the matching transform — no dependence on the
-     * active display {@link Mode}.
+     * of these and dispatches the matching transform.
      */
     public static enum Handle
     {

@@ -1,9 +1,12 @@
 package mchorse.bbs_mod.ui.framework.elements.buttons;
 
 import mchorse.bbs_mod.ui.framework.UIContext;
+import mchorse.bbs_mod.ui.utils.UIConstants;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
+import mchorse.bbs_mod.utils.Direction;
 import mchorse.bbs_mod.utils.colors.Colors;
 
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -20,12 +23,15 @@ public class UIIcon extends UIClickable<UIIcon>
     
     private boolean active;
 
+    private BooleanSupplier highlight;
+    private Direction highlightEdge = Direction.BOTTOM;
+
     public UIIcon(Icon icon, Consumer<UIIcon> callback)
     {
         super(callback);
 
         this.icon = icon;
-        this.wh(20, 20);
+        this.wh(UIConstants.ICON_SIZE, UIConstants.ICON_SIZE);
     }
 
     public UIIcon(Supplier<Icon> iconSupplier, Consumer<UIIcon> callback)
@@ -33,7 +39,7 @@ public class UIIcon extends UIClickable<UIIcon>
         super(callback);
 
         this.iconSupplier = iconSupplier;
-        this.wh(20, 20);
+        this.wh(UIConstants.ICON_SIZE, UIConstants.ICON_SIZE);
     }
 
     public Icon getIcon()
@@ -105,6 +111,26 @@ public class UIIcon extends UIClickable<UIIcon>
         return this.active;
     }
 
+    /**
+     * Draw the selection highlight over this icon while {@code when} holds, along {@code edge} —
+     * the side of the strip the icon sits in.
+     *
+     * <p>This is what marks the chosen tab, mode or tool. Without it every such icon needs its
+     * owner to reach back into unrelated state from a render callback just to paint a bar.</p>
+     */
+    public UIIcon highlight(BooleanSupplier when, Direction edge)
+    {
+        this.highlight = when;
+        this.highlightEdge = edge;
+
+        return this;
+    }
+
+    public boolean isHighlighted()
+    {
+        return this.highlight != null && this.highlight.getAsBoolean();
+    }
+
     @Override
     protected UIIcon get()
     {
@@ -114,6 +140,11 @@ public class UIIcon extends UIClickable<UIIcon>
     @Override
     protected void renderSkin(UIContext context)
     {
+        if (this.isHighlighted())
+        {
+            context.batcher.highlight(this.area, this.highlightEdge);
+        }
+
         Icon icon = this.getIcon();
         int color;
         

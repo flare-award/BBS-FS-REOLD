@@ -5,25 +5,31 @@ import mchorse.bbs_mod.BBSMod;
 import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.blocks.entities.ModelBlockEntity;
+import mchorse.bbs_mod.camera.clips.CameraClipContext;
 import mchorse.bbs_mod.camera.clips.misc.CurveClip;
-import mchorse.bbs_mod.camera.clips.misc.SubtitleClip;
 import mchorse.bbs_mod.camera.controller.CameraWorkCameraController;
 import mchorse.bbs_mod.camera.controller.PlayCameraController;
-import mchorse.bbs_mod.events.ModelBlockEntityUpdateCallback;
-import mchorse.bbs_mod.forms.FormTranslucentQueue;
-import mchorse.bbs_mod.forms.FormUtilsClient;
+import mchorse.bbs_mod.api.events.ModelBlockEntityUpdateCallback;
+import mchorse.bbs_mod.film.BaseFilmController;
+import mchorse.bbs_mod.film.WorldFilmController;
+import mchorse.bbs_mod.forms.FormRenderLast;
 import mchorse.bbs_mod.forms.renderers.utils.RecolorVertexConsumer;
+import mchorse.bbs_mod.forms.structure.StructureWand;
 import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.graphics.texture.TextureFormat;
 import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.dashboard.UIDashboard;
+import mchorse.bbs_mod.ui.film.FrameOverlays;
 import mchorse.bbs_mod.ui.film.UIFilmPanel;
-import mchorse.bbs_mod.ui.film.UISubtitleRenderer;
 import mchorse.bbs_mod.ui.framework.UIBaseMenu;
 import mchorse.bbs_mod.ui.framework.UIScreen;
 import mchorse.bbs_mod.ui.framework.elements.utils.Batcher2D;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
+import mchorse.bbs_mod.cubic.model.ModelSetupQueue;
+import mchorse.bbs_mod.forms.renderers.utils.RenderFrame;
+import mchorse.bbs_mod.ui.utils.Gizmo;
 import mchorse.bbs_mod.utils.colors.Color;
+import mchorse.bbs_mod.utils.profiler.BBSProfiler;
 import mchorse.bbs_mod.utils.colors.Colors;
 import mchorse.bbs_mod.utils.iris.IrisUtils;
 import mchorse.bbs_mod.utils.iris.ShaderCurves;
@@ -39,11 +45,8 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.util.Window;
 import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
@@ -54,7 +57,6 @@ import com.mojang.logging.LogUtils;
 import java.io.File;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -68,12 +70,6 @@ public class BBSRendering
      * Cached rendered model blocks
      */
     public static final Set<ModelBlockEntity> capturedModelBlocks = new HashSet<>();
-
-    /* FilterBoard model blocks are composited after vanilla entities, because their
-     * lens snapshot must include mobs, players and other world forms. */
-    private static final Set<ModelBlockEntity> deferredFilterBoards = new LinkedHashSet<>();
-    private static boolean renderingDeferredFilterBoards;
-    private static boolean deferredFilterBoardsRendered;
 
     public static boolean canRender;
 
@@ -379,13 +375,21 @@ public class BBSRendering
 
         orthoDistance = -1F;
 
-        deferredFilterBoards.clear();
-        deferredFilterBoardsRendered = false;
-        FilmEffects.clearQueuedFilterBoards();
-
         MinecraftClient mc = MinecraftClient.getInstance();
+
+        /* The frame boundary the profiler's counters roll over on; the flag is mirrored here
+         * so the hot-path checks read a plain static boolean. */
+        BBSProfiler.enabled = BBSSettings.profilerOverlay != null && BBSSettings.profilerOverlay.get();
+        BBSProfiler.frame();
+        RenderFrame.nextFrame();
+        Gizmo.INSTANCE.forgetPlacement();
+
+        /* The budgeted tail of model loading: VAO bakes for whatever the background loader
+         * finished, a few milliseconds' worth per frame instead of all of them at once. */
+        ModelSetupQueue.drain();
+
+        BBSModClient.getVideos().startFrame();
         BBSModClient.getFilms().startRenderFrame(mc.getTickDelta());
-        FilmEffects.beginFilterBoardFrame();
 
         UIBaseMenu menu = UIScreen.getCurrentMenu();
 
@@ -404,101 +408,6 @@ public class BBSRendering
         toggleFramebuffer(true);
     }
 
-    public static boolean shouldDeferFilterBoard(ModelBlockEntity entity)
-    {
-        return entity != null && renderingWorld && !renderingDeferredFilterBoards;
-    }
-
-    public static void deferFilterBoard(ModelBlockEntity entity)
-    {
-        if (entity != null)
-        {
-            deferredFilterBoards.add(entity);
-        }
-    }
-
-    /**
-     * Replay FilterBoard model blocks at the end of the world pass.
-     * A billboard lens rendered during the block-entity pass would snapshot an
-     * incomplete frame, so only this form type is moved to the late world pass.
-     * Buffered entity consumers are drained before the snapshot, which keeps
-     * custom model materials visible to the lens as well.
-     */
-    public static void renderDeferredFilterBoards(WorldRenderContext context)
-    {
-        if (deferredFilterBoardsRendered || deferredFilterBoards.isEmpty())
-        {
-            return;
-        }
-
-        deferredFilterBoardsRendered = true;
-
-        MinecraftClient mc = MinecraftClient.getInstance();
-        MatrixStack matrices = context.matrixStack();
-        Vec3d cameraPos = context.camera().getPos();
-        VertexConsumerProvider consumers = context.consumers();
-
-        if (consumers == null)
-        {
-            consumers = mc.getBufferBuilders().getEntityVertexConsumers();
-        }
-
-        flushDeferredWorldConsumers(consumers);
-        renderingDeferredFilterBoards = true;
-
-        try
-        {
-            for (ModelBlockEntity entity : new LinkedHashSet<>(deferredFilterBoards))
-            {
-                if (entity.isRemoved() || entity.getWorld() != mc.world)
-                {
-                    continue;
-                }
-
-                BlockPos pos = entity.getPos();
-
-                matrices.push();
-                matrices.translate(pos.getX() - cameraPos.x, pos.getY() - cameraPos.y, pos.getZ() - cameraPos.z);
-                mc.getBlockEntityRenderDispatcher().render(entity, context.tickDelta(), matrices, consumers);
-                matrices.pop();
-            }
-        }
-        finally
-        {
-            renderingDeferredFilterBoards = false;
-            deferredFilterBoards.clear();
-        }
-    }
-
-    private static void flushDeferredWorldConsumers(VertexConsumerProvider consumers)
-    {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        VertexConsumerProvider.Immediate entityConsumers = mc.getBufferBuilders().getEntityVertexConsumers();
-
-        entityConsumers.draw();
-
-        if (consumers instanceof VertexConsumerProvider.Immediate immediate && immediate != entityConsumers)
-        {
-            immediate.draw();
-        }
-
-        VertexConsumerProvider.Immediate formConsumers = FormUtilsClient.getProvider();
-
-        if (formConsumers != null && formConsumers != entityConsumers && formConsumers != consumers)
-        {
-            formConsumers.draw();
-        }
-    }
-
-    public static void flushDeferredFilterBoards()
-    {
-        /* Translucent custom-model geometry is queued until the end of the world pass.
-         * It must land before FilterBoard snapshots the framebuffer. */
-        FormTranslucentQueue.flush();
-        flushDeferredWorldConsumers(null);
-        FilmEffects.renderQueuedFilterBoards();
-    }
-
     public static void onWorldRenderEnd()
     {
         MinecraftClient mc = MinecraftClient.getInstance();
@@ -508,7 +417,7 @@ public class BBSRendering
             DrawContext drawContext = new DrawContext(mc, mc.getBufferBuilders().getEntityVertexConsumers());
             Batcher2D batcher = new Batcher2D(drawContext);
 
-            UISubtitleRenderer.renderSubtitles(batcher.getContext().getMatrices(), batcher, SubtitleClip.getSubtitles(controller.getContext()));
+            FrameOverlays.render(batcher.getContext().getMatrices(), batcher, controller.getContext());
         }
 
         if (!customSize)
@@ -524,7 +433,7 @@ public class BBSRendering
         {
             if (dashboard.getPanels().panel instanceof UIFilmPanel panel)
             {
-                UISubtitleRenderer.renderSubtitles(currentMenu.context.batcher.getContext().getMatrices(), currentMenu.context.batcher, SubtitleClip.getSubtitles(panel.getRunner().getContext()));
+                FrameOverlays.render(currentMenu.context.batcher.getContext().getMatrices(), currentMenu.context.batcher, panel.getRunner().getContext());
             }
         }
 
@@ -571,12 +480,6 @@ public class BBSRendering
         GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
         GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevDraw);
 
-        /* Color grading and the photo overlay are baked right into the export texture:
-         * the film preview, the video recorder and the screenshot all read it, so the
-         * effects land in everything the user sees and exports at once. The recording
-         * overlay below stays out on purpose - it's screen-only feedback. */
-        FilmEffects.apply(exportFramebuffer, targetWidth, targetHeight);
-
         renderRecordingOverlay();
 
         toggleFramebuffer(false);
@@ -616,6 +519,7 @@ public class BBSRendering
         Batcher2D batcher2D = new Batcher2D(drawContext);
 
         BBSModClient.getFilms().renderHud(batcher2D, tickDelta);
+        StructureWand.renderHud(batcher2D);
     }
 
     /**
@@ -673,29 +577,47 @@ public class BBSRendering
         batcher2D.textCard(label, iconX + 3, y + 4, Colors.WHITE, Colors.A50);
     }
 
+    /** Whether the entity pass opened the render-last scope — false when one was already open. */
+    private static boolean entityPassRenderLast;
+
+    /**
+     * The world's entity pass: between these two calls vanilla draws the actors, model blocks
+     * and morphed players, and without a shader pack {@link #renderCoolStuff} draws the films
+     * at its end — one render-last scope spans it all, so a form set to render last draws after
+     * every other form of the frame. Under Iris the films run earlier, at the solid layer, in a
+     * scope of their own; this one still covers what the entity loop drew.
+     */
+    public static void beginEntityPass()
+    {
+        entityPassRenderLast = FormRenderLast.open();
+    }
+
+    public static void endEntityPass()
+    {
+        FormRenderLast.close(entityPassRenderLast);
+
+        entityPassRenderLast = false;
+    }
+
     public static void renderCoolStuff(WorldRenderContext worldRenderContext)
     {
-        /* In-world photo layers draw around the film's forms: before them for the
-         * layers the actors should cover, after them for the layers that cover the
-         * actors - and the shadow pass never sees the photos at all. */
-        if (!isIrisShadowPass())
+        /* A scope over everything drawn here, for when this runs on its own — under Iris, at the
+         * solid layer: forms set to render last draw when it closes, after the last replay, still
+         * in this pass. Inside the entity pass's scope this opens nothing and they wait for it. */
+        boolean renderLast = FormRenderLast.open();
+
+        try
         {
-            FilmEffects.renderPhotosInWorld(worldRenderContext, false);
+            if (MinecraftClient.getInstance().currentScreen instanceof UIScreen screen)
+            {
+                screen.renderInWorld(worldRenderContext);
+            }
+
+            BBSModClient.getFilms().render(worldRenderContext);
         }
-
-        if (MinecraftClient.getInstance().currentScreen instanceof UIScreen screen)
+        finally
         {
-            screen.renderInWorld(worldRenderContext);
-        }
-
-        /* FilterBoard lenses must all read the scene before any film form draws;
-         * this also makes separate boards independent instead of recursively stacking. */
-        FilmEffects.beginFilterBoardFrame();
-        BBSModClient.getFilms().render(worldRenderContext);
-
-        if (!isIrisShadowPass())
-        {
-            FilmEffects.renderPhotosInWorld(worldRenderContext, true);
+            FormRenderLast.close(renderLast);
         }
     }
 
@@ -796,6 +718,28 @@ public class BBSRendering
         }
 
         return IrisUtils.isShaderPackEnabled();
+    }
+
+    /**
+     * Whether a shader pack is shading this very draw. Unlike {@link #isIrisShadersEnabled()}
+     * it turns off inside {@link #renderOffscreen(Runnable)}, where our own programs take over.
+     */
+    public static boolean isIrisWorldShadersEnabled()
+    {
+        return iris && renderingWorld && IrisUtils.shouldOverrideShaders();
+    }
+
+    /** Render into a framebuffer of ours: see {@link IrisUtils#renderOffscreen(Runnable)}. */
+    public static void renderOffscreen(Runnable render)
+    {
+        if (iris)
+        {
+            IrisUtils.renderOffscreen(render);
+        }
+        else
+        {
+            render.run();
+        }
     }
 
     public static boolean isIrisShadowPass()
@@ -916,68 +860,35 @@ public class BBSRendering
 
     public static Long getTimeOfDay()
     {
-        if (!MinecraftClient.getInstance().isOnThread())
-        {
-            return null;
-        }
+        Double value = getCurveValue(ShaderCurves.SUN_ROTATION, CurveClip::getValues);
 
-        if (BBSModClient.getCameraController().getCurrent() instanceof CameraWorkCameraController controller)
-        {
-            Map<String, Double> values = CurveClip.getValues(controller.getContext());
-            Double v = values != null ? values.get(ShaderCurves.SUN_ROTATION) : null;
-
-            if (v != null)
-            {
-                return (long) (v * 1000L);
-            }
-        }
-
-        return null;
+        return value == null ? null : (long) (value * 1000L);
     }
 
     public static Double getBrightness()
     {
-        if (!MinecraftClient.getInstance().isOnThread())
-        {
-            return null;
-        }
-
-        if (BBSModClient.getCameraController().getCurrent() instanceof CameraWorkCameraController controller)
-        {
-            Map<String, Double> values = CurveClip.getValues(controller.getContext());
-            Double v = values != null ? values.get(ShaderCurves.BRIGHTNESS) : null;
-
-            if (v != null)
-            {
-                return v;
-            }
-        }
-
-        return null;
+        return getCurveValue(ShaderCurves.BRIGHTNESS, CurveClip::getValues);
     }
 
     public static Double getWeather()
     {
-        if (!MinecraftClient.getInstance().isOnThread())
-        {
-            return null;
-        }
+        return getCurveValue(ShaderCurves.WEATHER, CurveClip::getValues);
+    }
 
-        if (BBSModClient.getCameraController().getCurrent() instanceof CameraWorkCameraController controller)
-        {
-            Map<String, Double> values = CurveClip.getValues(controller.getContext());
-            Double v = values != null ? values.get(ShaderCurves.WEATHER) : null;
+    public static float getSunHorizontalRotation()
+    {
+        Double value = getCurveValue(ShaderCurves.SUN_HORIZONTAL_ROTATION, CurveClip::getValues);
 
-            if (v != null)
-            {
-                return v;
-            }
-        }
-
-        return null;
+        return value == null ? 0F : value.floatValue();
     }
 
     public static Integer getChromaSkyColorArgb()
+    {
+        return getCurveValue(CurveClip.CHROMA_SKY_COLOR, CurveClip::getColorValues);
+    }
+
+    /** Camera work takes priority; films played without a camera supply missing values. */
+    private static <T> T getCurveValue(String key, Function<CameraClipContext, Map<String, T>> values)
     {
         if (!MinecraftClient.getInstance().isOnThread())
         {
@@ -986,11 +897,27 @@ public class BBSRendering
 
         if (BBSModClient.getCameraController().getCurrent() instanceof CameraWorkCameraController controller)
         {
-            Map<String, Integer> values = CurveClip.getColorValues(controller.getContext());
+            T value = values.apply(controller.getContext()).get(key);
 
-            if (values != null)
+            if (value != null)
             {
-                return values.get(CurveClip.CHROMA_SKY_COLOR);
+                return value;
+            }
+        }
+
+        if (BBSModClient.getFilms() != null)
+        {
+            for (BaseFilmController controller : BBSModClient.getFilms().getControllers())
+            {
+                if (controller instanceof WorldFilmController worldFilm)
+                {
+                    T value = values.apply(worldFilm.getContext()).get(key);
+
+                    if (value != null)
+                    {
+                        return value;
+                    }
+                }
             }
         }
 

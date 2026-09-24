@@ -1,16 +1,20 @@
 package mchorse.bbs_mod.film;
 
 import mchorse.bbs_mod.BBSMod;
+import mchorse.bbs_mod.data.migration.FilmStableIds;
+import mchorse.bbs_mod.data.migration.SaveVersion;
 import mchorse.bbs_mod.data.types.BaseType;
+import mchorse.bbs_mod.film.markers.FilmMarkers;
 import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.film.replays.Replays;
 import mchorse.bbs_mod.settings.values.core.ValueGroup;
 import mchorse.bbs_mod.settings.values.core.ValueString;
-import mchorse.bbs_mod.settings.values.ui.ValueStringKeys;
 import mchorse.bbs_mod.settings.values.numeric.ValueFloat;
 import mchorse.bbs_mod.settings.values.numeric.ValueInt;
 import mchorse.bbs_mod.settings.values.numeric.ValueLong;
+import mchorse.bbs_mod.utils.categories.Categories;
 import mchorse.bbs_mod.utils.clips.Clips;
+import mchorse.bbs_mod.utils.keyframes.KeyframeChannel;
 
 import java.time.DateTimeException;
 import java.time.Instant;
@@ -24,10 +28,14 @@ public class Film extends ValueGroup
     public final Clips camera = new Clips("camera", BBSMod.getFactoryCameraClips());
     public final Replays replays = new Replays("replays");
     /**
-     * Names of replay categories that exist even with no replay assigned (empty groups).
-     * Union with {@link Replay#category} on each replay defines all categories in the UI.
+     * The replay list's folders: their order, whether they are open, and the empty ones that
+     * would otherwise not exist at all. What folder a replay is in is on the replay
+     * ({@link Replay#category}), so this list is free to know nothing about most of them.
      */
-    public final ValueStringKeys replayCategoryNames = new ValueStringKeys("replay_categories");
+    public final Categories replayCategories = new Categories("replay_categories");
+
+    /** Author's notes pinned to ticks, drawn on every timeline's ruler. */
+    public final FilmMarkers markers = new FilmMarkers("markers");
 
     public final ValueFloat hp = new ValueFloat("hp", 20F);
     public final ValueFloat hunger = new ValueFloat("hunger", 20F);
@@ -40,9 +48,6 @@ public class Film extends ValueGroup
      */
     public final ValueFloat mobRecordingRadius = new ValueFloat("mob_recording_radius", 0F);
 
-    /** Serialized film effects (color grading filters and photo layers), edited from the film panel's overlays. */
-    public final ValueString effects = new ValueString("effects", "");
-
     public final ValueString description = new ValueString("description", "");
     /** UTC instant as ISO-8601 ({@link Instant#toString()}), set when the film is first created. */
     public final ValueString createdAt = new ValueString("created_at", "");
@@ -53,9 +58,17 @@ public class Film extends ValueGroup
     {
         super("");
 
+        /* The server drives the actors from the replays — their keyframes, properties, action
+         * clips and flags — so any edit in that subtree has to reach its copy of the film. One
+         * declaration on the subtree replaces the hand-written list of path endings that used to
+         * decide this (and kept falling behind as channels were added). The camera stays
+         * client-side: the server never plays it, and saving ships the whole film anyway. */
+        this.replays.synced();
+
         this.add(this.camera);
         this.add(this.replays);
-        this.add(this.replayCategoryNames);
+        this.add(this.replayCategories);
+        this.add(this.markers);
 
         this.add(this.hp);
         this.add(this.hunger);
@@ -63,7 +76,6 @@ public class Film extends ValueGroup
         this.add(this.xpProgress);
         this.add(this.mobRecordingRadius);
 
-        this.add(this.effects);
         this.add(this.description);
         this.add(this.createdAt);
         this.add(this.timeSpentActive);
@@ -72,6 +84,13 @@ public class Film extends ValueGroup
     @Override
     public void fromData(BaseType data)
     {
+        /* Imports, clipboard data and network repositories can bypass BaseManager.load().
+         * Resolve legacy references before ValueStableList assigns ids and properties are read. */
+        if (data.isMap() && SaveVersion.read(data.asMap()) < 2)
+        {
+            new FilmStableIds().migrate(data.asMap());
+        }
+
         super.fromData(data);
 
         FilmLegacy.migrateHotbar(this, data);
@@ -120,5 +139,33 @@ public class Film extends ValueGroup
     public boolean hasFirstPerson()
     {
         return this.getFirstPersonReplay() != null;
+    }
+
+    /**
+     * How long this film actually runs: the camera's length, or the last keyframe of any enabled
+     * replay when a take outlives the shot.
+     *
+     * <p>Playback used to end at the camera's duration alone, and ending a playback discards its
+     * actors &mdash; a scene authored longer than its camera lost its bodies mid-take. The camera
+     * still decides what is <em>shown</em>; this decides how long the world keeps acting.
+     */
+    public int calculateDuration()
+    {
+        int duration = this.camera.calculateDuration();
+
+        for (Replay replay : this.replays.getList())
+        {
+            if (!replay.enabled.get())
+            {
+                continue;
+            }
+
+            for (KeyframeChannel<?> channel : replay.keyframes.getChannels())
+            {
+                duration = Math.max(duration, (int) channel.getLength() + 1);
+            }
+        }
+
+        return duration;
     }
 }

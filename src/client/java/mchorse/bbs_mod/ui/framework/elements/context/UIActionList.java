@@ -14,11 +14,25 @@ public class UIActionList extends UIList<ContextAction>
         super(callback);
     }
 
+    /** A menu row is cut to its icon and its label; there is nothing in it to make room for. */
+    @Override
+    protected boolean canScaleRows()
+    {
+        return false;
+    }
+
     @Override
     public void renderListElement(UIContext context, ContextAction element, int i, int x, int y, boolean hover, boolean selected)
     {
         int h = this.scroll.scrollItemSize;
 
         element.render(context, context.batcher.getFont(), x, y, this.area.w, h, hover, selected);
+    }
+
+    /** What the filter matches against: the row reads as its label, not as an object. */
+    @Override
+    protected String elementToString(UIContext context, int i, ContextAction element)
+    {
+        return element.label.get();
     }
 }

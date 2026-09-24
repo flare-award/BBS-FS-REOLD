@@ -46,9 +46,14 @@ public class OrbitCamera
     protected int lastX;
     protected int lastY;
 
-    protected float low = 0.05F;
-    protected float normal = 0.25F;
-    protected float high = 1F;
+    /** What Alt, nothing and Ctrl make of an editor camera's speed. */
+    public static final float SPEED_LOW = 0.05F;
+    public static final float SPEED_NORMAL = 0.25F;
+    public static final float SPEED_HIGH = 1F;
+
+    protected float low = SPEED_LOW;
+    protected float normal = SPEED_NORMAL;
+    protected float high = SPEED_HIGH;
 
     protected Vector3d finalPosition = new Vector3d();
 
@@ -57,9 +62,25 @@ public class OrbitCamera
 
     protected boolean fovRoll = true;
 
+    /**
+     * Whether the camera turns with the mouse without a button held down. Flight's free look
+     * asks for it, and while it lasts the mouse is the camera's rather than the cursor's.
+     */
+    protected boolean freeLook;
+
     public void setFovRoll(boolean fovRoll)
     {
         this.fovRoll = fovRoll;
+    }
+
+    public void setFreeLook(boolean freeLook)
+    {
+        this.freeLook = freeLook;
+    }
+
+    public boolean isFreeLook()
+    {
+        return this.freeLook;
     }
 
     public void reset()
@@ -191,6 +212,18 @@ public class OrbitCamera
         return Matrices.rotation(this.rotation.x, MathUtils.PI - this.rotation.y);
     }
 
+    /**
+     * How far an editor camera turns per pixel of drag, the modifier keys included. It is the
+     * same everywhere one is dragged - the film's orbit and the model previews - so it is
+     * answered here rather than by each of them.
+     */
+    public static float dragAngleSpeed()
+    {
+        float factor = Window.isCtrlPressed() ? SPEED_HIGH : (Window.isAltPressed() ? SPEED_LOW : SPEED_NORMAL);
+
+        return 1 / 80F * BBSSettings.editorCameraAngleSpeed.get() * factor;
+    }
+
     public float getAngleSpeed()
     {
         float factor = Window.isCtrlPressed() ? this.high : (Window.isAltPressed() ? this.low : this.normal);
@@ -229,7 +262,11 @@ public class OrbitCamera
     {
         float angleFactor = this.getAngleSpeed();
 
-        if (this.dragging == 0)
+        /* Free look turns the camera as though the left button were held down, but a button
+         * that is actually held still speaks for itself - roll and FOV stay where they are. */
+        int dragging = this.dragging < 0 && this.freeLook ? 0 : this.dragging;
+
+        if (dragging == 0)
         {
             int x = mouseX - this.lastX;
             int y = mouseY - this.lastY;
@@ -247,7 +284,7 @@ public class OrbitCamera
         }
         else if (this.fovRoll)
         {
-            if (this.dragging == 1)
+            if (dragging == 1)
             {
                 int x = mouseX - this.lastX;
 
@@ -261,7 +298,7 @@ public class OrbitCamera
 
                 return true;
             }
-            else if (this.dragging == 2)
+            else if (dragging == 2)
             {
                 int y = mouseY - this.lastY;
 

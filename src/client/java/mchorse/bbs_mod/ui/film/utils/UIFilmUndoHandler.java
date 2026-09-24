@@ -1,17 +1,12 @@
 package mchorse.bbs_mod.ui.film.utils;
 
-import mchorse.bbs_mod.BBSMod;
-import mchorse.bbs_mod.data.types.BaseType;
 import mchorse.bbs_mod.network.ClientNetwork;
 import mchorse.bbs_mod.settings.values.base.BaseValue;
 import mchorse.bbs_mod.ui.film.UIFilmPanel;
 import mchorse.bbs_mod.ui.forms.editors.UIFormUndoHandler;
 import mchorse.bbs_mod.utils.Timer;
-import mchorse.bbs_mod.utils.clips.Clips;
 
 import java.util.HashSet;
-import java.util.Iterator;
-import java.util.Map;
 import java.util.Set;
 
 public class UIFilmUndoHandler extends UIFormUndoHandler
@@ -34,6 +29,13 @@ public class UIFilmUndoHandler extends UIFormUndoHandler
             return;
         }
 
+        /* Opening and closing a category of the replay list is a way of looking at the film, not a
+         * change to it; it is saved with the film all the same, but Ctrl+Z has nothing to say to it. */
+        if (baseValue.getPath().getLast().equals("expanded") && baseValue.getPath().strings.contains("replay_categories"))
+        {
+            return;
+        }
+
         super.handlePreValues(baseValue, flag);
     }
 
@@ -42,7 +44,10 @@ public class UIFilmUndoHandler extends UIFormUndoHandler
     {
         super.handleValue(value);
 
-        if (this.isReplayActions(value))
+        /* The value itself declares whether the server's copy needs it (Film marks the replays
+         * subtree) — this used to be a hand-written list of path endings that kept falling
+         * behind the data model, silently keeping new channels off the server. */
+        if (value.isSynced())
         {
             /* TODO: Variant A for the lazy-channel desync — if 'value' is a keyframe
              * inside a channel, promote it to its parent KeyframeChannel here so the
@@ -73,48 +78,4 @@ public class UIFilmUndoHandler extends UIFormUndoHandler
         }
     }
 
-    private boolean isReplayActions(BaseValue value)
-    {
-        String path = value.getPath().toString();
-
-        if (
-            path.endsWith("/replays") ||
-            path.endsWith("/keyframes") ||
-            path.contains("/keyframes/x") ||
-            path.contains("/keyframes/y") ||
-            path.contains("/keyframes/z") ||
-            path.contains("/keyframes/item_slot_") ||
-            path.contains("/keyframes/item_off_hand") ||
-            path.contains("/keyframes/item_head") ||
-            path.contains("/keyframes/item_chest") ||
-            path.contains("/keyframes/item_legs") ||
-            path.contains("/keyframes/item_feet") ||
-            path.contains("/properties/") ||
-            path.endsWith("/properties") ||
-            path.endsWith("/actor") ||
-            path.endsWith("/enabled") ||
-            path.endsWith("/form")
-        ) {
-            return true;
-        }
-
-        /* Specifically for overwriting full replay like what's done when recording
-         * data in the world! */
-        if (value.getParent() != null && value.getParent().getId().equals("replays"))
-        {
-            return true;
-        }
-
-        while (value != null)
-        {
-            if (value instanceof Clips clips && clips.getFactory() == BBSMod.getFactoryActionClips())
-            {
-                return true;
-            }
-
-            value = value.getParent();
-        }
-
-        return false;
-    }
 }

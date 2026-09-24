@@ -1,9 +1,12 @@
 package mchorse.bbs_mod.film.replays;
 
 import mchorse.bbs_mod.BBSMod;
+import mchorse.bbs_mod.data.migration.FormStableIds;
+import mchorse.bbs_mod.data.types.BaseType;
 import mchorse.bbs_mod.actions.SuperFakePlayer;
 import mchorse.bbs_mod.actions.types.ActionClip;
 import mchorse.bbs_mod.camera.data.Point;
+import org.joml.Vector3d;
 import mchorse.bbs_mod.camera.values.ValuePoint;
 import mchorse.bbs_mod.film.Film;
 import mchorse.bbs_mod.forms.entities.IEntity;
@@ -14,8 +17,11 @@ import mchorse.bbs_mod.settings.values.core.ValueString;
 import mchorse.bbs_mod.settings.values.numeric.ValueBoolean;
 import mchorse.bbs_mod.settings.values.numeric.ValueFloat;
 import mchorse.bbs_mod.settings.values.numeric.ValueInt;
+import mchorse.bbs_mod.utils.categories.CategoryPath;
 import mchorse.bbs_mod.utils.clips.Clip;
 import mchorse.bbs_mod.utils.clips.Clips;
+import mchorse.bbs_mod.utils.keyframes.Keyframe;
+import mchorse.bbs_mod.utils.keyframes.KeyframeChannel;
 import net.minecraft.entity.LivingEntity;
 
 import java.util.List;
@@ -29,7 +35,8 @@ public class Replay extends ValueGroup
 
     public final ValueBoolean enabled = new ValueBoolean("enabled", true);
     /**
-     * Single-level folder name for the replay list (empty = root). No {@code /} — see {@link #normalizeCategory(String)}.
+     * Path of the folder this replay sits in for the replay list, {@code "Crowd/Guards"};
+     * empty is the root. See {@link CategoryPath} for why the path itself is the address.
      */
     public final ValueString category = new ValueString("category", "");
     public final ValueString label = new ValueString("label", "");
@@ -43,6 +50,8 @@ public class Replay extends ValueGroup
     public final ValueInt looping = new ValueInt("looping", 0);
 
     public final ValueBoolean actor = new ValueBoolean("actor", false);
+    /** Whether the actor's body sweeps up items it walks over. What it takes is given back when the film stops. */
+    public final ValueBoolean actorPickup = new ValueBoolean("actor_pickup", true);
     public final ValueBoolean fp = new ValueBoolean("fp", false);
     public final ValueBoolean relative = new ValueBoolean("relative", false);
     public final ValuePoint relativeOffset = new ValuePoint("relativeOffset", new Point(0, 0, 0));
@@ -70,6 +79,7 @@ public class Replay extends ValueGroup
         this.add(this.looping);
 
         this.add(this.actor);
+        this.add(this.actorPickup);
         this.add(this.fp);
         this.add(this.relative);
         this.add(this.relativeOffset);
@@ -79,30 +89,40 @@ public class Replay extends ValueGroup
     }
 
     /**
-     * Normalizes a user-supplied category: trim, single segment (no {@code /}), empty = root.
+     * Where this replay's own frame sits when it is {@link #relative}: its first keyframe plus the
+     * authored offset. A relative replay is built around a fixed origin instead of around wherever
+     * the camera happens to be, so every consumer that places it has to ask the same question — the
+     * renderer, the bone matrices and the motion path all did it with their own copy of this sum.
+     */
+    public Vector3d getRelativeOrigin()
+    {
+        Point offset = this.relativeOffset.get();
+
+        return new Vector3d(
+            this.keyframes.x.interpolate(0F) + offset.x,
+            this.keyframes.y.interpolate(0F) + offset.y,
+            this.keyframes.z.interpolate(0F) + offset.z
+        );
+    }
+
+
+    /**
+     * Normalizes a user-supplied folder path; see {@link CategoryPath#normalize(String)}.
      */
     public static String normalizeCategory(String raw)
     {
-        if (raw == null)
+        return CategoryPath.normalize(raw);
+    }
+
+    @Override
+    public void fromData(BaseType data)
+    {
+        if (data.isMap())
         {
-            return "";
+            FormStableIds.ensureReplay(data.asMap());
         }
 
-        String s = raw.trim();
-
-        if (s.isEmpty())
-        {
-            return "";
-        }
-
-        int slash = s.indexOf('/');
-
-        if (slash >= 0)
-        {
-            s = s.substring(0, slash).trim();
-        }
-
-        return s.isEmpty() ? "" : s;
+        super.fromData(data);
     }
 
     public String getName()
@@ -129,6 +149,34 @@ public class Replay extends ValueGroup
         this.keyframes.shift(tick);
         this.properties.shift(tick);
         this.actions.shift(tick);
+    }
+
+    /**
+     * The tick of the replay's last keyframe over its own channels and every property track —
+     * where its authored motion ends; {@code -1} when it has no keyframes at all.
+     */
+    public float getLastKeyframeTick()
+    {
+        float last = -1F;
+
+        for (KeyframeChannel<?> channel : this.keyframes.getChannels())
+        {
+            last = Math.max(last, lastTick(channel));
+        }
+
+        for (KeyframeChannel<?> channel : this.properties.tracks.values())
+        {
+            last = Math.max(last, lastTick(channel));
+        }
+
+        return last;
+    }
+
+    private static float lastTick(KeyframeChannel<?> channel)
+    {
+        List<?> keyframes = channel.getKeyframes();
+
+        return keyframes.isEmpty() ? -1F : ((Keyframe<?>) keyframes.get(keyframes.size() - 1)).getTick();
     }
 
     public void applyActions(LivingEntity actor, SuperFakePlayer fakePlayer, Film film, int tick)

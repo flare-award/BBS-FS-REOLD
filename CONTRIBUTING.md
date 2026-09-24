@@ -1,5 +1,12 @@
+# Contribution guide
+
+If you'd like to submit a PR (pull request) to this repository, please carefully read following document. The failure to adhere to this document will result in immediate rejection of the PR.
+
+These rules might feel tyrannical, but these rules ensure that the project stays maintainable for future years! The source code will turn into unmaintainable slop who will never support ever again (these rules weren't enforced in Blockbuster mod, and look what happened: it was abandoned).
+
 ## General principles
 
+* No pure AI code (AI code is allowed as long as you adapted it, understood it, and tested it)!
 * No changes to `gradle` config (i.e. `gradle/`, `gradlew`, `gradlew.bat`, `gradle.properties`, and `build.gradle`)!
 
 ## Code style

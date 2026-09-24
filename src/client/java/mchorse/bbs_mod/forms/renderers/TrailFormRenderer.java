@@ -9,9 +9,7 @@ import mchorse.bbs_mod.forms.ITickable;
 import mchorse.bbs_mod.forms.entities.IEntity;
 import mchorse.bbs_mod.forms.forms.TrailForm;
 import mchorse.bbs_mod.graphics.Draw;
-import mchorse.bbs_mod.graphics.texture.FormMaterials;
 import mchorse.bbs_mod.graphics.texture.Texture;
-import mchorse.bbs_mod.resources.Link;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.BufferRenderer;
@@ -163,13 +161,7 @@ public class TrailFormRenderer extends FormRenderer<TrailForm> implements ITicka
             return;
         }
 
-        /* Feed the Material tab's PBR sliders to the shader pack and bind the
-         * trail's texture - processed with the relief emboss and color overlay when set. */
-        Link textureLink = this.form.texture.get();
-        Texture textureObject = BBSModClient.getTextures().getTexture(textureLink);
-
-        FormMaterials.update(textureLink, this.form);
-        BBSModClient.getTextures().bindTexture(FormMaterials.getProcessed(textureLink, textureObject, this.form));
+        BBSModClient.getTextures().bindTexture(this.form.texture.get());
 
         stack.push();
 

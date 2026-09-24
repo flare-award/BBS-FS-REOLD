@@ -2,7 +2,6 @@ package mchorse.bbs_mod.settings.ui;
 
 import mchorse.bbs_mod.BBSMod;
 import mchorse.bbs_mod.BBSSettings;
-import mchorse.bbs_mod.data.types.MapType;
 import mchorse.bbs_mod.l10n.L10n;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.settings.Settings;
@@ -10,23 +9,23 @@ import mchorse.bbs_mod.settings.value.ValueKeyCombo;
 import mchorse.bbs_mod.settings.values.base.BaseValue;
 import mchorse.bbs_mod.settings.values.core.ValueGroup;
 import mchorse.bbs_mod.ui.UIKeys;
-import mchorse.bbs_mod.ui.dashboard.panels.UIDashboardPanels;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.UIScrollView;
+import mchorse.bbs_mod.ui.framework.elements.UISection;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIClickable;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
 import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlayPanel;
 import mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer;
+import mchorse.bbs_mod.ui.framework.elements.utils.RowStyle;
+import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.ScrollDirection;
 import mchorse.bbs_mod.ui.utils.context.ContextMenuManager;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
-import mchorse.bbs_mod.ui.utils.presets.UICopyPasteController;
 import mchorse.bbs_mod.utils.Direction;
 import mchorse.bbs_mod.utils.colors.Colors;
-import mchorse.bbs_mod.utils.presets.PresetManager;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -74,16 +73,12 @@ public class UISettingsOverlayPanel extends UIOverlayPanel
         UIIcon defaultButton = null;
         String defaultMod = null;
 
-        UIIcon themes = new UIIcon(Icons.BUCKET, (b) -> this.openThemes());
-
-        themes.tooltip(UIKeys.CONFIG_THEMES, Direction.LEFT);
-        this.icons.add(themes);
-
         for (Settings settings : BBSMod.getSettings().modules.values())
         {
             UIIcon icon = new UIIcon(settings.icon, (b) -> this.selectConfig(settings.getId(), b));
 
             icon.tooltip(L10n.lang(UIValueFactory.getTitleKey(settings)), Direction.LEFT);
+            icon.highlight(() -> this.currentModule == icon, Direction.LEFT);
             this.icons.add(icon);
             this.moduleButtons.put(settings.getId(), icon);
 
@@ -103,75 +98,6 @@ public class UISettingsOverlayPanel extends UIOverlayPanel
     public boolean isCurrent(ValueGroup category)
     {
         return this.filter.isEmpty() && this.category == category;
-    }
-
-    /**
-     * Interface themes: the personalization category (accent colors, gradient,
-     * dark/light theme and the like) stored, shared and restored through the
-     * same preset machinery every other preset in the mod uses.
-     */
-    private void openThemes()
-    {
-        UICopyPasteController controller = new UICopyPasteController(PresetManager.THEMES, "_CopyTheme")
-            .supplier(this::serializeTheme)
-            .consumer((data, mouseX, mouseY) -> this.applyTheme(data));
-        UIContext context = this.getContext();
-
-        controller.openPresets(context, context.mouseX, context.mouseY);
-    }
-
-    private ValueGroup getPersonalization()
-    {
-        Settings settings = BBSMod.getSettings().modules.get("bbs");
-
-        return settings == null ? null : settings.categories.get("personalization");
-    }
-
-    private MapType serializeTheme()
-    {
-        ValueGroup category = this.getPersonalization();
-        MapType data = new MapType();
-
-        if (category != null)
-        {
-            /* Invisible values in the category are film state, not looks - skip them */
-            for (BaseValue value : category.getAll())
-            {
-                if (value.isVisible())
-                {
-                    data.put(value.getId(), value.toData());
-                }
-            }
-        }
-
-        return data;
-    }
-
-    private void applyTheme(MapType data)
-    {
-        ValueGroup category = this.getPersonalization();
-
-        if (category == null || data == null)
-        {
-            return;
-        }
-
-        for (BaseValue value : category.getAll())
-        {
-            if (value.isVisible() && data.has(value.getId()))
-            {
-                value.fromData(data.get(value.getId()));
-            }
-        }
-
-        Settings settings = BBSMod.getSettings().modules.get("bbs");
-
-        if (settings != null)
-        {
-            settings.saveLater();
-        }
-
-        this.refresh();
     }
 
     public void selectConfig(String mod, UIIcon button)
@@ -234,28 +160,6 @@ public class UISettingsOverlayPanel extends UIOverlayPanel
 
         this.sections.resize();
         this.refresh();
-    }
-
-    /**
-     * The background color settings come and go with the picked mode (solid
-     * shows the main color, gradient adds the second color and the direction),
-     * so the list watches the mode and rebuilds itself when it flips.
-     */
-    private int lastBackgroundMode = -1;
-
-    @Override
-    public void render(UIContext context)
-    {
-        int mode = BBSSettings.backgroundColorMode();
-
-        if (mode != this.lastBackgroundMode)
-        {
-            this.lastBackgroundMode = mode;
-            BBSSettings.updateBackgroundSettingsVisibility();
-            this.refresh();
-        }
-
-        super.render(context);
     }
 
     public void refresh()
@@ -435,17 +339,11 @@ public class UISettingsOverlayPanel extends UIOverlayPanel
         int ey = this.content.area.ey();
 
         context.batcher.box(x, y, x + SIDE_WIDTH, ey, BBSSettings.chromeSurface());
-        context.batcher.box(x + SIDE_WIDTH, y, x + SIDE_WIDTH + 1, ey, BBSSettings.dividerColor());
-
-        if (this.currentModule != null)
-        {
-            context.batcher.primaryBox(this.currentModule.area.x, this.currentModule.area.y, this.currentModule.area.ex(), this.currentModule.area.ey(), Colors.A100);
-        }
     }
 
     /**
-     * A clickable section row in the left list — icon plus localized title,
-     * highlighted with the menu gradient when it's the active section.
+     * A clickable section row in the left list — icon plus localized title, wearing the marks
+     * every row wears: see {@link RowStyle}.
      */
     public static class UISectionButton extends UIClickable<UISectionButton>
     {
@@ -475,22 +373,16 @@ public class UISettingsOverlayPanel extends UIOverlayPanel
         protected void renderSkin(UIContext context)
         {
             Icon icon = this.category.icon != null ? this.category.icon : this.panel.settings.icon;
+            boolean current = this.panel.isCurrent(this.category);
 
-            if (this.panel.isCurrent(this.category))
-            {
-                UIDashboardPanels.renderHighlight(context.batcher, this.area, Direction.LEFT);
-            }
-            else if (this.hover)
-            {
-                this.area.render(context.batcher, Colors.setA(Colors.WHITE, 0.1F));
-            }
+            RowStyle.row(context.batcher, this.area.x, this.area.y, this.area.w, this.area.h, 0, false, this.hover, current);
 
-            context.batcher.icon(icon, Colors.WHITE, this.area.x + 5, this.area.my(), 0F, 0.5F);
+            context.batcher.icon(icon, RowStyle.iconColor(this.hover || current), this.area.x + 5, this.area.my(), 0F, 0.5F);
 
             FontRenderer font = context.batcher.getFont();
             String label = font.limitToWidth(this.label.get(), this.area.w - 28);
 
-            context.batcher.text(label, this.area.x + 23, this.area.my(font.getHeight()), Colors.WHITE, true);
+            context.batcher.text(label, this.area.x + 23, this.area.my(font.getHeight()), RowStyle.textColor(this.hover || current), true);
         }
     }
 
@@ -500,6 +392,8 @@ public class UISettingsOverlayPanel extends UIOverlayPanel
      */
     public static class UISectionHeader extends UIElement
     {
+        private static final Area HEADER = new Area();
+
         private final ValueGroup category;
         private final IKey label;
 
@@ -524,16 +418,10 @@ public class UISettingsOverlayPanel extends UIOverlayPanel
         @Override
         public void render(UIContext context)
         {
-            FontRenderer font = context.batcher.getFont();
-            int x = this.area.x;
+            /* Icon and title sit one row above the centre of the 18px, clear of the divider */
+            HEADER.set(this.area.x, this.area.y - 1, this.area.w, this.area.h);
+            UISection.renderHeader(context, HEADER, this.label, this.category.icon, null, Colors.WHITE);
 
-            if (this.category.icon != null)
-            {
-                context.batcher.icon(this.category.icon, Colors.WHITE, x, this.area.my() - 1, 0F, 0.5F);
-                x += 20;
-            }
-
-            context.batcher.text(this.label.get(), x, this.area.my(font.getHeight()) - 1, Colors.WHITE, true);
             context.batcher.box(this.area.x, this.area.ey() - 1, this.area.ex(), this.area.ey(), BBSSettings.dividerColor());
 
             super.render(context);

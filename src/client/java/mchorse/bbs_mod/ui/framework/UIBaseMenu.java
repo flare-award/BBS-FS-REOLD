@@ -4,6 +4,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.ui.Keys;
+import mchorse.bbs_mod.utils.profiler.BBSProfiler;
 import mchorse.bbs_mod.ui.framework.elements.IFocusedUIElement;
 import mchorse.bbs_mod.ui.framework.elements.IUIElement;
 import mchorse.bbs_mod.ui.framework.elements.IViewport;
@@ -11,9 +12,9 @@ import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.utils.IViewportStack;
 import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.Gizmo;
+import mchorse.bbs_mod.ui.utils.InterfaceBlur;
 import mchorse.bbs_mod.ui.utils.renderers.InputRenderer;
 import mchorse.bbs_mod.utils.MathUtils;
-import mchorse.bbs_mod.utils.colors.Colors;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.minecraft.client.MinecraftClient;
 import org.lwjgl.glfw.GLFW;
@@ -117,6 +118,30 @@ public abstract class UIBaseMenu
         return true;
     }
 
+    /**
+     * Who has taken the mouse over - the flight camera, while it flies itself around with the
+     * pointer hidden. Null when nobody has, which is the usual case.
+     *
+     * <p>While it is set, every mouse event goes to that element and to nothing else: the
+     * cursor is somewhere the user can't see, so a click let through to the interface would
+     * land on whatever the turning happened to sweep the cursor over - a context menu in the
+     * timeline, opened by a look downwards.</p>
+     */
+    public IUIElement getPointerOwner()
+    {
+        return null;
+    }
+
+    /**
+     * Whether the pointer is hidden, so there is no cursor on screen to draw anything beside -
+     * the tutorial mouse is drawn at the pointer, and a mouse floating around a cursor that
+     * isn't there is worse than no mouse at all.
+     */
+    public boolean isPointerHidden()
+    {
+        return this.getPointerOwner() != null;
+    }
+
     public boolean canRefresh()
     {
         return true;
@@ -154,6 +179,15 @@ public abstract class UIBaseMenu
         boolean result = false;
 
         this.context.setMouse(mouseX, mouseY, mouseButton);
+
+        IUIElement owner = this.getPointerOwner();
+
+        if (owner != null)
+        {
+            owner.mouseClicked(this.context);
+
+            return true;
+        }
 
         if (this.root.isEnabled())
         {
@@ -220,6 +254,15 @@ public abstract class UIBaseMenu
 
         this.context.setMouseWheel(x, y, v, this.context.mouseWheelHorizontal);
 
+        IUIElement owner = this.getPointerOwner();
+
+        if (owner != null)
+        {
+            owner.mouseScrolled(this.context);
+
+            return true;
+        }
+
         if (this.root.isEnabled())
         {
             this.context.pushViewport(this.viewport);
@@ -239,6 +282,15 @@ public abstract class UIBaseMenu
         boolean result = false;
 
         this.context.setMouse(mouseX, mouseY, mouseButton);
+
+        IUIElement owner = this.getPointerOwner();
+
+        if (owner != null)
+        {
+            owner.mouseReleased(this.context);
+
+            return true;
+        }
 
         if (this.root.isEnabled())
         {
@@ -305,11 +357,6 @@ public abstract class UIBaseMenu
         this.closeMenu();
     }
 
-    public void renderDefaultBackground()
-    {
-        this.context.batcher.box(0, 0, this.width, this.height, Colors.A50);
-    }
-
     public void renderMenu(UIRenderingContext context, int mouseX, int mouseY)
     {
         RenderSystem.depthFunc(GL11.GL_ALWAYS);
@@ -317,15 +364,20 @@ public abstract class UIBaseMenu
         this.context.resetMatrix();
         this.context.setMouse(mouseX, mouseY);
         this.context.resetCursor();
+        InterfaceBlur.beginFrame();
 
         this.preRenderMenu(context);
+
+        this.context.flushLayout();
 
         if (this.root.isVisible())
         {
             this.context.reset();
             this.context.pushViewport(this.viewport);
 
+            BBSProfiler.begin(BBSProfiler.Timer.UI_TOTAL);
             this.root.render(this.context);
+            BBSProfiler.end(BBSProfiler.Timer.UI_TOTAL);
 
             this.context.popViewport();
             this.context.postRender();

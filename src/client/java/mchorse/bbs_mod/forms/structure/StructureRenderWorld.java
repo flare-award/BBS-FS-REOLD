@@ -24,7 +24,8 @@ import org.jetbrains.annotations.Nullable;
  * neighbor lookups make smooth AO work, {@link #getColor} resolves grass/foliage/water tint
  * against a SELECTED biome (the form's "biome" property) instead of a real-world position.
  *
- * <p>Light is constant: full skylight, no block light propagation.</p>
+ * <p>Light comes from {@link StructureLighting}: constant full skylight, and block light traced
+ * through the structure from its own emitters.</p>
  */
 public class StructureRenderWorld implements BlockRenderView
 {
@@ -88,20 +89,7 @@ public class StructureRenderWorld implements BlockRenderView
     @Override
     public float getBrightness(Direction direction, boolean shaded)
     {
-        /* Vanilla overworld directional shade */
-        if (!shaded)
-        {
-            return 1F;
-        }
-
-        switch (direction)
-        {
-            case DOWN: return 0.5F;
-            case UP: return 1F;
-            case NORTH:
-            case SOUTH: return 0.8F;
-            default: return 0.6F;
-        }
+        return StructureLighting.getBrightness(direction, shaded);
     }
 
     @Override
@@ -124,7 +112,7 @@ public class StructureRenderWorld implements BlockRenderView
     @Override
     public int getLightLevel(LightType type, BlockPos pos)
     {
-        return type == LightType.SKY ? 15 : 0;
+        return this.data.getLighting().getLightLevel(type, pos);
     }
 
     @Nullable

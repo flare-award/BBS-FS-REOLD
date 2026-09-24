@@ -8,8 +8,6 @@ import mchorse.bbs_mod.cubic.render.vao.ModelVAO;
 import mchorse.bbs_mod.cubic.render.vao.ModelVAORenderer;
 import mchorse.bbs_mod.forms.FormTranslucentQueue;
 import mchorse.bbs_mod.forms.forms.ExtrudedForm;
-import mchorse.bbs_mod.forms.forms.Form;
-import mchorse.bbs_mod.graphics.texture.FormMaterials;
 import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.forms.renderers.utils.FormColorBlend;
 import mchorse.bbs_mod.resources.Link;
@@ -119,14 +117,11 @@ public class ExtrudedFormRenderer extends FormRenderer<ExtrudedForm>
             GameRenderer gameRenderer = MinecraftClient.getInstance().gameRenderer;
             Color formColor = this.form.color.get();
 
-            FormColorBlend.blend(color, formColor, this.form.additiveColor.get());
+            FormColorBlend.blend(color, formColor);
 
             Texture textureObject = BBSModClient.getTextures().getTexture(texture);
 
-            /* Feed the Material tab's PBR sliders to the shader pack and bind the
-             * texture - processed with the relief emboss and color overlay when set. */
-            FormMaterials.update(texture, this.form);
-            BBSModClient.getTextures().bindTexture(FormMaterials.getProcessed(texture, textureObject, this.form));
+            BBSModClient.getTextures().bindTexture(textureObject);
 
             RenderSystem.enableBlend();
             RenderSystem.defaultBlendFunc();
@@ -141,25 +136,10 @@ public class ExtrudedFormRenderer extends FormRenderer<ExtrudedForm>
              * shading composite — Photon never shades it), and texture translucency at full
              * colour degrades to alpha cutout — transparent texels become holes, semi-transparent
              * ones draw solid. */
-            boolean autoCutout = defer && irisWorld && textureObject != null && textureObject.hasTranslucency()
-                && color.a >= 1F && !this.form.additiveColor.get();
+            boolean cutout = defer && irisWorld && textureObject != null && textureObject.hasTranslucency()
+                && color.a >= 1F;
 
-            /* The Material tab's Layer option, same semantics as model forms; the
-             * shadow pass always goes cutout for proper alpha-tested shadow depth. */
-            int renderLayer = this.form.renderLayer.get();
-            boolean forcedOpaque = renderLayer == Form.LAYER_SOLID || renderLayer == Form.LAYER_CUTOUT;
-            boolean cutout = renderLayer == Form.LAYER_AUTO ? autoCutout : forcedOpaque;
-
-            if (BBSRendering.isIrisShadowPass())
-            {
-                cutout = true;
-            }
-
-            ShaderProgram finalShader = cutout
-                ? (renderLayer == Form.LAYER_SOLID && !BBSRendering.isIrisShadowPass()
-                    ? GameRenderer.getRenderTypeEntitySolidProgram()
-                    : GameRenderer.getRenderTypeEntityCutoutProgram())
-                : shader.get();
+            ShaderProgram finalShader = cutout ? GameRenderer.getRenderTypeEntityCutoutProgram() : shader.get();
             boolean wasActive = false;
 
             if (irisWorld)

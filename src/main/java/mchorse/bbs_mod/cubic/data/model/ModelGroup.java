@@ -1,5 +1,6 @@
 package mchorse.bbs_mod.cubic.data.model;
 
+import mchorse.bbs_mod.cubic.RigBone;
 import mchorse.bbs_mod.data.DataStorageUtils;
 import mchorse.bbs_mod.data.IMapSerializable;
 import mchorse.bbs_mod.data.types.BaseType;
@@ -14,19 +15,23 @@ import org.joml.Vector3f;
 import java.util.ArrayList;
 import java.util.List;
 
-public class ModelGroup implements IMapSerializable
+public class ModelGroup implements IMapSerializable, RigBone
 {
-    public final String id;
+    /** The group's name; the model's maps of it are rebuilt by {@link Model#initialize()} after a rename. */
+    public String id;
     public Model owner;
     public ModelGroup parent;
     public List<ModelGroup> children = new ArrayList<>();
     public List<ModelCube> cubes = new ArrayList<>();
     public List<ModelMesh> meshes = new ArrayList<>();
     public boolean visible = true;
+    public boolean poseVisible = true;
     public int index = -1;
 
     public float lighting = 0F;
     public Color color = new Color().set(1F, 1F, 1F);
+    /* The bone's color overlay from the pose (RGB = color, A = strength); neutral at zero strength. */
+    public Color overlay = new Color(1F, 1F, 1F, 0F);
     public Transform initial = new Transform();
     public Transform current = new Transform();
 
@@ -53,18 +58,191 @@ public class ModelGroup implements IMapSerializable
      * orient, never a channel; null when the bone has no shift this frame. */
     public Vector3f offset;
 
+    /* Snapshot of orient/offset as they stood at the END of the channels phase, so a skipped
+     * re-evaluation (see ModelFormRenderer#evaluateChannels) can rewind the constraint stack's
+     * writes: IK/physics blend FROM evaluatedRotation(), and running them on top of their own
+     * previous output would double-apply. Holders are lazy and reused; the booleans say whether
+     * the snapshot value was present (null is a meaningful state for both fields). */
+    private Quaternionf channelOrient;
+    private Vector3f channelOffset;
+    private boolean channelOrientSet;
+    private boolean channelOffsetSet;
+
     public ModelGroup(String id)
     {
         this.id = id;
     }
 
+    /** Record the channels-phase orient/offset (called right after the channels evaluate). */
+    public void snapshotChannels()
+    {
+        this.channelOrientSet = this.orient != null;
+
+        if (this.channelOrientSet)
+        {
+            if (this.channelOrient == null)
+            {
+                this.channelOrient = new Quaternionf();
+            }
+
+            this.channelOrient.set(this.orient);
+        }
+
+        this.channelOffsetSet = this.offset != null;
+
+        if (this.channelOffsetSet)
+        {
+            if (this.channelOffset == null)
+            {
+                this.channelOffset = new Vector3f();
+            }
+
+            this.channelOffset.set(this.offset);
+        }
+    }
+
+    /**
+     * Rewind orient/offset to the channels-phase snapshot. Fresh instances are handed out where
+     * a value existed — constraint stages mutate what they find in place.
+     */
+    public void restoreChannels()
+    {
+        this.orient = this.channelOrientSet ? new Quaternionf(this.channelOrient) : null;
+        this.offset = this.channelOffsetSet ? new Vector3f(this.channelOffset) : null;
+    }
+
     public void reset()
     {
+        this.poseVisible = true;
         this.lighting = 0F;
         this.color.set(1F, 1F, 1F);
+        this.overlay.set(1F, 1F, 1F, 0F);
         this.current.copy(this.initial);
         this.orient = null;
         this.offset = null;
+    }
+
+    /** Rebuild what the group's own cubes draw as, after their numbers changed. */
+    public void generateQuads(int textureWidth, int textureHeight)
+    {
+        for (ModelCube cube : this.cubes)
+        {
+            cube.generateQuads(textureWidth, textureHeight);
+        }
+    }
+
+    public boolean isVisible()
+    {
+        return this.visible && this.poseVisible;
+    }
+
+    /**
+     * The box the group's geometry stands in, in the model's pixel space — the very frame
+     * {@link #initial}'s pivot lives in, so the box's middle can be handed straight to it.
+     *
+     * <p>What counts is the group's OWN cubes and meshes: a bone turns about the mass it carries.
+     * A bare organising group carries none of its own and takes its whole branch's box instead, so
+     * the question has an answer wherever there is geometry below it at all. Returns false — and
+     * leaves both vectors untouched — when there is none.</p>
+     */
+    public boolean getGeometryBounds(Vector3f min, Vector3f max)
+    {
+        Vector3f a = new Vector3f(Float.POSITIVE_INFINITY);
+        Vector3f b = new Vector3f(Float.NEGATIVE_INFINITY);
+        boolean any = this.collectOwnBounds(a, b);
+
+        if (!any)
+        {
+            for (ModelGroup child : this.children)
+            {
+                any |= child.collectBranchBounds(a, b);
+            }
+        }
+
+        if (any)
+        {
+            min.set(a);
+            max.set(b);
+        }
+
+        return any;
+    }
+
+    /** This group's box and every box below it. */
+    private boolean collectBranchBounds(Vector3f min, Vector3f max)
+    {
+        boolean any = this.collectOwnBounds(min, max);
+
+        for (ModelGroup child : this.children)
+        {
+            any |= child.collectBranchBounds(min, max);
+        }
+
+        return any;
+    }
+
+    /**
+     * The group's own cubes and meshes into the box, each turned about its own pivot the way the
+     * renderer turns it — a rotated cube reaches further than its raw corners say.
+     */
+    private boolean collectOwnBounds(Vector3f min, Vector3f max)
+    {
+        Vector3f point = new Vector3f();
+        boolean any = false;
+
+        for (ModelCube cube : this.cubes)
+        {
+            Quaternionf rotation = boxRotation(cube.rotate);
+
+            for (int i = 0; i < 8; i++)
+            {
+                point.set(
+                    (i & 1) == 0 ? cube.origin.x - cube.inflate : cube.origin.x + cube.size.x + cube.inflate,
+                    (i & 2) == 0 ? cube.origin.y - cube.inflate : cube.origin.y + cube.size.y + cube.inflate,
+                    (i & 4) == 0 ? cube.origin.z - cube.inflate : cube.origin.z + cube.size.z + cube.inflate
+                );
+
+                extendBounds(min, max, point, rotation, cube.pivot);
+            }
+
+            any = true;
+        }
+
+        for (ModelMesh mesh : this.meshes)
+        {
+            Quaternionf rotation = boxRotation(mesh.rotate);
+
+            for (Vector3f vertex : mesh.baseData.vertices)
+            {
+                /* Mesh vertices are in blocks, and this box — like every pivot here — is in pixels. */
+                point.set(vertex).mul(16F);
+                extendBounds(min, max, point, rotation, mesh.origin);
+
+                any = true;
+            }
+        }
+
+        return any;
+    }
+
+    /** A cube's or a mesh's own rotation, or null when it has none — which is the common case. */
+    private static Quaternionf boxRotation(Vector3f rotate)
+    {
+        return rotate.x == 0F && rotate.y == 0F && rotate.z == 0F
+            ? null
+            : Matrices.toLocalRotationZYXDegrees(rotate);
+    }
+
+    /** Grow the box by one corner, turned about {@code pivot} first when there is a rotation. */
+    private static void extendBounds(Vector3f min, Vector3f max, Vector3f point, Quaternionf rotation, Vector3f pivot)
+    {
+        if (rotation != null)
+        {
+            rotation.transform(point.sub(pivot)).add(pivot);
+        }
+
+        min.min(point);
+        max.max(point);
     }
 
     /**
@@ -74,6 +252,8 @@ public class ModelGroup implements IMapSerializable
      * bases, twist references, clamp inputs all start from this, so stages stack instead of overwriting
      * each other. Returns a fresh instance safe to mutate.
      */
+    @Override
+
     public Quaternionf evaluatedRotation()
     {
         if (this.orient != null)
@@ -96,6 +276,64 @@ public class ModelGroup implements IMapSerializable
      * layer multiplies its delta as a quaternion, so stacked layers compose without the euler-pole flip.
      * Call this AFTER the layer has applied its additive euler readback to {@code current.rotate}.
      */
+    @Override
+    public String getBoneName()
+    {
+        return this.id;
+    }
+
+    @Override
+    public RigBone getParentBone()
+    {
+        return this.parent;
+    }
+
+    /** The cubic group's editable transform is {@code current}. */
+    @Override
+    public Transform getBoneTransform()
+    {
+        return this.current;
+    }
+
+    /** A cubic group rests where its bind transform puts it. */
+    @Override
+    public Vector3f getRestTranslation()
+    {
+        return this.initial.translate;
+    }
+
+    /** Cubic channels are degrees. */
+    @Override
+    public boolean isRotationInDegrees()
+    {
+        return true;
+    }
+
+    @Override
+    public Quaternionf getOrient()
+    {
+        return this.orient;
+    }
+
+    @Override
+    public void setOrient(Quaternionf orient)
+    {
+        this.orient = orient;
+    }
+
+    @Override
+    public Vector3f getOffset()
+    {
+        return this.offset;
+    }
+
+    @Override
+    public void setOffset(Vector3f offset)
+    {
+        this.offset = offset;
+    }
+
+    @Override
     public void composeOrient(Quaternionf delta)
     {
         if (this.orient == null)
@@ -152,9 +390,14 @@ public class ModelGroup implements IMapSerializable
         {
             ListType list = new ListType();
 
+            /* In the order the cube writes its keys, so a saved file keeps reading the same way
+             * and a save that changed one number changes one line. */
             for (ModelCube cube : this.cubes)
             {
-                list.add(cube.toData());
+                MapType cubeData = new MapType(false);
+
+                cube.toData(cubeData);
+                list.add(cubeData);
             }
 
             data.put("cubes", list);

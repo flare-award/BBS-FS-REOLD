@@ -6,16 +6,17 @@ import mchorse.bbs_mod.forms.forms.AnchorForm;
 import mchorse.bbs_mod.forms.forms.BillboardForm;
 import mchorse.bbs_mod.forms.forms.BlockForm;
 import mchorse.bbs_mod.forms.forms.ExtrudedForm;
-import mchorse.bbs_mod.forms.forms.FilterBoardForm;
+import mchorse.bbs_mod.forms.forms.FramebufferForm;
 import mchorse.bbs_mod.forms.forms.ItemForm;
 import mchorse.bbs_mod.forms.forms.LabelForm;
 import mchorse.bbs_mod.forms.forms.MobForm;
 import mchorse.bbs_mod.forms.forms.StructureForm;
 import mchorse.bbs_mod.forms.forms.TrailForm;
 import mchorse.bbs_mod.forms.forms.VanillaParticleForm;
-import mchorse.bbs_mod.forms.forms.WebForm;
+import mchorse.bbs_mod.forms.forms.VideoForm;
 import mchorse.bbs_mod.resources.Link;
 import mchorse.bbs_mod.ui.UIKeys;
+import mchorse.bbs_mod.ui.utils.icons.Icons;
 import net.minecraft.block.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -45,17 +46,17 @@ public class ExtraFormSection extends FormSection
     @Override
     public void initiate()
     {
-        FormCategory extra = new FormCategory(UIKeys.FORMS_CATEGORIES_EXTRA, this.parent.visibility.get("extra"));
+        FormCategory extra = new FormCategory(UIKeys.FORMS_CATEGORIES_EXTRA, this.parent.preferences.visible("extra")).icon(Icons.SHAPES);
         AnchorForm anchor = new AnchorForm();
         BillboardForm billboard = new BillboardForm();
-        FilterBoardForm filterBoard = new FilterBoardForm();
         LabelForm label = new LabelForm();
         ExtrudedForm extruded = new ExtrudedForm();
         BlockForm block = new BlockForm();
         ItemForm item = new ItemForm();
+        StructureForm structure = new StructureForm();
         VanillaParticleForm vanillaParticle = new VanillaParticleForm();
         TrailForm trail = new TrailForm();
-        WebForm web = new WebForm();
+        VideoForm video = new VideoForm();
 
         billboard.texture.set(Link.assets("textures/error.png"));
         extruded.texture.set(Link.assets("textures/error.png"));
@@ -64,19 +65,20 @@ public class ExtraFormSection extends FormSection
 
         extra.addForm(anchor);
         extra.addForm(billboard);
-        extra.addForm(filterBoard);
         extra.addForm(label);
         extra.addForm(extruded);
         extra.addForm(block);
         extra.addForm(item);
+        extra.addForm(structure);
         extra.addForm(vanillaParticle);
         extra.addForm(trail);
-        extra.addForm(web);
+        extra.addForm(video);
+        extra.addForm(new FramebufferForm());
 
-        this.mobsAnimals = new FormCategory(UIKeys.FORMS_CATEGORIES_MOBS_ANIMALS, this.parent.visibility.get("mobs_animals"));
-        this.mobsNeutral = new FormCategory(UIKeys.FORMS_CATEGORIES_MOBS_NEUTRAL, this.parent.visibility.get("mobs_neutral"));
-        this.mobsHostile = new FormCategory(UIKeys.FORMS_CATEGORIES_MOBS_HOSTILE, this.parent.visibility.get("mobs_hostile"));
-        this.mobsMisc = new FormCategory(UIKeys.FORMS_CATEGORIES_MOBS_MISC, this.parent.visibility.get("mobs_misc"));
+        this.mobsAnimals = new FormCategory(UIKeys.FORMS_CATEGORIES_MOBS_ANIMALS, this.parent.preferences.visible("mobs_animals")).icon(Icons.CHICKEN);
+        this.mobsNeutral = new FormCategory(UIKeys.FORMS_CATEGORIES_MOBS_NEUTRAL, this.parent.preferences.visible("mobs_neutral")).icon(Icons.PLAYER);
+        this.mobsHostile = new FormCategory(UIKeys.FORMS_CATEGORIES_MOBS_HOSTILE, this.parent.preferences.visible("mobs_hostile")).icon(Icons.SKULL);
+        this.mobsMisc = new FormCategory(UIKeys.FORMS_CATEGORIES_MOBS_MISC, this.parent.preferences.visible("mobs_misc")).icon(Icons.MORE);
         this.extra = extra;
 
         this.fillMobs(this.mobsAnimals, mobAnimalsIds);

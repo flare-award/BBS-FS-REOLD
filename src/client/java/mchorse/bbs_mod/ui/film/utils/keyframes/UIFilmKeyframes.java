@@ -1,8 +1,14 @@
 package mchorse.bbs_mod.ui.film.utils.keyframes;
 
+import mchorse.bbs_mod.api.client.events.TimelineEvents;
+
+import mchorse.bbs_mod.ui.framework.elements.utils.UITimelineCanvas;
+import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.camera.utils.TimeUtils;
+import mchorse.bbs_mod.film.Film;
+import mchorse.bbs_mod.film.markers.FilmMarkers;
 import mchorse.bbs_mod.ui.film.IUIClipsDelegate;
-import mchorse.bbs_mod.ui.film.UIClips;
+import mchorse.bbs_mod.ui.film.markers.UIMarkersController;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframes;
 import mchorse.bbs_mod.utils.keyframes.Keyframe;
@@ -14,11 +20,24 @@ public class UIFilmKeyframes extends UIKeyframes
     public IUIClipsDelegate editor;
     public boolean absolute;
 
+    /**
+     * Every film keyframe timeline knows both the film and its own clip offset, so wiring the
+     * markers here covers the replay dope sheet and every nested clip keyframe editor at once.
+     */
+    private final UIMarkersController markers = new UIMarkersController(this::getFilmMarkers);
+
     public UIFilmKeyframes(IUIClipsDelegate delegate, Consumer<Keyframe> callback)
     {
         super(callback);
 
         this.editor = delegate;
+    }
+
+    private FilmMarkers getFilmMarkers()
+    {
+        Film film = this.editor == null ? null : this.editor.getFilm();
+
+        return film == null ? null : film.markers;
     }
 
     public UIFilmKeyframes absolute()
@@ -43,19 +62,42 @@ public class UIFilmKeyframes extends UIKeyframes
         return this.editor.getClip().tick.get();
     }
 
-    public int getOffset()
+    public float getOffset()
     {
         if (this.editor == null)
         {
             return 0;
         }
 
-        return (int) (this.editor.getCursor() - this.getClipOffset());
+        UIContext context = this.getContext();
+
+        return this.editor.getKeyframeCursor(context == null ? 0F : context.getTransition()) - this.getClipOffset();
     }
 
     @Override
     public float getTick()
     {
+        return this.getOffset();
+    }
+
+    @Override
+    public float getPlayheadTick(UIContext context)
+    {
+        return this.editor == null ? 0F : this.editor.getTimelineCursor(context.getTransition()) - this.getClipOffset();
+    }
+
+    /**
+     * The playhead in this timeline's own tick space &mdash; {@link #getOffset()} rather than the
+     * raw cursor, so a keyframe clip keys where its cursor is drawn instead of at the film's tick.
+     */
+    @Override
+    public Float getAutoKeyframeTick()
+    {
+        if (!BBSSettings.autoKeyframe.get() || this.editor == null)
+        {
+            return null;
+        }
+
         return this.getOffset();
     }
 
@@ -68,8 +110,14 @@ public class UIFilmKeyframes extends UIKeyframes
 
         if (keyframe != null)
         {
-            this.editor.setCursor((int) keyframe.getTick());
+            this.editor.setCursor(keyframe.getTick() + this.getClipOffset());
         }
+    }
+
+    @Override
+    protected boolean hasCursor()
+    {
+        return this.editor != null;
     }
 
     @Override
@@ -80,7 +128,7 @@ public class UIFilmKeyframes extends UIKeyframes
             long offset = this.getClipOffset();
 
             this.editor.stopPlaybackOnScrub();
-            this.editor.setCursor(Math.max(0, (int) (Math.round(this.fromGraphX(context.mouseX)) + offset)));
+            this.editor.setCursor(Math.max(0F, this.fromGraphCursor(context.mouseX) + offset));
         }
     }
 
@@ -89,14 +137,23 @@ public class UIFilmKeyframes extends UIKeyframes
     {
         if (this.editor != null)
         {
-            int cx = this.toGraphX(this.getOffset());
-            String label = TimeUtils.formatTime(this.getOffset()) + "/" + TimeUtils.formatTime(this.getDuration());
+            float cursor = this.getPlayheadTick(context);
+            int cx = this.toGraphX(cursor);
+            String label = TimeUtils.formatCursorTime(cursor) + "/" + TimeUtils.formatTime(this.getDuration());
+
+            this.markers.render(context, this.graphArea, this.getXAxis(), (int) this.getClipOffset());
 
             context.batcher.clip(this.graphArea, context);
-            UIClips.renderCursor(context, label, this.area, cx - 1);
+            UITimelineCanvas.renderCursor(context, label, this.area, cx - 1);
             context.batcher.unclip(context);
         }
 
         super.renderOverlay(context);
+
+        if (this.editor != null)
+        {
+            TimelineEvents.OVERLAY.invoker().render(this.editor.getFilm(), context, this.graphArea,
+                tick -> this.toGraphX((float) (tick - this.getClipOffset())));
+        }
     }
 }

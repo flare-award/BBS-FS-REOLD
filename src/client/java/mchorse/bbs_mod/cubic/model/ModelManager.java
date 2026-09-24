@@ -1,45 +1,74 @@
 package mchorse.bbs_mod.cubic.model;
 
 import mchorse.bbs_mod.BBSMod;
+import mchorse.bbs_mod.cubic.CubicLoader;
 import mchorse.bbs_mod.cubic.ModelInstance;
 import mchorse.bbs_mod.cubic.MolangHelper;
+import mchorse.bbs_mod.cubic.data.model.Model;
+import mchorse.bbs_mod.cubic.data.model.ModelCube;
+import mchorse.bbs_mod.cubic.data.model.ModelGroup;
 import mchorse.bbs_mod.cubic.model.config.ModelConfig;
-import mchorse.bbs_mod.cubic.constraints.ModelConstraintsRuntime;
-import mchorse.bbs_mod.cubic.ik.ModelIKRuntime;
 import mchorse.bbs_mod.cubic.physics.ModelPhysicsRuntime;
 import mchorse.bbs_mod.cubic.model.loaders.BOBJModelLoader;
 import mchorse.bbs_mod.cubic.model.loaders.CubicModelLoader;
 import mchorse.bbs_mod.cubic.model.loaders.GeoCubicModelLoader;
 import mchorse.bbs_mod.cubic.model.loaders.IModelLoader;
+import mchorse.bbs_mod.cubic.model.loaders.JemModelLoader;
 import mchorse.bbs_mod.cubic.model.loaders.VoxModelLoader;
 import mchorse.bbs_mod.data.DataToString;
+import mchorse.bbs_mod.data.types.BaseType;
 import mchorse.bbs_mod.data.types.MapType;
 import mchorse.bbs_mod.math.molang.MolangParser;
 import mchorse.bbs_mod.resources.AssetProvider;
 import mchorse.bbs_mod.resources.Link;
 import mchorse.bbs_mod.utils.IOUtils;
+import mchorse.bbs_mod.utils.PNGEncoder;
 import mchorse.bbs_mod.utils.StringUtils;
+import mchorse.bbs_mod.utils.colors.Colors;
+import mchorse.bbs_mod.utils.resources.Pixels;
 import mchorse.bbs_mod.utils.pose.PoseManager;
 import mchorse.bbs_mod.utils.pose.ShapeKeysManager;
 import mchorse.bbs_mod.utils.watchdog.IWatchDogListener;
 import mchorse.bbs_mod.utils.watchdog.WatchDogEvent;
+import org.joml.Vector2f;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 public class ModelManager implements IWatchDogListener
 {
     public static final String MODELS_PREFIX = "models/";
 
-    public final Map<String, ModelInstance> models = new HashMap<>();
+    /** A new model's texture sheet, a side: the box unwrap of its cube fills the top half exactly. */
+    private static final int NEW_MODEL_TEXTURE = 64;
+
+    /** A new model's cube, a side in pixels: one block. */
+    private static final int NEW_MODEL_CUBE = 16;
+
+    /**
+     * Model loaders an addon added.
+     *
+     * <p>Suppliers rather than loaders: the list is rebuilt from scratch on every asset
+     * reload, so anything added to it directly would survive exactly until the user saved a
+     * file in the assets folder.</p>
+     */
+    private static final List<Supplier<IModelLoader>> EXTRA_LOADERS = new ArrayList<>();
+
+    /* Loaded models only (a concurrent map holds no nulls); which keys were ever queued lives
+     * in {@link #requested} — both sides are touched by the render thread and the loader. */
+    public final Map<String, ModelInstance> models = new ConcurrentHashMap<>();
+    private final Set<String> requested = ConcurrentHashMap.newKeySet();
     public final List<IModelLoader> loaders = new ArrayList<>();
     public final AssetProvider provider;
     public final MolangParser parser;
@@ -59,10 +88,31 @@ public class ModelManager implements IWatchDogListener
     private void setupLoaders()
     {
         this.loaders.clear();
-        this.loaders.add(new BOBJModelLoader());
-        this.loaders.add(new CubicModelLoader());
-        this.loaders.add(new GeoCubicModelLoader());
-        this.loaders.add(new VoxModelLoader());
+        this.loaders.addAll(createLoaders());
+    }
+
+    /** Teaches BBS to read a model format of an addon's. */
+    public static void registerLoader(Supplier<IModelLoader> loader)
+    {
+        EXTRA_LOADERS.add(loader);
+    }
+
+    private static List<IModelLoader> createLoaders()
+    {
+        List<IModelLoader> loaders = new ArrayList<>();
+
+        loaders.add(new BOBJModelLoader());
+        loaders.add(new CubicModelLoader());
+        loaders.add(new GeoCubicModelLoader());
+        loaders.add(new JemModelLoader());
+        loaders.add(new VoxModelLoader());
+
+        for (Supplier<IModelLoader> extra : EXTRA_LOADERS)
+        {
+            loaders.add(extra.get());
+        }
+
+        return loaders;
     }
 
     /**
@@ -98,13 +148,19 @@ public class ModelManager implements IWatchDogListener
 
     public ModelInstance getModel(String id)
     {
-        if (this.models.containsKey(id))
+        ModelInstance model = this.models.get(id);
+
+        if (model != null)
         {
-            return this.models.get(id);
+            return model;
         }
 
-        this.models.put(id, null);
-        this.loader.add(id);
+        /* Queued exactly once; a failed load stays in requested and is never retried, which
+         * is what the old null-in-the-map marker meant. */
+        if (this.requested.add(id))
+        {
+            this.loader.add(id);
+        }
 
         return null;
     }
@@ -116,7 +172,9 @@ public class ModelManager implements IWatchDogListener
         Collection<Link> links = this.provider.getLinksFromPath(modelLink, true);
         MapType config = this.loadConfig(modelLink);
 
-        for (IModelLoader loader : this.loaders)
+        /* Fresh loaders per load: BOBJModelLoader keeps state between calls, and the shared
+         * set would leak one model's leftovers into the next. */
+        for (IModelLoader loader : createLoaders())
         {
             model = loader.load(id, this, modelLink, links, config);
 
@@ -135,9 +193,8 @@ public class ModelManager implements IWatchDogListener
             System.out.println("Model \"" + id + "\" was loaded!");
 
             model.setup();
+            this.models.put(id, model);
         }
-
-        this.models.put(id, model);
 
         return model;
     }
@@ -180,6 +237,140 @@ public class ModelManager implements IWatchDogListener
         return DataToString.writeSilently(file, data, true);
     }
 
+    /**
+     * Make a new model from scratch in the user assets folder ({@code config/bbs/assets/models/<id>/}):
+     * a {@code model.bbs.json} with one group holding one block-sized cube on the floor, and a white
+     * {@code model.png} it is unwrapped onto. The cube is not decoration — a model with no groups
+     * doesn't load at all, and one with an empty group opens as an empty viewport.
+     *
+     * <p>Refuses a folder that is already there, model or not: writing into it would turn somebody's
+     * textures into a model. Returns whether the model was written.</p>
+     */
+    public boolean createModel(String id)
+    {
+        Link link = Link.assets(MODELS_PREFIX + id);
+        File folder = this.provider.getFile(link);
+
+        if (folder == null || folder.exists() || !folder.mkdirs())
+        {
+            return false;
+        }
+
+        Model model = new Model(this.parser);
+        ModelGroup group = new ModelGroup("group");
+        ModelCube cube = new ModelCube();
+        MapType data = new MapType(false);
+
+        model.textureWidth = NEW_MODEL_TEXTURE;
+        model.textureHeight = NEW_MODEL_TEXTURE;
+
+        cube.size.set(NEW_MODEL_CUBE, NEW_MODEL_CUBE, NEW_MODEL_CUBE);
+        cube.origin.set(-NEW_MODEL_CUBE / 2F, 0F, -NEW_MODEL_CUBE / 2F);
+        cube.setupBoxUV(new Vector2f(0F, 0F), false);
+        group.cubes.add(cube);
+        model.topGroups.add(group);
+        data.put("model", model.toData());
+
+        Pixels pixels = Pixels.fromSize(NEW_MODEL_TEXTURE, NEW_MODEL_TEXTURE);
+
+        try
+        {
+            pixels.drawRect(0, 0, NEW_MODEL_TEXTURE, NEW_MODEL_TEXTURE, Colors.WHITE);
+            PNGEncoder.writeToFile(pixels, new File(folder, "model.png"));
+        }
+        catch (IOException e)
+        {
+            e.printStackTrace();
+
+            return false;
+        }
+        finally
+        {
+            pixels.delete();
+        }
+
+        if (!DataToString.writeSilently(new File(folder, "model.bbs.json"), data, true))
+        {
+            return false;
+        }
+
+        /* A model once asked for under this name and not found is never looked for again. */
+        this.forget(id);
+
+        return true;
+    }
+
+    /**
+     * Write a model's groups back to the file it was read from, over the file as it stands: its
+     * animations stay as they are (the instance's list also holds the ones the config pulls in from
+     * other files, and those must not end up baked in), and so does anything else in it, such as
+     * the exporter's version stamp. Only for a model the editor may edit
+     * ({@link ModelInstance#getModelFile()}); returns whether the file was written.
+     */
+    public boolean saveModel(ModelInstance instance, List<String[]> renames)
+    {
+        Link link = instance.getModelFile();
+        File file = link == null ? null : this.provider.getFile(link);
+
+        if (file == null || !(instance.getModel() instanceof Model model))
+        {
+            return false;
+        }
+
+        MapType data = this.readModelFile(file);
+
+        data.put("model", model.toData());
+
+        if (!renames.isEmpty() && data.has("animations"))
+        {
+            renameAnimationBones(data.getMap("animations"), renames);
+        }
+
+        return DataToString.writeSilently(file, data, true);
+    }
+
+    /** Move the bone keys of every animation in the file along the renames, oldest first. */
+    private static void renameAnimationBones(MapType animations, List<String[]> renames)
+    {
+        for (Map.Entry<String, BaseType> entry : animations)
+        {
+            if (!entry.getValue().isMap() || !entry.getValue().asMap().has("groups"))
+            {
+                continue;
+            }
+
+            MapType groups = entry.getValue().asMap().getMap("groups");
+
+            for (String[] rename : renames)
+            {
+                if (groups.has(rename[0]))
+                {
+                    BaseType part = groups.get(rename[0]);
+
+                    groups.remove(rename[0]);
+                    groups.put(rename[1], part);
+                }
+            }
+        }
+    }
+
+    /** The file as it stands, to be written over in place; an empty ordered map when it can't be read. */
+    private MapType readModelFile(File file)
+    {
+        MapType data = null;
+
+        try
+        {
+            data = CubicLoader.loadFile(new FileInputStream(file));
+        }
+        catch (IOException e)
+        {
+            System.err.println("Failed to read the model file before saving it: " + file);
+        }
+
+        return data == null ? new MapType(false) : data;
+    }
+
     public void reload()
     {
         for (ModelInstance model : this.models.values())
@@ -191,9 +382,8 @@ public class ModelManager implements IWatchDogListener
         }
 
         this.models.clear();
-        ModelIKRuntime.clearCache();
+        this.requested.clear();
         ModelPhysicsRuntime.clearCache();
-        ModelConstraintsRuntime.clearCache();
         PoseManager.INSTANCE.clear();
         ShapeKeysManager.INSTANCE.clear();
         this.setupLoaders();
@@ -216,6 +406,8 @@ public class ModelManager implements IWatchDogListener
             || link.path.endsWith(".bobj")
             || link.path.endsWith(".obj")
             || link.path.endsWith(".animation.json")
+            || link.path.endsWith(".jem")
+            || link.path.endsWith(".jpm")
             || link.path.endsWith(".vox")
             || link.path.endsWith("/config.json");
     }
@@ -234,15 +426,79 @@ public class ModelManager implements IWatchDogListener
             return;
         }
 
+        if (!link.path.startsWith(MODELS_PREFIX))
+        {
+            return;
+        }
+
+        String modelPath = link.path.substring(MODELS_PREFIX.length());
+
         if (this.isRelodable(link))
         {
-            String key = StringUtils.parentPath(link.path.substring(MODELS_PREFIX.length()));
-            ModelInstance model = this.models.remove(key);
+            /* A model is the folder the file sits in. */
+            this.forget(StringUtils.parentPath(modelPath));
 
-            if (model != null)
+            return;
+        }
+
+        /* Not a file a loader reads. A deleted model folder arrives exactly this way - by the time the
+         * event is handled the path is no longer a directory, so it names the model itself - and without
+         * this a model deleted and put back under the same name came back as the copy still in memory,
+         * which is what made a rejoin the only way to see it change. */
+        this.forget(modelPath);
+
+        for (String key : new ArrayList<>(this.models.keySet()))
+        {
+            if (key.startsWith(modelPath + "/"))
             {
-                model.delete();
+                this.forget(key);
             }
+        }
+    }
+
+    /**
+     * Drop every model of a folder, so the next request loads them again. For a source BBS does not
+     * watch — the models a resource pack serves — where a change arrives as one event for all of them
+     * rather than as a file the watchdog saw.
+     */
+    public void forgetFolder(String prefix)
+    {
+        for (String key : new ArrayList<>(this.models.keySet()))
+        {
+            if (key.startsWith(prefix))
+            {
+                this.forget(key);
+            }
+        }
+
+        /* A model that failed to load is remembered as requested and never retried, so it has to go
+         * too, or a pack that arrives later can never be picked up. */
+        for (String key : new ArrayList<>(this.requested))
+        {
+            if (key.startsWith(prefix))
+            {
+                this.requested.remove(key);
+            }
+        }
+    }
+
+    /** Drop a model from the cache so the next request loads it from disk again. */
+    private void forget(String key)
+    {
+        if (key.isEmpty())
+        {
+            return;
+        }
+
+        ModelInstance model = this.models.remove(key);
+
+        /* Un-mark it too, or the next getModel would treat the key as already queued and
+         * the edited model would never reload. */
+        this.requested.remove(key);
+
+        if (model != null)
+        {
+            model.delete();
         }
     }
 }

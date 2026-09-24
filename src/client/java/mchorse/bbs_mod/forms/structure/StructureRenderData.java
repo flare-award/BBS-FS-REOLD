@@ -30,12 +30,24 @@ public class StructureRenderData
     /** Structure-local position → block entity NBT (chests, signs, beds, ...). */
     private final Map<BlockPos, NbtCompound> blockEntities;
 
+    /** Traced on first use: light depends on the blocks alone, so it outlives biome changes and rebakes. */
+    private StructureLighting lighting;
+
     private StructureRenderData(String id, Vec3i size, Map<BlockPos, BlockState> blocks, Map<BlockPos, NbtCompound> blockEntities)
     {
         this.id = id;
         this.size = size;
         this.blocks = Collections.unmodifiableMap(blocks);
         this.blockEntities = Collections.unmodifiableMap(blockEntities);
+    }
+
+    public static StructureRenderData create(String id, Vec3i size, Map<BlockPos, BlockState> blocks, Map<BlockPos, NbtCompound> entities)
+    {
+        Map<BlockPos, BlockState> blockCopy = new LinkedHashMap<>();
+        Map<BlockPos, NbtCompound> entityCopy = new LinkedHashMap<>();
+        blocks.forEach((pos, state) -> blockCopy.put(pos.toImmutable(), state));
+        entities.forEach((pos, nbt) -> entityCopy.put(pos.toImmutable(), nbt.copy()));
+        return new StructureRenderData(id, new Vec3i(size.getX(), size.getY(), size.getZ()), blockCopy, entityCopy);
     }
 
     public Map<BlockPos, BlockState> getBlocks()
@@ -46,6 +58,17 @@ public class StructureRenderData
     public Map<BlockPos, NbtCompound> getBlockEntities()
     {
         return this.blockEntities;
+    }
+
+    /** How this structure is lit — shared by both fake worlds, so they agree; see {@link StructureLighting}. */
+    public StructureLighting getLighting()
+    {
+        if (this.lighting == null)
+        {
+            this.lighting = StructureLighting.compute(this);
+        }
+
+        return this.lighting;
     }
 
     public BlockState getBlockState(BlockPos pos)

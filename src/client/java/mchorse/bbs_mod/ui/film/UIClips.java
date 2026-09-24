@@ -1,5 +1,7 @@
 package mchorse.bbs_mod.ui.film;
 
+import mchorse.bbs_mod.api.client.events.TimelineEvents;
+
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.camera.clips.CameraClip;
 import mchorse.bbs_mod.camera.clips.ClipFactoryData;
@@ -10,6 +12,8 @@ import mchorse.bbs_mod.data.types.BaseType;
 import mchorse.bbs_mod.data.types.ListType;
 import mchorse.bbs_mod.data.types.MapType;
 import mchorse.bbs_mod.film.Film;
+import mchorse.bbs_mod.film.markers.FilmMarker;
+import mchorse.bbs_mod.film.markers.FilmMarkers;
 import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.graphics.window.Window;
@@ -19,24 +23,27 @@ import mchorse.bbs_mod.ui.Keys;
 import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.film.clips.renderer.IUIClipRenderer;
 import mchorse.bbs_mod.ui.film.clips.renderer.UIClipRenderers;
+import mchorse.bbs_mod.ui.film.markers.UIMarkerOverlayPanel;
+import mchorse.bbs_mod.ui.film.markers.UIMarkersController;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
+import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
 import mchorse.bbs_mod.ui.framework.elements.utils.Batcher2D;
-import mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer;
+import mchorse.bbs_mod.ui.framework.elements.utils.UITimelineCanvas;
 import mchorse.bbs_mod.ui.utils.Area;
-import mchorse.bbs_mod.ui.utils.Scale;
 import mchorse.bbs_mod.ui.utils.Scroll;
-import mchorse.bbs_mod.ui.utils.ScrollDirection;
 import mchorse.bbs_mod.ui.utils.UIUtils;
 import mchorse.bbs_mod.ui.utils.context.ContextMenuManager;
+import mchorse.bbs_mod.ui.utils.context.MenuVerb;
+import mchorse.bbs_mod.ui.utils.context.UIChoiceMenu;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.ui.utils.presets.UICopyPasteController;
-import mchorse.bbs_mod.ui.utils.presets.UIPresetContextMenu;
 import mchorse.bbs_mod.ui.utils.renderers.TimelineRulerRenderer;
 import mchorse.bbs_mod.utils.MathUtils;
 import mchorse.bbs_mod.utils.clips.Clip;
 import mchorse.bbs_mod.utils.clips.Clips;
+import mchorse.bbs_mod.utils.profiler.BBSProfiler;
 import mchorse.bbs_mod.utils.colors.Colors;
 import mchorse.bbs_mod.utils.factory.IFactory;
 import mchorse.bbs_mod.utils.keyframes.Keyframe;
@@ -50,9 +57,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
-public class UIClips extends UIElement
+public class UIClips extends UITimelineCanvas
 {
     /* Constants */
     public static final IKey KEYS_CATEGORY = UIKeys.CAMERA_EDITOR_KEYS_CLIPS_TITLE;
@@ -70,18 +78,15 @@ public class UIClips extends UIElement
     private IFactory<Clip, ClipFactoryData> factory;
 
     /* Navigation */
-    public Scale scale = new Scale(this.area, ScrollDirection.HORIZONTAL);
     public Scroll vertical = new Scroll(new Area());
 
     private boolean canGrab;
     private boolean grabbing;
     private boolean scrubbing;
-    private boolean scrolling;
-    private int lastX;
-    private int lastY;
-    private int initialX;
-    private int initialY;
     private int grabMode;
+
+    /* Markers */
+    private final UIMarkersController markers = new UIMarkersController(this::getFilmMarkers);
 
     /* Looping */
     public int loopMin = 0;
@@ -89,7 +94,6 @@ public class UIClips extends UIElement
     private int selectingLoop = -1;
 
     /* Selection */
-    private boolean selecting;
     private List<Integer> selection = new ArrayList<>();
 
     /* Embedded view */
@@ -113,29 +117,6 @@ public class UIClips extends UIElement
 
     private int layerHeight = 20;
 
-    /**
-     * Render cursor that displays the full duration of the camera work,
-     * and also current tick within the camera work.
-     */
-    public static void renderCursor(UIContext context, String label, Area area, int x)
-    {
-        /* Draw the marker */
-        FontRenderer font = context.batcher.getFont();
-        int width = font.getWidth(label) + 3;
-        int color = BBSSettings.primaryColor.get();
-
-        context.batcher.primaryBox(x, area.y, x + 1, area.ey(), Colors.A100);
-
-        /* Move the tick line left, so it won't overflow the timeline */
-        if (x + 1 + width > area.ex())
-        {
-            x -= width + 1;
-        }
-
-        /* Draw the tick label */
-        context.batcher.textCard(label, x + 3, area.ey() - 2 - font.getHeight(), Colors.WHITE, Colors.setA(color, 0.78F), 2);
-    }
-
     public UIClips(IUIClipsDelegate delegate, IFactory<Clip, ClipFactoryData> factory)
     {
         super();
@@ -146,7 +127,8 @@ public class UIClips extends UIElement
         this.copyPasteController = new UICopyPasteController(PresetManager.CLIPS, "_CopyClips")
             .supplier(this::copyClips)
             .consumer(this::pasteClips)
-            .canCopy(() -> this.delegate.getClip() != null);
+            .canCopy(() -> this.delegate.getClip() != null)
+            .labels(UIKeys.CAMERA_TIMELINE_CONTEXT_COPY, UIKeys.CAMERA_TIMELINE_CONTEXT_PASTE);
 
         this.delegate = delegate;
         this.factory = factory;
@@ -161,15 +143,22 @@ public class UIClips extends UIElement
             int mouseY = context.mouseY;
             boolean hasSelected = this.delegate.getClip() != null;
 
-            menu.custom(new UIPresetContextMenu(this.copyPasteController, mouseX, mouseY)
-                .labels(UIKeys.CAMERA_TIMELINE_CONTEXT_COPY, UIKeys.CAMERA_TIMELINE_CONTEXT_PASTE));
+            this.copyPasteController.install(menu, context, mouseX, mouseY);
+
+            /* The ruler is not a clip row — a click there scrubs instead of grabbing (see
+             * isInRuler), so the menu over it is about markers rather than about clips */
+            if (this.addMarkerOptions(menu, mouseX, mouseY))
+            {
+                return;
+            }
 
             if (this.fromLayerY(mouseY) < 0)
             {
                 return;
             }
 
-            menu.action(Icons.ADD, UIKeys.CAMERA_TIMELINE_CONTEXT_ADD, () -> this.showAdds(mouseX, mouseY));
+            menu.icon(MenuVerb.ADD, () -> this.showAdds(mouseX, mouseY)).label(UIKeys.CAMERA_TIMELINE_CONTEXT_ADD);
+            menu.icon(MenuVerb.REMOVE, this::removeSelected).label(UIKeys.CAMERA_TIMELINE_CONTEXT_REMOVE_CLIPS).enabled(hasSelected);
 
             if (hasSelected)
             {
@@ -180,11 +169,6 @@ public class UIClips extends UIElement
             }
 
             menu.action(Icons.EXCHANGE, UIKeys.CAMERA_TIMELINE_CONTEXT_REORGANIZE, () -> this.clips.sortLayers());
-
-            if (hasSelected)
-            {
-                menu.action(Icons.REMOVE, UIKeys.CAMERA_TIMELINE_CONTEXT_REMOVE_CLIPS, Colors.NEGATIVE, this::removeSelected);
-            }
         });
 
         Supplier<Boolean> canUseKeybinds = () -> this.delegate.canUseKeybinds() && !this.hasEmbeddedView();
@@ -230,8 +214,8 @@ public class UIClips extends UIElement
         this.keys().register(Keys.CLIP_SELECT_TRACK_AFTER, this::selectTrackAfter).category(KEYS_CATEGORY).active(canUseKeybinds);
         this.keys().register(Keys.CLIP_SELECT_AFTER, this::selectAfter).category(KEYS_CATEGORY).active(canUseKeybinds);
         this.keys().register(Keys.CLIP_SELECT_BEFORE, this::selectBefore).category(KEYS_CATEGORY).active(canUseKeybinds);
-        this.keys().register(Keys.CLIP_LAYER_UP, () -> this.moveSelectedByLayer(1)).category(KEYS_CATEGORY).active(canUseKeybindsSelected);
-        this.keys().register(Keys.CLIP_LAYER_DOWN, () -> this.moveSelectedByLayer(-1)).category(KEYS_CATEGORY).active(canUseKeybindsSelected);
+        this.keys().register(Keys.CLIP_LAYER_UP, () -> this.moveSelectedBy(0, 1)).category(KEYS_CATEGORY).active(canUseKeybindsSelected);
+        this.keys().register(Keys.CLIP_LAYER_DOWN, () -> this.moveSelectedBy(0, -1)).category(KEYS_CATEGORY).active(canUseKeybindsSelected);
         this.keys().register(Keys.FADE_IN, () ->
         {
             Clip clip = this.delegate.getClip();
@@ -248,11 +232,6 @@ public class UIClips extends UIElement
             clip.envelope.fadeOut.set((float) tick);
             this.delegate.fillData();
         }).category(KEYS_CATEGORY).active(canUseKeybindsSelected);
-    }
-
-    public UIClipRenderers getRenderers()
-    {
-        return this.renderers;
     }
 
     public IFactory<Clip, ClipFactoryData> getFactory()
@@ -299,7 +278,7 @@ public class UIClips extends UIElement
 
     private void showAddsAtCursor(UIContext context, int mouseX, int mouseY)
     {
-        this.showAddClips(context, this.checkSize(this.fromGraphX(mouseX), this.fromLayerY(mouseY), BBSSettings.getDefaultDuration()));
+        this.showAddClips(context, this.checkSize(this.fromGraphTick(mouseX), this.fromLayerY(mouseY), BBSSettings.getDefaultDuration()));
     }
 
     private void showAddsAtTick()
@@ -373,15 +352,11 @@ public class UIClips extends UIElement
 
         context.replaceContextMenu((add) ->
         {
-            add.autoKeys(UIKeys.CAMERA_TIMELINE_KEYS_CLIPS);
-
-            for (Link type : this.factory.getKeys())
-            {
-                IKey typeKey = UIKeys.CAMERA_TIMELINE_CONTEXT_ADD_CLIP_TYPE.format(UIKeys.C_CLIP.get(type));
-                ClipFactoryData data = this.factory.getData(type);
-
-                add.action(data.icon, typeKey, data.color, () -> this.addClip(type, preview.x, preview.y, preview.z));
-            }
+            UIChoiceMenu.of(this.factory.getKeys())
+                .icon((type) -> this.factory.getData(type).icon)
+                .label((type) -> UIKeys.C_CLIP.get(type))
+                .color((type) -> this.factory.getData(type).color)
+                .build(add, UIKeys.CAMERA_TIMELINE_KEYS_CLIPS, (type) -> this.addClip(type, preview.x, preview.y, preview.z));
 
             add.onClose((m) -> this.addPreview = null);
         });
@@ -431,7 +406,7 @@ public class UIClips extends UIElement
 
     private void pasteClips(MapType data, int mouseX, int mouseY)
     {
-        this.pasteClips(data, this.fromGraphX(mouseX));
+        this.pasteClips(data, this.fromGraphTick(mouseX));
     }
 
     /**
@@ -630,7 +605,7 @@ public class UIClips extends UIElement
                         )
                     );
 
-                    this.addClip(clip, this.fromGraphX(mouseX), this.fromLayerY(mouseY), (int) size);
+                    this.addClip(clip, this.fromGraphTick(mouseX), this.fromLayerY(mouseY), (int) size);
                 });
             }
         });
@@ -737,13 +712,21 @@ public class UIClips extends UIElement
 
     private void selectBefore()
     {
+        int cursor = this.delegate.getCursor();
+
+        this.selectWhere((clip) -> clip.tick.get() < cursor);
+    }
+
+    /** Replace the selection with every clip the test accepts, and pick the first of them. */
+    private void selectWhere(Predicate<Clip> test)
+    {
         int i = 0;
 
         this.clearSelection();
 
         for (Clip clip : this.clips.get())
         {
-            if (clip.tick.get() < this.delegate.getCursor())
+            if (test.test(clip))
             {
                 this.selection.add(i);
             }
@@ -752,6 +735,15 @@ public class UIClips extends UIElement
         }
 
         this.delegate.pickClip(this.selection.isEmpty() ? null : this.clips.get(this.selection.get(0)));
+    }
+
+    /** The layer the mouse is over, falling back to the selected clip's — negative when there is neither. */
+    private int layerUnderMouse()
+    {
+        Clip clip = this.delegate.getClip();
+        int layer = this.fromLayerY(this.getContext().mouseY);
+
+        return layer < 0 && clip != null ? clip.layer.get() : layer;
     }
 
     private void selectAll()
@@ -768,13 +760,7 @@ public class UIClips extends UIElement
 
     private void selectTrack()
     {
-        Clip clip = this.delegate.getClip();
-        int layer = this.fromLayerY(this.getContext().mouseY);
-
-        if (layer < 0 && clip != null)
-        {
-            layer = clip.layer.get();
-        }
+        int layer = this.layerUnderMouse();
 
         if (layer < 0)
         {
@@ -799,13 +785,7 @@ public class UIClips extends UIElement
      */
     private void selectTrackBefore()
     {
-        Clip clip = this.delegate.getClip();
-        int layer = this.fromLayerY(this.getContext().mouseY);
-
-        if (layer < 0 && clip != null)
-        {
-            layer = clip.layer.get();
-        }
+        int layer = this.layerUnderMouse();
 
         if (layer < 0)
         {
@@ -813,21 +793,8 @@ public class UIClips extends UIElement
         }
 
         int cursor = this.delegate.getCursor();
-        int i = 0;
 
-        this.clearSelection();
-
-        for (Clip c : this.clips.get())
-        {
-            if (c.layer.get() == layer && c.tick.get() < cursor)
-            {
-                this.selection.add(i);
-            }
-
-            i += 1;
-        }
-
-        this.delegate.pickClip(this.selection.isEmpty() ? null : this.clips.get(this.selection.get(0)));
+        this.selectWhere((c) -> c.layer.get() == layer && c.tick.get() < cursor);
     }
 
     /**
@@ -835,13 +802,7 @@ public class UIClips extends UIElement
      */
     private void selectTrackAfter()
     {
-        Clip clip = this.delegate.getClip();
-        int layer = this.fromLayerY(this.getContext().mouseY);
-
-        if (layer < 0 && clip != null)
-        {
-            layer = clip.layer.get();
-        }
+        int layer = this.layerUnderMouse();
 
         if (layer < 0)
         {
@@ -849,40 +810,15 @@ public class UIClips extends UIElement
         }
 
         int cursor = this.delegate.getCursor();
-        int i = 0;
 
-        this.clearSelection();
-
-        for (Clip c : this.clips.get())
-        {
-            if (c.layer.get() == layer && c.tick.get() + c.duration.get() > cursor)
-            {
-                this.selection.add(i);
-            }
-
-            i += 1;
-        }
-
-        this.delegate.pickClip(this.selection.isEmpty() ? null : this.clips.get(this.selection.get(0)));
+        this.selectWhere((c) -> c.layer.get() == layer && c.tick.get() + c.duration.get() > cursor);
     }
 
     private void selectAfter()
     {
-        int i = 0;
+        int cursor = this.delegate.getCursor();
 
-        this.clearSelection();
-
-        for (Clip clip : this.clips.get())
-        {
-            if (clip.tick.get() + clip.duration.get() > this.delegate.getCursor())
-            {
-                this.selection.add(i);
-            }
-
-            i += 1;
-        }
-
-        this.delegate.pickClip(this.selection.isEmpty() ? null : this.clips.get(this.selection.get(0)));
+        this.selectWhere((clip) -> clip.tick.get() + clip.duration.get() > cursor);
     }
 
     /* Selection */
@@ -1032,7 +968,7 @@ public class UIClips extends UIElement
 
     private void resetView()
     {
-        this.scale.anchor(0F);
+        this.xAxis.anchor(0F);
 
         if (clips != null)
         {
@@ -1040,11 +976,11 @@ public class UIClips extends UIElement
 
             if (duration > 0)
             {
-                this.scale.view(0, duration);
+                this.xAxis.view(0, duration);
             }
             else
             {
-                this.scale.set(0, 1);
+                this.xAxis.set(0, 1);
             }
         }
     }
@@ -1055,6 +991,9 @@ public class UIClips extends UIElement
      * clips still occupy their logical rows there for hit-testing - so a click on
      * the ruler must scrub the cursor rather than grab the clip hidden behind it
      * (see {@link #handleLeftClick}).
+     *
+     * <p>The strip does have one inhabitant of its own: the film's markers take a
+     * click there before the scrub does, and the context menu over it is theirs.
      */
     private boolean isInRuler(int mouseY)
     {
@@ -1107,14 +1046,10 @@ public class UIClips extends UIElement
         }
     }
 
-    public int fromGraphX(int mouseX)
+    /** The tick under a pixel column, rounded to the nearest whole tick. */
+    public int fromGraphTick(int mouseX)
     {
-        return (int) Math.round(this.scale.from(mouseX));
-    }
-
-    public int toGraphX(int value)
-    {
-        return (int) (this.scale.to(value));
+        return (int) Math.round(this.fromGraphX(mouseX));
     }
 
     public void setLoopMin()
@@ -1134,6 +1069,88 @@ public class UIClips extends UIElement
 
         this.loopMin = Math.min(min, max);
         this.loopMax = Math.max(min, max);
+    }
+
+    /* Markers */
+
+    /**
+     * @return The film's markers, or {@code null} — this timeline outlives any particular film and
+     * exists for a moment with none at all.
+     */
+    private FilmMarkers getFilmMarkers()
+    {
+        Film film = this.delegate == null ? null : this.delegate.getFilm();
+
+        return film == null ? null : film.markers;
+    }
+
+    private FilmMarker getMarkerAt(int mouseX, int mouseY)
+    {
+        return this.markers.getMarkerAt(this.area, this.xAxis, mouseX, mouseY, 0);
+    }
+
+    /**
+     * @return Whether the mouse was over the ruler, in which case the marker options are all the
+     * menu gets.
+     */
+    private boolean addMarkerOptions(ContextMenuManager menu, int mouseX, int mouseY)
+    {
+        FilmMarkers markers = this.getFilmMarkers();
+
+        if (markers == null || this.hasEmbeddedView() || !this.markers.isInRuler(this.area, mouseX, mouseY))
+        {
+            return false;
+        }
+
+        FilmMarker marker = this.getMarkerAt(mouseX, mouseY);
+
+        if (marker == null)
+        {
+            int tick = Math.max(0, this.fromGraphTick(mouseX));
+
+            menu.action(Icons.ADD, UIKeys.FILM_MARKERS_ADD, () -> this.editMarker(markers.addMarker(tick)));
+        }
+        else
+        {
+            menu.action(Icons.EDIT, UIKeys.FILM_MARKERS_EDIT, () -> this.editMarker(marker));
+            menu.action(Icons.REMOVE, UIKeys.FILM_MARKERS_REMOVE, () -> markers.remove(marker));
+        }
+
+        return true;
+    }
+
+    /**
+     * Writes the dragged marker's tick once, at the end of the gesture: a write per pixel would
+     * bury the undo history under a hundred steps of the same drag.
+     */
+    private void commitMarkerDrag()
+    {
+        FilmMarker marker = this.markers.getDragged();
+
+        if (marker == null)
+        {
+            return;
+        }
+
+        int tick = this.markers.getDragTick();
+
+        this.markers.stopDrag();
+
+        if (tick != marker.tick.get())
+        {
+            this.delegate.markLastUndoNoMerging();
+            marker.tick.set(tick);
+        }
+    }
+
+    public void editMarker(FilmMarker marker)
+    {
+        FilmMarkers markers = this.getFilmMarkers();
+
+        if (markers != null && marker != null)
+        {
+            UIOverlay.addOverlay(this.getContext(), new UIMarkerOverlayPanel(markers, marker), 220, 190);
+        }
     }
 
     /* Embedded view */
@@ -1160,8 +1177,7 @@ public class UIClips extends UIElement
 
             this.prepend(this.embedded);
             this.add(this.embeddedClose);
-            this.embedded.resize();
-            this.embeddedClose.resize();
+            this.resize();
         }
     }
 
@@ -1184,15 +1200,10 @@ public class UIClips extends UIElement
         this.vertical.clamp();
     }
 
-    private void setMouse(int x, int y)
-    {
-        this.lastX = this.initialX = x;
-        this.lastY = this.initialY = y;
-    }
-
     @Override
     protected boolean subMouseClicked(UIContext context)
     {
+        if (this.area.isInside(context)) this.xAxis.stopZoom();
         if (this.vertical.mouseClicked(context))
         {
             return true;
@@ -1229,7 +1240,7 @@ public class UIClips extends UIElement
          * clip whose logical row is hidden behind the ruler band (see isInRuler). */
         if (!this.hasEmbeddedView() && !this.isInRuler(mouseY))
         {
-            int tick = (int) Math.floor(this.scale.from(mouseX));
+            int tick = (int) Math.floor(this.xAxis.from(mouseX));
             int layerIndex = this.fromLayerY(mouseY);
             Clip original = this.delegate.getClip();
             Clip clip = this.clips.getClipAt(tick, layerIndex);
@@ -1268,9 +1279,9 @@ public class UIClips extends UIElement
                 if (BBSSettings.editorSnapToMarkers.get())
                 {
                     /* TODO: generalize this code. Check also other places getMult() */
-                    int mult = this.scale.getMult() * 2;
-                    int start = (int) this.scale.getMinValue();
-                    int end = (int) this.scale.getMaxValue();
+                    int mult = this.xAxis.getMult() * 2;
+                    int start = (int) this.xAxis.getMinValue();
+                    int end = (int) this.xAxis.getMaxValue();
                     int max = Integer.MAX_VALUE;
 
                     start -= start % mult;
@@ -1295,6 +1306,16 @@ public class UIClips extends UIElement
                     this.snappingPoints.add(otherClip.tick.get() + otherClip.duration.get());
                 }
 
+                FilmMarkers filmMarkers = this.getFilmMarkers();
+
+                if (filmMarkers != null && BBSSettings.editorSnapToFilmMarkers.get())
+                {
+                    for (FilmMarker marker : filmMarkers.getList())
+                    {
+                        this.snappingPoints.add(marker.tick.get());
+                    }
+                }
+
                 this.setMouse(mouseX, mouseY);
 
                 for (Clip selectedClip : this.getClipsFromSelection())
@@ -1306,9 +1327,9 @@ public class UIClips extends UIElement
             }
         }
 
-        if (shift && !this.hasEmbeddedView())
+        if (shift && !this.hasEmbeddedView() && !this.isInRuler(mouseY))
         {
-            this.selecting = true;
+            this.marquee.press(mouseX, mouseY);
 
             this.setMouse(mouseX, mouseY);
 
@@ -1317,14 +1338,28 @@ public class UIClips extends UIElement
         else if (alt)
         {
             this.selectingLoop = 0;
-            this.loopMin = this.fromGraphX(mouseX);
+            this.loopMin = this.fromGraphTick(mouseX);
             this.verifyLoopMinMax();
         }
         else
         {
+            FilmMarker marker = this.hasEmbeddedView() ? null : this.getMarkerAt(mouseX, mouseY);
+
+            /* A marker on the ruler takes the click before the scrub does: it is the only thing
+             * living up there, and jumping to it is what clicking it is for */
+            if (marker != null)
+            {
+                this.markers.beginDrag(marker);
+                this.delegate.stopPlaybackOnScrub();
+                this.delegate.setCursor(marker.tick.get());
+                this.setMouse(mouseX, mouseY);
+
+                return true;
+            }
+
             this.scrubbing = true;
             this.delegate.stopPlaybackOnScrub();
-            this.delegate.setCursor(this.fromGraphX(mouseX));
+            this.delegate.setCursor(Math.max(0F, this.fromGraphCursor(mouseX)));
 
             return true;
         }
@@ -1339,7 +1374,7 @@ public class UIClips extends UIElement
             boolean same = this.loopMin == this.loopMax;
 
             this.selectingLoop = 1;
-            this.loopMax = this.fromGraphX(mouseX);
+            this.loopMax = this.fromGraphTick(mouseX);
 
             if (same)
             {
@@ -1364,7 +1399,7 @@ public class UIClips extends UIElement
         }
         else
         {
-            this.scrolling = true;
+            this.navigating = true;
             this.setMouse(mouseX, mouseY);
 
             return true;
@@ -1376,31 +1411,31 @@ public class UIClips extends UIElement
     @Override
     public boolean subMouseScrolled(UIContext context)
     {
-        if (this.area.isInside(context) && !this.scrolling && !this.hasEmbeddedView())
+        if (this.area.isInside(context) && !this.navigating && !this.hasEmbeddedView())
         {
             if (context.mouseWheelHorizontal != 0D)
             {
-                this.scale.setShift(this.scale.getShift() - (25F * BBSSettings.scrollingSensitivityHorizontal.get() * context.mouseWheelHorizontal) / this.scale.getZoom());
+                this.panTime(context.mouseWheelHorizontal);
             }
             else if (Window.isAltPressed() && context.mouseWheel != 0D)
             {
                 if (this.isSelecting())
                 {
-                    this.moveSelectedBy((int) Math.copySign(1, context.mouseWheel));
+                    this.moveSelectedBy((int) Math.copySign(1, context.mouseWheel), 0);
                 }
                 else
                 {
                     int step = (int) Math.copySign(2, context.mouseWheel);
-                    this.layerHeight = MathUtils.clamp(this.layerHeight + step, LAYER_HEIGHT_MIN, LAYER_HEIGHT_MAX);
+                    this.layerHeight = MathUtils.clamp(this.layerHeight - step, LAYER_HEIGHT_MIN, LAYER_HEIGHT_MAX);
                 }
             }
-            else if (Window.isShiftPressed())
+            else if (Window.isShiftPressed() && !Window.isCtrlPressed())
             {
                 this.vertical.mouseScroll(context);
             }
             else if (context.mouseWheel != 0D)
             {
-                this.scale.zoomAnchor(Scale.getAnchorX(context, this.area), Math.copySign(this.scale.getZoomFactor(), context.mouseWheel));
+                this.zoomTimeAt(context, context.mouseWheel);
             }
 
             return true;
@@ -1409,7 +1444,8 @@ public class UIClips extends UIElement
         return super.subMouseScrolled(context);
     }
 
-    private void moveSelectedBy(int dx)
+    /** Shift the selection by whole ticks and layers, giving way to whatever it would run into. */
+    private void moveSelectedBy(int dx, int dy)
     {
         List<Clip> selected = this.getClipsFromSelection();
 
@@ -1426,11 +1462,12 @@ public class UIClips extends UIElement
         }
 
         List<Clip> others = new ArrayList<>(this.clips.get());
+
         others.removeIf(selected::contains);
 
-        int[] adjusted = this.resolveCollisions(others, data, dx, 0);
+        int[] adjusted = this.resolveCollisions(others, data, dx, dy);
 
-        if (adjusted[0] == 0)
+        if (adjusted[0] == 0 && adjusted[1] == 0)
         {
             return;
         }
@@ -1439,43 +1476,7 @@ public class UIClips extends UIElement
         {
             Vector3i clipData = data.get(i);
 
-            this.setClipData(selected.get(i), clipData.x() + adjusted[0], clipData.y(), clipData.z());
-        }
-
-        this.delegate.fillData();
-    }
-
-    private void moveSelectedByLayer(int dy)
-    {
-        List<Clip> selected = this.getClipsFromSelection();
-
-        if (selected.isEmpty())
-        {
-            return;
-        }
-
-        List<Vector3i> data = new ArrayList<>(selected.size());
-
-        for (Clip clip : selected)
-        {
-            data.add(new Vector3i(clip.tick.get(), clip.layer.get(), clip.duration.get()));
-        }
-
-        List<Clip> others = new ArrayList<>(this.clips.get());
-        others.removeIf(selected::contains);
-
-        int[] adjusted = this.resolveCollisions(others, data, 0, dy);
-
-        if (adjusted[1] == 0)
-        {
-            return;
-        }
-
-        for (int i = 0; i < selected.size(); i++)
-        {
-            Vector3i clipData = data.get(i);
-
-            this.setClipData(selected.get(i), clipData.x(), clipData.y() + adjusted[1], clipData.z());
+            this.setClipData(selected.get(i), clipData.x() + adjusted[0], clipData.y() + adjusted[1], clipData.z());
         }
 
         this.delegate.fillData();
@@ -1491,16 +1492,23 @@ public class UIClips extends UIElement
 
         this.vertical.mouseReleased(context);
 
-        if (this.selecting)
+        this.commitMarkerDrag();
+
+        if (this.scrubbing)
+        {
+            this.delegate.setCursor(Math.max(0F, this.fromGraphCursor(context.mouseX)));
+        }
+
+        if (this.marquee.isPressed())
         {
             this.pickLastSelectedClip();
         }
 
         this.grabMode = 0;
         this.grabbing = false;
-        this.selecting = false;
+        this.marquee.reset();
         this.scrubbing = false;
-        this.scrolling = false;
+        this.navigating = false;
         this.selectingLoop = -1;
 
         this.grabbedClips = Collections.emptyList();
@@ -1514,6 +1522,7 @@ public class UIClips extends UIElement
     @Override
     protected boolean subKeyPressed(UIContext context)
     {
+        this.xAxis.stopZoom();
         if (this.embedded != null && context.isPressed(GLFW.GLFW_KEY_ESCAPE))
         {
             this.embedView(null);
@@ -1528,6 +1537,16 @@ public class UIClips extends UIElement
     @Override
     public void render(UIContext context)
     {
+        if (this.grabbing || this.scrubbing || this.navigating || this.marquee.isPressed()
+            || this.selectingLoop >= 0 || this.markers.isDragging() || this.hasEmbeddedView())
+        {
+            this.xAxis.stopZoom();
+        }
+        else
+        {
+            this.xAxis.updateZoom();
+        }
+
         this.updateScrollSize();
 
         if (this.centerScrollOnRender)
@@ -1538,35 +1557,45 @@ public class UIClips extends UIElement
 
         if (this.clips != null && !this.hasEmbeddedView())
         {
+            BBSProfiler.begin(BBSProfiler.Timer.UI_TIMELINE);
             this.vertical.drag(context);
             this.handleInput(context.mouseX, context.mouseY);
             this.handleScrolling(context.mouseX, context.mouseY);
             this.renderCameraWork(context);
+            BBSProfiler.end(BBSProfiler.Timer.UI_TIMELINE);
         }
 
         super.render(context);
+
+        if (this.delegate != null)
+        {
+            TimelineEvents.OVERLAY.invoker().render(this.delegate.getFilm(), context, this.area,
+                tick -> this.toGraphX((float) tick));
+        }
     }
 
     private void handleInput(int mouseX, int mouseY)
     {
-        if (this.scrubbing)
+        if (this.markers.isDragging())
         {
-            this.delegate.setCursor(this.fromGraphX(mouseX));
+            this.markers.dragTo(this.fromGraphTick(mouseX));
+        }
+        else if (this.scrubbing)
+        {
+            this.delegate.setCursor(Math.max(0F, this.fromGraphCursor(mouseX)));
         }
         else if (this.selectingLoop == 0)
         {
-            this.loopMin = MathUtils.clamp(this.fromGraphX(mouseX), 0, this.loopMax);
+            this.loopMin = MathUtils.clamp(this.fromGraphTick(mouseX), 0, this.loopMax);
         }
         else if (this.selectingLoop == 1)
         {
-            this.loopMax = MathUtils.clamp(this.fromGraphX(mouseX), this.loopMin, Integer.MAX_VALUE);
+            this.loopMax = MathUtils.clamp(this.fromGraphTick(mouseX), this.loopMin, Integer.MAX_VALUE);
         }
-        else if (this.selecting)
+        else if (this.marquee.isPressed())
         {
-            Area selection = new Area();
-
-            selection.setPoints(this.lastX, this.lastY, mouseX, mouseY);
-            this.captureSelection(selection);
+            this.marquee.update(mouseX, mouseY);
+            this.captureSelection(this.marquee.getArea());
         }
         else if (this.grabbing)
         {
@@ -1587,7 +1616,7 @@ public class UIClips extends UIElement
     private void dragClips(int mouseX, int mouseY)
     {
         List<Clip> others = Window.isAltPressed() ? Collections.emptyList() : this.otherClips;
-        int dx = this.fromGraphX(mouseX) - this.fromGraphX(this.initialX);
+        int dx = this.fromGraphTick(mouseX) - this.fromGraphTick(this.initialX);
         int dy = this.fromLayerY(mouseY) - this.fromLayerY(this.initialY);
 
         if (this.grabMode != 0 && Window.isShiftPressed())
@@ -1612,7 +1641,7 @@ public class UIClips extends UIElement
         Vector3i data = this.grabbedData.get(this.grabbedData.size() - 1);
         int tick = data.x();
         int duration = data.z();
-        int mouse = this.fromGraphX(mouseX);
+        int mouse = this.fromGraphTick(mouseX);
 
         /* Pin the clip to its original bounds — an earlier frame may have resized it. */
         this.setClipData(clip, tick, data.y(), duration);
@@ -1856,17 +1885,16 @@ public class UIClips extends UIElement
 
     private void handleScrolling(int mouseX, int mouseY)
     {
-        if (this.scrolling)
+        if (this.navigating)
         {
-            this.scale.setShift(this.scale.getShift() - (mouseX - this.lastX) / this.scale.getZoom());
+            this.dragTimeBy(mouseX - this.lastX);
             this.vertical.scrollBy(this.lastY - mouseY);
             this.vertical.clamp();
 
             this.lastX = mouseX;
             this.lastY = mouseY;
 
-            this.scale.setShift(this.scale.getShift());
-            this.scale.calculateMultiplier();
+            this.xAxis.calculateMultiplier();
         }
     }
 
@@ -1881,23 +1909,29 @@ public class UIClips extends UIElement
         int leftEdge = this.toGraphX(0);
         int rulerBottom = TimelineRulerRenderer.getRulerBottom(area);
 
-        if (leftEdge > this.area.x)
-        {
-            batcher.box(this.area.x, this.area.y, Math.min(leftEdge, this.area.ex()), this.area.ey(), BBSSettings.chromeSurface());
-        }
-
         area.render(batcher, BBSSettings.deepSurface());
         batcher.clipBox(this.vertical.area.x, rulerBottom, this.vertical.area.ex(), this.vertical.area.ey(), context);
 
-        for (int i = 0; i < this.layers; i++)
-        {
-            int ly = this.toLayerY(i);
+        batcher.beginBatch();
 
-            if (i % 2 != 0)
+        try
+        {
+            for (int i = 0; i < this.layers; i++)
             {
-                batcher.box(leftEdge, ly, this.area.ex(), ly + h, BBSSettings.baseSurface());
+                int ly = this.toLayerY(i);
+
+                if (i % 2 != 0)
+                {
+                    batcher.box(leftEdge, ly, this.area.ex(), ly + h, BBSSettings.baseSurface());
+                }
             }
         }
+        finally
+        {
+            batcher.endBatch();
+        }
+
+        this.renderOutOfRange(batcher, leftEdge);
 
         batcher.unclip(context);
         batcher.clip(this.area, context);
@@ -1913,7 +1947,7 @@ public class UIClips extends UIElement
                 context,
                 area,
                 rulerBottom,
-                (int) this.scale.getMinValue(),
+                (int) this.xAxis.getMinValue(),
                 this.clips.calculateDuration(),
                 this::toGraphX,
                 TimeUtils::formatTime
@@ -1928,6 +1962,14 @@ public class UIClips extends UIElement
             IUIClipRenderer renderer = this.renderers.get(clip);
 
             Area clipArea = this.getClipArea(clip, CLIP_AREA, h);
+
+            /* A clip fully off the visible span was drawn anyway and only hidden by the
+             * scissor after all its work was done. The margin keeps edge handles alive. */
+            if (clipArea.ex() < area.x - 20 || clipArea.x > area.ex() + 20)
+            {
+                continue;
+            }
+
             boolean selected = this.hasSelected(i);
 
             if (!this.hasEmbeddedView())
@@ -1938,7 +1980,7 @@ public class UIClips extends UIElement
 
             renderer.renderClip(context, this, clip, clipArea, selected, this.delegate.getClip() == clip);
 
-            if (!selected && !this.grabbing && !this.selecting && clipArea.isInside(context))
+            if (!selected && !this.grabbing && !this.marquee.isPressed() && clipArea.isInside(context))
             {
                 context.batcher.outline(clipArea.x, clipArea.y, clipArea.ex(), clipArea.ey(), Colors.WHITE);
             }
@@ -1962,9 +2004,13 @@ public class UIClips extends UIElement
         batcher.unclip(context);
         batcher.clip(this.area, context);
 
-        String label = TimeUtils.formatTime(this.delegate.getCursor()) + "/" + TimeUtils.formatTime(this.clips.calculateDuration());
+        /* Keep marker lines visible over the clips, below the playhead. */
+        this.markers.render(context, this.area, this.xAxis, 0);
 
-        renderCursor(context, label, area, this.toGraphX(this.delegate.getCursor()));
+        float cursor = this.delegate.getTimelineCursor(context.getTransition());
+        String label = TimeUtils.formatCursorTime(cursor) + "/" + TimeUtils.formatTime(this.clips.calculateDuration());
+
+        renderCursor(context, label, area, this.toGraphX(cursor));
         this.renderSelection(context);
 
         batcher.unclip(context);
@@ -2029,11 +2075,47 @@ public class UIClips extends UIElement
     }
 
     /**
+     * Paint the field before the first tick and after the last one.
+     *
+     * <p>It drops to the floor of the tonal ladder — nothing can be put there, so it is not a
+     * surface but the absence of one. The far edge is where the ruler stops labelling, so the
+     * two agree on where the camera work ends; with no clips at all the ruler runs the whole
+     * width and there is no outside to paint.</p>
+     *
+     * <p>Goes on after the layer rows, which run the full width of the view: painting it before
+     * them (or before the backdrop, as it used to be) means painting under them. That is what
+     * silently swallowed this strip when the surfaces stopped being translucent tints.</p>
+     */
+    private void renderOutOfRange(Batcher2D batcher, int leftEdge)
+    {
+        int color = BBSSettings.sunkenSurface();
+
+        if (leftEdge > this.area.x)
+        {
+            batcher.box(this.area.x, this.area.y, Math.min(leftEdge, this.area.ex()), this.area.ey(), color);
+        }
+
+        int duration = this.clips.calculateDuration();
+
+        if (duration <= 0)
+        {
+            return;
+        }
+
+        int rightEdge = this.toGraphX(duration);
+
+        if (rightEdge < this.area.ex())
+        {
+            batcher.box(Math.max(rightEdge, this.area.x), this.area.y, this.area.ex(), this.area.ey(), color);
+        }
+    }
+
+    /**
      * Render tick markers that help orient within camera work.
      */
     private void renderTickMarkers(UIContext context, int y, int h)
     {
-        int start = (int) this.scale.getMinValue();
+        int start = (int) this.xAxis.getMinValue();
         int duration = this.clips.calculateDuration();
 
         TimelineRulerRenderer.render(
@@ -2051,10 +2133,7 @@ public class UIClips extends UIElement
      */
     private void renderSelection(UIContext context)
     {
-        if (this.selecting)
-        {
-            context.batcher.normalizedBox(this.lastX, this.lastY, context.mouseX, context.mouseY, BBSSettings.accentOverlay(Colors.A25));
-        }
+        this.marquee.render(context, 0, 0);
     }
 
     /**

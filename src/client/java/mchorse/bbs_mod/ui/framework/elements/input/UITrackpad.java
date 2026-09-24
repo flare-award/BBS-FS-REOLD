@@ -395,9 +395,10 @@ public class UITrackpad extends UINumericInput<UITrackpad>
             if (dragging)
             {
                 /* Draw filling background */
+                int color = BBSSettings.primaryColor.get();
                 int fx = MathUtils.clamp(context.mouseX, this.area.x + padding, this.area.ex() - padding);
 
-                context.batcher.primaryBox(Math.min(fx, this.initialX), this.area.y + padding, Math.max(fx, this.initialX), this.area.ey() - padding, Colors.A100);
+                context.batcher.box(Math.min(fx, this.initialX), this.area.y + padding, Math.max(fx, this.initialX), this.area.ey() - padding, Colors.A100 | color);
             }
 
             FontRenderer font = context.batcher.getFont();

@@ -13,11 +13,11 @@ import mchorse.bbs_mod.ui.forms.editors.panels.widgets.UIModelPicker;
 import mchorse.bbs_mod.ui.forms.editors.panels.widgets.UIModelPoseEditor;
 import mchorse.bbs_mod.ui.framework.elements.UISection;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
-import mchorse.bbs_mod.ui.framework.elements.input.UIColor;
 import mchorse.bbs_mod.ui.framework.elements.input.UITexturePicker;
+import mchorse.bbs_mod.ui.framework.elements.input.UITrackpad;
+import mchorse.bbs_mod.ui.utils.UI;
 import mchorse.bbs_mod.ui.utils.shapes.UIShapeKeys;
-import mchorse.bbs_mod.utils.Direction;
-import mchorse.bbs_mod.utils.colors.Color;
+import mchorse.bbs_mod.ui.utils.values.UIValues;
 
 import java.util.Collections;
 import java.util.List;
@@ -26,10 +26,12 @@ import java.util.function.Consumer;
 
 public class UIModelFormPanel extends UIFormPanel<ModelForm>
 {
-    public UIColor color;
     public UIModelPoseEditor poseEditor;
     public UIShapeKeys shapeKeys;
     public UISection shapeKeysSection;
+
+    /** Only for a model that carries a CEM program — see {@link mchorse.bbs_mod.cubic.jem.CemStatus}. */
+    public UISection cemSection;
 
     public UIButton pickModel;
     public UIButton pick;
@@ -57,8 +59,6 @@ public class UIModelFormPanel extends UIFormPanel<ModelForm>
                 this.editor.startEdit(this.form);
             });
         });
-        this.color = new UIColor((c) -> this.form.color.set(new Color().set(c))).withAlpha();
-        this.color.direction(Direction.LEFT);
         this.poseEditor = new UIModelPoseEditor();
         this.poseEditor.transform.barBackground();
         this.shapeKeys = new UIShapeKeys();
@@ -71,8 +71,8 @@ public class UIModelFormPanel extends UIFormPanel<ModelForm>
             List<String> materials = model == null ? Collections.emptyList() : model.materials;
 
             /* At most one material (a single global texture, e.g. cubic, or one unambiguous material):
-             * pick the form's default texture. Multiple: choose which material to pick - the form's
-             * "Default" texture is ambiguous then, so it isn't offered. */
+             * pick the form's default texture. Multiple: the per-material textures live in the
+             * material tab now, so the button only offers the materials as a shortcut there. */
             if (materials.size() <= 1)
             {
                 this.openTexturePicker(null);
@@ -89,7 +89,35 @@ public class UIModelFormPanel extends UIFormPanel<ModelForm>
             }
         });
 
-        this.options.add(this.pickModel, this.pick, this.color, this.poseEditor);
+        this.options.add(this.pickModel, this.pick, this.poseEditor);
+
+        this.buildCemSection();
+    }
+
+    /**
+     * The states a CEM pack asks about that a form cannot know — whether the creature sits, is tamed,
+     * is angry. In the world a morph reads them off the entity it rides; a film's actor is a stand-in
+     * with no owner and no target, so here they are set by hand, and each is a track of its own.
+     */
+    private void buildCemSection()
+    {
+        UITrackpad health = UIValues.trackpad(() -> this.form.cemHealth);
+
+        health.limit(0D, 1D).tooltip(UIKeys.FORMS_EDITOR_MODEL_CEM_HEALTH_TOOLTIP);
+
+        this.cemSection = this.section(UIKeys.FORMS_EDITOR_MODEL_CEM, "model.cem", false);
+        this.cemSection.fields.add(
+            UIValues.toggle(UIKeys.FORMS_EDITOR_MODEL_CEM_SITTING, () -> this.form.cemSitting),
+            UIValues.toggle(UIKeys.FORMS_EDITOR_MODEL_CEM_TAMED, () -> this.form.cemTamed),
+            UIValues.toggle(UIKeys.FORMS_EDITOR_MODEL_CEM_AGGRESSIVE, () -> this.form.cemAggressive),
+            UIValues.toggle(UIKeys.FORMS_EDITOR_MODEL_CEM_ON_SHOULDER, () -> this.form.cemOnShoulder),
+            UIValues.toggle(UIKeys.FORMS_EDITOR_MODEL_CEM_BURNING, () -> this.form.cemBurning),
+            UIValues.toggle(UIKeys.FORMS_EDITOR_MODEL_CEM_IN_LAVA, () -> this.form.cemInLava),
+            UIValues.toggle(UIKeys.FORMS_EDITOR_MODEL_CEM_CLIMBING, () -> this.form.cemClimbing),
+            UIValues.toggle(UIKeys.FORMS_EDITOR_MODEL_CEM_CRAWLING, () -> this.form.cemCrawling),
+            UI.labelRow(UIKeys.FORMS_EDITOR_MODEL_CEM_HEALTH, health)
+        );
+        this.cemSection.title.tooltip(UIKeys.FORMS_EDITOR_MODEL_CEM_TOOLTIP);
     }
 
     /**
@@ -151,13 +179,24 @@ public class UIModelFormPanel extends UIFormPanel<ModelForm>
         this.poseEditor.setValuePose(form.pose);
         this.poseEditor.setPose(form.pose.get(), model == null ? this.form.model.get() : model.getPoseGroup());
         this.poseEditor.fillGroups(model == null ? null : model.model, model == null ? null : model.getFlippedParts(), true, model == null ? null : model.getDisabledBones());
-        this.color.setColor(form.color.get().getARGBColor());
 
         Set<String> modelShapeKeys = model == null ? Collections.emptySet() : model.model.getShapeKeys();
 
         this.shapeKeysSection.removeFromParent();
-        this.options.add(this.shapeKeysSection);
         this.shapeKeys.setShapeKeys(model == null ? "" : model.getPoseGroup(), modelShapeKeys, this.form.shapeKeys.get());
+
+        if (!modelShapeKeys.isEmpty())
+        {
+            this.options.add(this.shapeKeysSection);
+        }
+
+        /* Nothing reads these unless a CEM program is what animates the model, so they only show there. */
+        this.cemSection.removeFromParent();
+
+        if (model != null && model.cemAnimation != null && model.config.cemAnimation.get())
+        {
+            this.options.add(this.cemSection);
+        }
 
         this.options.resize();
     }

@@ -15,6 +15,14 @@ import java.util.Map;
 
 public class KeybindSettings
 {
+    private static final List<KeyCombo> dynamicCombos = new ArrayList<>();
+
+    /** Register individual combos before the settings file is built. */
+    public static void register(KeyCombo combo)
+    {
+        dynamicCombos.add(combo);
+    }
+
     private static final List<Class> classes = new ArrayList<>();
     private static final Map<String, Icon> CATEGORY_ICONS = new HashMap<>();
 
@@ -41,6 +49,24 @@ public class KeybindSettings
         classes.add(Keys.class);
     }
 
+    /**
+     * Adds a class whose {@code KeyCombo} fields become keybinds of their own.
+     *
+     * <p>A class rather than a combo at a time, because that is how BBS reads its own: by
+     * walking the fields. Register before the keybind settings file is built — the event
+     * {@code RegisterKeybindsEvent} is that moment.</p>
+     */
+    public static void register(Class clazz)
+    {
+        classes.add(clazz);
+    }
+
+    /** The icon a keybind category wears in the settings screen. */
+    public static void registerCategoryIcon(String category, Icon icon)
+    {
+        CATEGORY_ICONS.put(category, icon);
+    }
+
     public static void register(SettingsBuilder builder)
     {
         Map<String, List<KeyCombo>> combos = new HashMap<>();
@@ -49,6 +75,9 @@ public class KeybindSettings
         {
             readKeyCombos(combos, clazz);
         }
+
+        for (KeyCombo combo : dynamicCombos)
+            combos.computeIfAbsent(combo.categoryKey, key -> new ArrayList<>()).add(combo);
 
         List<String> keys = new ArrayList<>(combos.keySet());
 

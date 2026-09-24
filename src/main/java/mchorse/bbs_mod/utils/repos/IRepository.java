@@ -5,6 +5,7 @@ import mchorse.bbs_mod.data.types.MapType;
 
 import java.io.File;
 import java.util.Collection;
+import java.util.List;
 import java.util.function.Consumer;
 
 public interface IRepository<T extends IDataSerializable>
@@ -25,6 +26,11 @@ public interface IRepository<T extends IDataSerializable>
     public void delete(String id);
 
     public void requestKeys(Consumer<Collection<String>> callback);
+
+    public default void requestBackups(String id, Consumer<Collection<String>> callback)
+    {
+        callback.accept(List.of());
+    }
 
     /* Folders */
 

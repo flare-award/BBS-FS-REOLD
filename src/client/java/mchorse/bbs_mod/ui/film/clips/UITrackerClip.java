@@ -1,6 +1,5 @@
 package mchorse.bbs_mod.ui.film.clips;
 
-import io.netty.util.collection.IntObjectMap;
 import mchorse.bbs_mod.camera.clips.misc.TrackerClientClip;
 import mchorse.bbs_mod.camera.clips.misc.TrackerFrame;
 import mchorse.bbs_mod.camera.data.Angle;
@@ -18,6 +17,8 @@ import mchorse.bbs_mod.ui.framework.elements.buttons.UIToggle;
 import mchorse.bbs_mod.ui.framework.elements.input.UITrackpad;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.factories.UIAnchorKeyframeFactory;
 import org.joml.Vector3d;
+
+import java.util.Map;
 
 public class UITrackerClip extends UIClip<TrackerClientClip>
 {
@@ -55,13 +56,13 @@ public class UITrackerClip extends UIClip<TrackerClientClip>
             UIAnchorKeyframeFactory.displayAttachments(this.getParent(UIFilmPanel.class), this.clip.selector.get(), this.clip.group.get(), (attachment) -> this.clip.group.set(attachment));
         });
 
-        this.point = new UIPointModule(this.editor, UIKeys.CAMERA_PANELS_OFFSET).contextMenu();
-        this.angle = new UIPointModule(this.editor, UIKeys.CAMERA_PANELS_ANGLE).contextMenu();
-        this.fov = new UITrackpad((v) -> this.clip.fov.set(v.floatValue()));
+        this.point = this.bind(new UIPointModule(this.editor, UIKeys.CAMERA_PANELS_OFFSET).contextMenu(), () -> this.point.fill(this.clip.offset));
+        this.angle = this.bind(new UIPointModule(this.editor, UIKeys.CAMERA_PANELS_ANGLE).contextMenu(), () -> this.angle.fill(this.clip.angle));
+        this.fov = this.trackpad(this.clip.fov);
         this.fov.tooltip(UIKeys.CAMERA_PANELS_FOV);
-        this.lookAt = new UIToggle(UIKeys.CAMERA_PANELS_LOOK_AT, b -> this.clip.lookAt.set(b.getValue()));
-        this.relative = new UIToggle(UIKeys.CAMERA_PANELS_RELATIVE, b -> this.clip.relative.set(b.getValue()));
-        this.active = new UIBitToggle((value) -> this.clip.active.set(value)).all();
+        this.lookAt = this.toggle(UIKeys.CAMERA_PANELS_LOOK_AT, this.clip.lookAt);
+        this.relative = this.toggle(UIKeys.CAMERA_PANELS_RELATIVE, this.clip.relative);
+        this.active = this.bind(new UIBitToggle((value) -> this.clip.active.set(value)).all(), () -> this.active.setValue(this.clip.active.get()));
     }
 
     @Override
@@ -150,14 +151,14 @@ public class UITrackerClip extends UIClip<TrackerClientClip>
     {
         UIFilmPanel panel = this.getParent(UIFilmPanel.class);
         UIContext context = this.getContext();
-        int selector = this.clip.selector.get();
+        String selector = this.clip.selector.get();
 
-        if (panel == null || context == null || selector < 0)
+        if (panel == null || context == null || selector.isEmpty())
         {
             return null;
         }
 
-        IntObjectMap<IEntity> entities = panel.getController().getEntities();
+        Map<String, IEntity> entities = panel.getController().getEntities();
         TrackerFrame frame = TrackerFrame.resolve(
             entities,
             entities.get(selector),
@@ -209,18 +210,5 @@ public class UITrackerClip extends UIClip<TrackerClientClip>
     private double pick(int bit, double camera, double current)
     {
         return this.clip.isActive(bit) ? camera : current;
-    }
-
-    @Override
-    public void fillData()
-    {
-        super.fillData();
-
-        this.point.fill(this.clip.offset);
-        this.angle.fill(this.clip.angle);
-        this.fov.setValue(this.clip.fov.get());
-        this.lookAt.setValue(this.clip.lookAt.get());
-        this.relative.setValue(this.clip.relative.get());
-        this.active.setValue(this.clip.active.get());
     }
 }

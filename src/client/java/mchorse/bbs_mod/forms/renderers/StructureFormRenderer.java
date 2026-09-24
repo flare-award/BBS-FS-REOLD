@@ -1,5 +1,8 @@
 package mchorse.bbs_mod.forms.renderers;
 
+import mchorse.bbs_mod.api.client.events.StructureRenderEvents;
+
+import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import mchorse.bbs_mod.client.BBSRendering;
 import mchorse.bbs_mod.client.BBSShaders;
@@ -7,6 +10,7 @@ import mchorse.bbs_mod.forms.CustomVertexConsumerProvider;
 import mchorse.bbs_mod.forms.FormUtilsClient;
 import mchorse.bbs_mod.forms.forms.StructureForm;
 import mchorse.bbs_mod.forms.renderers.utils.FormColorBlend;
+import mchorse.bbs_mod.forms.renderers.utils.FormOverlay;
 import mchorse.bbs_mod.forms.structure.BakedStructure;
 import mchorse.bbs_mod.forms.structure.StructureManager;
 import mchorse.bbs_mod.forms.structure.StructureRenderData;
@@ -15,12 +19,14 @@ import mchorse.bbs_mod.forms.structure.StructureWorld;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.utils.MatrixStackUtils;
 import mchorse.bbs_mod.utils.colors.Color;
+import mchorse.bbs_mod.utils.colors.OverlayBlend;
 import mchorse.bbs_mod.utils.joml.Vectors;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.LightmapTextureManager;
 import net.minecraft.client.render.OverlayTexture;
+import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.render.block.entity.BlockEntityRenderDispatcher;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.nbt.NbtCompound;
@@ -28,6 +34,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3i;
 import net.minecraft.world.World;
 import org.joml.Matrix4f;
+import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -49,9 +56,11 @@ import java.util.Set;
 public class StructureFormRenderer extends FormRenderer<StructureForm>
 {
     private static final Color COLOR = new Color();
+    private static final Color OVERLAY = new Color();
 
     private String lastStructure;
     private String lastBiome;
+    private int lastGeneration = -1;
 
     private StructureRenderData data;
     private StructureRenderWorld world;
@@ -63,38 +72,117 @@ public class StructureFormRenderer extends FormRenderer<StructureForm>
     /** Structure-backed world the block entities are bound to (null until built; falls back to mc.world). */
     private World structureWorld;
 
+    private final Vector3f offset = new Vector3f();
+    private Vector3f partOffset;
+
+    protected StructureFormRenderer(StructureForm form, StructureRenderData data, String biome, Vector3f offset)
+    {
+        super(form);
+        this.data = Objects.requireNonNull(data);
+        this.world = new StructureRenderWorld(data, biome);
+        this.partOffset = new Vector3f(offset);
+    }
+
     public StructureFormRenderer(StructureForm form)
     {
         super(form);
     }
 
-    /** Reload structure/biome when the form properties change. */
+    /** Reload structure/biome when the form properties change, or the manager dropped its cache. */
     private void ensureData()
     {
+        if (this.partOffset != null) return;
+
+        int generation = StructureManager.getGeneration();
         String structure = this.form.structure.get();
         String biome = this.form.biome.get();
 
-        if (!Objects.equals(structure, this.lastStructure))
+        /* A new generation means a world switch or a re-scan from the picker: every piece of state
+         * below was derived from data (and a client world) that no longer applies */
+        if (generation != this.lastGeneration || !Objects.equals(structure, this.lastStructure))
         {
+            this.lastGeneration = generation;
             this.lastStructure = structure;
-            this.data = StructureManager.get(structure);
-            this.world = null;
-            this.blockEntities = null;
+
+            this.reset();
         }
 
-        /* The cache may deliver data later (e.g. after a world is present) */
         if (this.data == null)
         {
+            /* The manager can only answer once a world is present — retry until it does */
             this.data = StructureManager.get(structure);
-            this.world = null;
-            this.blockEntities = null;
+
+            if (this.data == null)
+            {
+                return;
+            }
         }
 
-        if (this.data != null && (this.world == null || !Objects.equals(biome, this.lastBiome)))
+        if (this.world == null || !Objects.equals(biome, this.lastBiome))
         {
             this.lastBiome = biome;
             this.world = new StructureRenderWorld(this.data, biome);
         }
+    }
+
+    /**
+     * Translation from the form's pivot to the structure's own (0, 0, 0) corner. By default that
+     * centers the footprint and rests it on the pivot; the form's origin offset moves the pivot
+     * through the structure, which shifts the geometry the other way.
+     */
+    private Vector3f getOffset()
+    {
+        if (this.partOffset != null) return this.partOffset;
+
+        Vec3i size = this.data.size;
+        Vector3f origin = this.form.origin.get();
+
+        return this.offset.set(
+            -size.getX() / 2F - origin.x,
+            -origin.y,
+            -size.getZ() / 2F - origin.z
+        );
+    }
+
+    /**
+     * Bind the color overlay for the layer that is about to draw. The hook fires right after the
+     * layer applied its own phases — which is where it bound vanilla's hurt-flash texture over
+     * unit 1 — so this has to come after them, not before.
+     *
+     * <p>The overlay pass gets the color at full strength: its fragments take the color from the
+     * texture outright and carry the strength in their vertex alpha instead. Every other layer
+     * gets the overlay as it is and mixes it into what it draws — that is what colors the block
+     * entities standing inside the structure, and the structure itself under a shaderpack. Layers
+     * whose shader has no overlay channel (the terrain ones) ignore the binding.</p>
+     */
+    private static void setupOverlay(RenderLayer layer, Color overlay)
+    {
+        if (layer == BakedStructure.OVERLAY_LAYER)
+        {
+            /* A cutout layer with culling off: blend the pass in instead of letting it replace
+             * what is already drawn, and cull, so a plant's double-sided cross is not painted
+             * twice at doubled strength. The layer's own teardown puts both back. */
+            RenderSystem.enableBlend();
+            RenderSystem.blendFuncSeparate(GlStateManager.SrcFactor.SRC_ALPHA, GlStateManager.DstFactor.ONE_MINUS_SRC_ALPHA, GlStateManager.SrcFactor.ONE, GlStateManager.DstFactor.ONE_MINUS_SRC_ALPHA);
+            RenderSystem.enableCull();
+
+            FormOverlay.bind(OVERLAY.set(overlay.r, overlay.g, overlay.b, 1F));
+        }
+        else
+        {
+            FormOverlay.bind(overlay);
+        }
+    }
+
+    /** Drop everything derived from the structure file: it is gone, replaced, or stale. */
+    private void reset()
+    {
+        this.data = null;
+        this.world = null;
+        this.baked = null;
+        this.blockEntities = null;
+        this.structureWorld = null;
+        this.erroredBlockEntities.clear();
     }
 
     private void ensureBaked()
@@ -226,6 +314,17 @@ public class StructureFormRenderer extends FormRenderer<StructureForm>
         MatrixStack matrices = context.batcher.getContext().getMatrices();
         Matrix4f uiMatrix = ModelFormRenderer.getUIMatrix(context, x1, y1, x2, y2);
 
+        Color overlay = this.form.overlayColor.get();
+        boolean overlayActive = OverlayBlend.isActive(overlay);
+        int previousOverlayTexture = 0;
+
+        if (overlayActive)
+        {
+            previousOverlayTexture = FormOverlay.bind(overlay);
+
+            CustomVertexConsumerProvider.hijackVertexFormat((layer) -> setupOverlay(layer, overlay));
+        }
+
         matrices.push();
 
         try
@@ -235,9 +334,10 @@ public class StructureFormRenderer extends FormRenderer<StructureForm>
             Vec3i size = this.data.size;
             float max = Math.max(size.getX(), Math.max(size.getY(), size.getZ()));
             float scale = (max > 0 ? 1F / max : 1F) * this.form.uiScale.get();
+            Vector3f offset = this.getOffset();
 
             matrices.scale(scale, scale, scale);
-            matrices.translate(-size.getX() / 2F, 0F, -size.getZ() / 2F);
+            matrices.translate(offset.x, offset.y, offset.z);
 
             matrices.peek().getNormalMatrix().getScale(Vectors.EMPTY_3F);
             matrices.peek().getNormalMatrix().scale(1F / Vectors.EMPTY_3F.x, -1F / Vectors.EMPTY_3F.y, 1F / Vectors.EMPTY_3F.z);
@@ -245,11 +345,15 @@ public class StructureFormRenderer extends FormRenderer<StructureForm>
             this.ensureBaked();
 
             Color set = Color.white();
-            FormColorBlend.blend(set, this.form.color.get(), this.form.additiveColor.get());
+            FormColorBlend.blend(set, this.form.color.get());
 
             consumers.setUI(true);
-            /* UI preview always uses the correct (non-fast) path */
-            this.baked.render(matrices.peek(), consumers, LightmapTextureManager.MAX_LIGHT_COORDINATE, set.getARGBColor(), false);
+            this.baked.render(matrices.peek(), consumers, LightmapTextureManager.MAX_LIGHT_COORDINATE, set.getARGBColor());
+
+            if (overlayActive && !BakedStructure.usesEntityLayers())
+            {
+                this.baked.renderOverlay(matrices.peek(), consumers, LightmapTextureManager.MAX_LIGHT_COORDINATE, overlay.a * set.a);
+            }
 
             consumers.setSubstitute(BBSRendering.getColorConsumer(set));
             this.renderBlockEntities(matrices, consumers, LightmapTextureManager.MAX_LIGHT_COORDINATE, OverlayTexture.DEFAULT_UV);
@@ -260,6 +364,12 @@ public class StructureFormRenderer extends FormRenderer<StructureForm>
         {
             consumers.setSubstitute(null);
             consumers.setUI(false);
+            CustomVertexConsumerProvider.clearRunnables();
+
+            if (overlayActive)
+            {
+                FormOverlay.unbind(previousOverlayTexture);
+            }
 
             matrices.pop();
         }
@@ -301,13 +411,25 @@ public class StructureFormRenderer extends FormRenderer<StructureForm>
     {
         this.ensureData();
 
+        if (this.partOffset == null && this.data != null
+            && StructureRenderEvents.RENDER.invoker().render(this, this.form, this.data, context))
+        {
+            return;
+        }
+
         if (this.world == null)
         {
             return;
         }
 
         CustomVertexConsumerProvider consumers = FormUtilsClient.getProvider();
-        Vec3i size = this.data.size;
+        Vector3f offset = this.getOffset();
+
+        Color overlay = this.form.overlayColor.get();
+        boolean overlayActive = !context.isPicking() && OverlayBlend.isActive(overlay);
+        /* Bound up front for the id it hands back: the per-layer binding below cannot restore the
+         * unit itself, and the terrain layers have no overlay phase whose teardown would */
+        int previousOverlayTexture = overlayActive ? FormOverlay.bind(overlay) : 0;
 
         context.stack.push();
         if (context.world != null)
@@ -319,14 +441,14 @@ public class StructureFormRenderer extends FormRenderer<StructureForm>
          * not corrupt the frame ("Pose stack not empty" + profiler cascade) */
         try
         {
-            context.stack.translate(-size.getX() / 2F, 0F, -size.getZ() / 2F);
+            context.stack.translate(offset.x, offset.y, offset.z);
             if (context.world != null)
             {
-                context.world.translate(-size.getX() / 2F, 0F, -size.getZ() / 2F);
+                context.world.translate(offset.x, offset.y, offset.z);
             }
 
             COLOR.set(context.color);
-            FormColorBlend.blend(COLOR, this.form.color.get(), this.form.additiveColor.get());
+            FormColorBlend.blend(COLOR, this.form.color.get());
 
             this.ensureBaked();
 
@@ -338,9 +460,7 @@ public class StructureFormRenderer extends FormRenderer<StructureForm>
                     RenderSystem.setShader(BBSShaders::getPickerModelsProgram);
                 });
 
-                /* Picking replays the geometry through the picker shader per layer — force the
-                 * correct (non-fast) path so the raw-byte route never bypasses it */
-                this.baked.render(context.stack.peek(), consumers, context.light, 0xFFFFFFFF, false);
+                this.baked.render(context.stack.peek(), consumers, context.light, 0xFFFFFFFF);
             }
             else
             {
@@ -357,9 +477,19 @@ public class StructureFormRenderer extends FormRenderer<StructureForm>
                     {
                         RenderSystem.enableBlend();
                     }
+
+                    if (overlayActive)
+                    {
+                        setupOverlay(layer, overlay);
+                    }
                 });
 
-                this.baked.render(context.stack.peek(), consumers, context.light, COLOR.getARGBColor(), this.form.fastRender.get());
+                this.baked.render(context.stack.peek(), consumers, context.light, COLOR.getARGBColor());
+
+                if (overlayActive && !BakedStructure.usesEntityLayers())
+                {
+                    this.baked.renderOverlay(context.stack.peek(), consumers, context.light, overlay.a * COLOR.a);
+                }
 
                 /* Block entities still go through the consumer interface — tint them via substitute */
                 consumers.setSubstitute(BBSRendering.getColorConsumer(COLOR));
@@ -372,6 +502,11 @@ public class StructureFormRenderer extends FormRenderer<StructureForm>
         {
             consumers.setSubstitute(null);
             CustomVertexConsumerProvider.clearRunnables();
+
+            if (overlayActive)
+            {
+                FormOverlay.unbind(previousOverlayTexture);
+            }
 
             context.stack.pop();
             if (context.world != null)

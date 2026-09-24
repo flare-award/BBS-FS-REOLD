@@ -17,15 +17,15 @@ import mchorse.bbs_mod.ui.Keys;
 import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.dashboard.UIDashboard;
 import mchorse.bbs_mod.ui.dashboard.panels.UIDataDashboardPanel;
-import mchorse.bbs_mod.ui.dashboard.panels.tabs.DataTab;
-import mchorse.bbs_mod.ui.dashboard.panels.tabs.UIDataTabs;
 import mchorse.bbs_mod.ui.framework.UIContext;
+import mchorse.bbs_mod.ui.onboarding.TourAnchors;
 import mchorse.bbs_mod.ui.framework.elements.UIScrollView;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
 import mchorse.bbs_mod.ui.framework.elements.layout.ILayoutSource;
 import mchorse.bbs_mod.ui.framework.elements.layout.UIDockLayout;
 import mchorse.bbs_mod.ui.framework.elements.input.text.UITextEditor;
 import mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer;
+import mchorse.bbs_mod.ui.framework.elements.utils.UIUndoKeys;
 import mchorse.bbs_mod.ui.particles.sections.UIParticleSchemeAppearanceSection;
 import mchorse.bbs_mod.ui.particles.sections.UIParticleSchemeCollisionSection;
 import mchorse.bbs_mod.ui.particles.sections.UIParticleSchemeCurvesSection;
@@ -48,13 +48,13 @@ import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.ui.utils.presets.UICopyPasteController;
 import mchorse.bbs_mod.utils.presets.PresetManager;
-import mchorse.bbs_mod.utils.Direction;
 import mchorse.bbs_mod.utils.IOUtils;
-import mchorse.bbs_mod.utils.colors.Colors;
+import mchorse.bbs_mod.utils.Timer;
+import mchorse.bbs_mod.utils.undo.IUndo;
+import mchorse.bbs_mod.utils.undo.UndoManager;
 
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -73,17 +73,26 @@ public class UIParticleSchemePanel extends UIDataDashboardPanel<ParticleScheme>
     public UIScrollView particleView;
     public UIScrollView appearanceView;
     public UIDockLayout dock;
-    public UIParticleSelectionPanel selectionPanel;
 
     public List<UIParticleSchemeSection> sections = new ArrayList<>();
 
     private UICopyPasteController layoutPresetsController;
     private String molangId;
 
+    /* Undo by whole-scheme snapshots. The sections write raw component fields — the scheme is a
+     * ValueGroup only at its shell, the particle data underneath is plain objects — so the value
+     * tree never hears about edits and the shared per-value handler has nothing to hook. Instead
+     * the panel serializes the scheme on a timer, and any difference against the last snapshot
+     * becomes one entry in the SAME shared UndoManager the other editors use. Schemes are small
+     * JSONs, so a check twice a second costs nothing. */
+    private UndoManager<ParticleScheme> undoManager;
+    private MapType undoSnapshot;
+    private final Timer undoCheckTimer = new Timer(400);
+    private boolean applyingUndo;
+
     public UIParticleSchemePanel(UIDashboard dashboard)
     {
         super(dashboard);
-        this.enableTabs();
 
         this.renderer = new UIParticleSchemeRenderer();
 
@@ -109,12 +118,18 @@ public class UIParticleSchemePanel extends UIDataDashboardPanel<ParticleScheme>
         this.dock.addPanel("appearance", this.appearanceView, Icons.MATERIAL, UIKeys.SNOWSTORM_PANELS_APPEARANCE);
         this.dock.addPanel("molang", this.textEditor, Icons.CODE, UIKeys.SNOWSTORM_PANELS_MOLANG);
         this.dock.addPanel("preview", this.renderer, Icons.VIDEO_CAMERA, UIKeys.SNOWSTORM_PANELS_PREVIEW);
+
+        /* What the tour of this panel points at. The four section views are one place: they
+         * share a stack, and whichever tab is up stands for all of them. */
+        TourAnchors.register("particles.preview", () -> this.renderer);
+        TourAnchors.register("particles.sections", () -> this.generalView, () -> this.emitterView, () -> this.particleView, () -> this.appearanceView);
+        TourAnchors.register("particles.molang", () -> this.textEditor);
         this.dock.mount();
         this.editor.add(this.dock);
 
-        this.selectionPanel = new UIParticleSelectionPanel(this);
-        this.selectionPanel.relative(this).y(UIDataTabs.TABS_HEIGHT_PX).wTo(this.iconBar.area).h(1F, -UIDataTabs.TABS_HEIGHT_PX);
-        this.add(this.selectionPanel);
+        this.mountLanding();
+
+        this.add(new UIUndoKeys(this::undo, this::redo).full(this));
 
         this.overlay.namesList.setFileIcon(Icons.PARTICLE);
 
@@ -122,9 +137,7 @@ public class UIParticleSchemePanel extends UIDataDashboardPanel<ParticleScheme>
         {
             this.renderer.setScheme(this.data);
         });
-        restart.tooltip(UIKeys.SNOWSTORM_RESTART_EMITTER, Direction.LEFT);
-
-        this.iconBar.add(restart);
+        restart.tooltip(UIKeys.SNOWSTORM_RESTART_EMITTER);
 
         this.layoutPresetsController = new UICopyPasteController(PresetManager.PARTICLE_LAYOUTS, "_CopyParticleLayout")
             .supplier(this::getLayoutPresetData)
@@ -136,17 +149,19 @@ public class UIParticleSchemePanel extends UIDataDashboardPanel<ParticleScheme>
 
             this.layoutPresetsController.openPresets(context, context.mouseX, context.mouseY);
         });
-        presets.tooltip(UIKeys.FILM_LAYOUT_PRESETS, Direction.LEFT);
+        presets.tooltip(UIKeys.FILM_LAYOUT_PRESETS);
 
         UIIcon lock = new UIIcon(() -> this.dock.isLocked() ? Icons.LOCKED : Icons.UNLOCKED, (b) -> this.toggleLayoutLock());
-        lock.tooltip(() -> (this.dock.isLocked() ? UIKeys.FILM_LAYOUT_UNLOCK : UIKeys.FILM_LAYOUT_LOCK).get(), Direction.LEFT);
+        lock.tooltip(() -> (this.dock.isLocked() ? UIKeys.FILM_LAYOUT_UNLOCK : UIKeys.FILM_LAYOUT_LOCK).get());
 
         UIIcon resetLayout = new UIIcon(Icons.REFRESH, (b) -> this.dock.resetLayout());
-        resetLayout.tooltip(UIKeys.FILM_LAYOUT_RESET, Direction.LEFT);
+        resetLayout.tooltip(UIKeys.FILM_LAYOUT_RESET);
 
-        this.iconBar.add(presets);
-        this.iconBar.add(lock);
-        this.iconBar.add(resetLayout);
+        this.actions()
+            .action(restart)
+            .action(presets)
+            .action(resetLayout)
+            .layout(lock, this.dock::isLocked);
 
         /* Ctrl+Tab / Ctrl+Shift+Tab cycle the tabs of the dock stack under the cursor (like the film editor). */
         this.keys().register(Keys.FILM_CONTROLLER_NEXT_DOCK_TAB, () ->
@@ -203,6 +218,17 @@ public class UIParticleSchemePanel extends UIDataDashboardPanel<ParticleScheme>
         this.addSection(this.appearanceView, new UIParticleSchemeCollisionSection(this));
 
         this.fill(null);
+
+        this.onAppear(this.textEditor::updateHighlighter);
+        this.onClose(this::clearParticles);
+    }
+
+    private void clearParticles()
+    {
+        if (this.renderer.emitter != null)
+        {
+            this.renderer.emitter.particles.clear();
+        }
     }
 
     public void editMoLang(String id, Consumer<String> callback, MolangExpression expression)
@@ -214,9 +240,21 @@ public class UIParticleSchemePanel extends UIDataDashboardPanel<ParticleScheme>
     }
 
     @Override
-    protected IKey getTitle()
+    public IKey getTitle()
     {
         return UIKeys.SNOWSTORM_TITLE;
+    }
+
+    @Override
+    public IKey getCreateLabel()
+    {
+        return UIKeys.SNOWSTORM_LANDING_NEW;
+    }
+
+    @Override
+    public IKey getListLabel()
+    {
+        return UIKeys.SNOWSTORM_LANDING_LIST;
     }
 
     @Override
@@ -226,14 +264,115 @@ public class UIParticleSchemePanel extends UIDataDashboardPanel<ParticleScheme>
     }
 
     @Override
-    public Icon getTabIcon(DataTab tab)
+    public Icon getTabIcon(String id)
     {
-        return tab != null && tab.dataId == null ? Icons.SEARCH : Icons.PARTICLE;
+        return id == null ? Icons.SEARCH : Icons.PARTICLE;
     }
 
     public void dirty()
     {
         this.renderer.emitter.setupVariables();
+    }
+
+    @Override
+    public void update()
+    {
+        super.update();
+
+        /* Commit pending edits into the history: any drift of the scheme's serialized form
+         * against the last snapshot is one undoable step. Timer-paced, so a burst of typing
+         * or dragging groups into steps instead of a keystroke-sized trail. */
+        if (this.data != null && this.undoManager != null && this.undoCheckTimer.checkRepeat())
+        {
+            MapType current = ParticleScheme.toData(this.data);
+
+            if (!current.equals(this.undoSnapshot))
+            {
+                this.undoManager.pushUndo(new SchemeSnapshotUndo(this.undoSnapshot, current));
+                this.undoSnapshot = current;
+            }
+        }
+    }
+
+    public void undo()
+    {
+        if (this.data != null && this.undoManager != null && this.undoManager.undo(this.data))
+        {
+            UIUtils.playClick();
+        }
+    }
+
+    public void redo()
+    {
+        if (this.data != null && this.undoManager != null && this.undoManager.redo(this.data))
+        {
+            UIUtils.playClick();
+        }
+    }
+
+    /**
+     * Put the scheme into the given serialized state: parse a fresh scheme (components hold plain
+     * fields and molang expressions bound to their parser, so patching the live instance in place
+     * is not an option) and re-bind the panel to it through the normal {@link #fill} path — the
+     * sections, the preview emitter and the MoLang editor all follow the way they do on open.
+     */
+    private void applySnapshot(MapType state)
+    {
+        ParticleScheme fresh = ParticleScheme.parse(state.copy().asMap());
+
+        if (fresh == null)
+        {
+            return;
+        }
+
+        fresh.setId(this.data.getId());
+
+        this.applyingUndo = true;
+        this.fill(fresh);
+        this.undoSnapshot = ParticleScheme.toData(fresh);
+        this.applyingUndo = false;
+    }
+
+    /** One undoable step of particle editing: the scheme's serialized form before and after. */
+    private class SchemeSnapshotUndo implements IUndo<ParticleScheme>
+    {
+        private final MapType before;
+        private final MapType after;
+
+        public SchemeSnapshotUndo(MapType before, MapType after)
+        {
+            this.before = before;
+            this.after = after;
+        }
+
+        @Override
+        public IUndo<ParticleScheme> noMerging()
+        {
+            return this;
+        }
+
+        @Override
+        public boolean isMergeable(IUndo<ParticleScheme> undo)
+        {
+            /* The timer pacing in update() is the grouping; entries never merge further. */
+            return false;
+        }
+
+        @Override
+        public void merge(IUndo<ParticleScheme> undo)
+        {}
+
+        @Override
+        public void undo(ParticleScheme context)
+        {
+            UIParticleSchemePanel.this.applySnapshot(this.before);
+        }
+
+        @Override
+        public void redo(ParticleScheme context)
+        {
+            UIParticleSchemePanel.this.applySnapshot(this.after);
+        }
     }
 
     /**
@@ -331,9 +470,14 @@ public class UIParticleSchemePanel extends UIDataDashboardPanel<ParticleScheme>
     @Override
     protected void fillData(ParticleScheme data)
     {
-        this.editMoLang(null, null, null);
+        /* A fresh scheme starts a fresh history; the re-bind an undo itself performs keeps it. */
+        if (!this.applyingUndo)
+        {
+            this.undoManager = data == null ? null : new UndoManager<>(100);
+            this.undoSnapshot = data == null ? null : ParticleScheme.toData(data);
+        }
 
-        this.selectionPanel.setVisible(data == null);
+        this.editMoLang(null, null, null);
 
         if (this.data != null)
         {
@@ -356,17 +500,6 @@ public class UIParticleSchemePanel extends UIDataDashboardPanel<ParticleScheme>
 
         /* Dock gate shows/hides the preview + sections panels based on data presence. */
         this.dock.setupFlex(true);
-    }
-
-    @Override
-    public void fillNames(Collection<String> names)
-    {
-        super.fillNames(names);
-
-        if (this.selectionPanel != null)
-        {
-            this.selectionPanel.fillNames(names);
-        }
     }
 
     @Override
@@ -393,29 +526,6 @@ public class UIParticleSchemePanel extends UIDataDashboardPanel<ParticleScheme>
     }
 
     @Override
-    public void appear()
-    {
-        super.appear();
-
-        this.textEditor.updateHighlighter();
-    }
-
-    @Override
-    protected boolean shouldAutoOpenListOnFirstResize()
-    {
-        return false;
-    }
-
-    @Override
-    public void close()
-    {
-        if (this.renderer.emitter != null)
-        {
-            this.renderer.emitter.particles.clear();
-        }
-    }
-
-    @Override
     public void resize()
     {
         super.resize();
@@ -424,18 +534,6 @@ public class UIParticleSchemePanel extends UIDataDashboardPanel<ParticleScheme>
         if (this.dock != null)
         {
             this.dock.refreshVisibility();
-        }
-    }
-
-    @Override
-    protected void renderBackground(UIContext context)
-    {
-        if (this.iconBar.isVisible())
-        {
-            int bg = this.selectionPanel != null && this.selectionPanel.isVisible() ? Colors.A100 : Colors.A50;
-
-            this.iconBar.area.render(context.batcher, bg);
-            context.batcher.gradientHBox(this.iconBar.area.x - 6, this.iconBar.area.y, this.iconBar.area.x, this.iconBar.area.ey(), 0, 0x29000000);
         }
     }
 

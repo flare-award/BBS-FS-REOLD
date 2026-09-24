@@ -1,5 +1,7 @@
 package mchorse.bbs_mod.ui.forms.editors.utils;
 
+import mchorse.bbs_mod.api.client.events.FormPreviewEvents;
+
 import mchorse.bbs_mod.forms.FormUtilsClient;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.forms.renderers.FormRenderType;
@@ -12,6 +14,12 @@ import net.minecraft.client.render.OverlayTexture;
 public class UIFormRenderer extends UIModelRenderer
 {
     public Form form;
+
+    @Override
+    protected void renderUserModelOverlay(UIContext context)
+    {
+        FormPreviewEvents.OVERLAY.invoker().render(this, context);
+    }
 
     @Override
     protected void renderUserModel(UIContext context)

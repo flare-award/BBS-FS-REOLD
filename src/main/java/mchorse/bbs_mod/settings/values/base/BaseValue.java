@@ -17,6 +17,7 @@ public abstract class BaseValue implements IDataSerializable<BaseType>, IValueNo
     protected BaseValue parent;
 
     private boolean visible = true;
+    private boolean synced;
     private List<IValueListener> preCallbacks;
     private List<IValueListener> postCallbacks;
 
@@ -57,11 +58,35 @@ public abstract class BaseValue implements IDataSerializable<BaseType>, IValueNo
         return this;
     }
 
-    public BaseValue visible(boolean visible)
+    /**
+     * Declare that edits to this value (and everything under it) must reach the server's copy
+     * of the data. The declaration lives with the value, next to where it is defined — the code
+     * that ships edits asks {@link #isSynced()} instead of pattern-matching path strings, which
+     * is how whole channels used to silently miss the server when the list fell behind the data.
+     */
+    public BaseValue synced()
     {
-        this.visible = visible;
+        this.synced = true;
 
         return this;
+    }
+
+    /** Whether this value is inside a subtree declared {@link #synced()}. */
+    public boolean isSynced()
+    {
+        BaseValue value = this;
+
+        while (value != null)
+        {
+            if (value.synced)
+            {
+                return true;
+            }
+
+            value = value.getParent();
+        }
+
+        return false;
     }
 
     public BaseValue preCallback(IValueListener callback)
@@ -100,6 +125,27 @@ public abstract class BaseValue implements IDataSerializable<BaseType>, IValueNo
         }
 
         return visible;
+    }
+
+    /**
+     * Put this value back to what it was born with — the default its
+     * constructor declared, not what the last loaded file happened to hold.
+     *
+     * <p>Basic values restore their captured default, groups pass the request
+     * down to their children. The write goes through the usual notification
+     * pair, so whatever listens to this value — undo among them — sees an
+     * ordinary edit.</p>
+     */
+    public void reset()
+    {}
+
+    /**
+     * Whether this value still holds its declared default, so the interface
+     * can tell an untouched property from an edited one.
+     */
+    public boolean isDefault()
+    {
+        return true;
     }
 
     public BaseValue getRoot()

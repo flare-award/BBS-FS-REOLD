@@ -37,6 +37,10 @@ public class FilmRepository implements IRepository<Film>
             {
                 callback.accept(this.create(id, data.asMap()));
             }
+            else
+            {
+                callback.accept(null);
+            }
         });
     }
 
@@ -99,6 +103,28 @@ public class FilmRepository implements IRepository<Film>
     public File getFolder()
     {
         return null;
+    }
+
+    @Override
+    public void requestBackups(String id, Consumer<Collection<String>> callback)
+    {
+        MapType request = new MapType();
+        request.putString("id", id);
+
+        ClientNetwork.sendManagerData(RepositoryOperation.BACKUPS, request, (data) ->
+        {
+            List<String> backups = new ArrayList<>();
+
+            if (data.isList())
+            {
+                for (BaseType entry : data.asList())
+                {
+                    backups.add(entry.asString());
+                }
+            }
+
+            callback.accept(backups);
+        });
     }
 
     @Override

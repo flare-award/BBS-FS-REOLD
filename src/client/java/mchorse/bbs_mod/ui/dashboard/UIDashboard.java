@@ -8,7 +8,7 @@ import mchorse.bbs_mod.camera.Camera;
 import mchorse.bbs_mod.camera.OrbitCamera;
 import mchorse.bbs_mod.camera.controller.OrbitCameraController;
 import mchorse.bbs_mod.client.BBSRendering;
-import mchorse.bbs_mod.events.register.RegisterDashboardPanelsEvent;
+import mchorse.bbs_mod.api.client.events.RegisterDashboardPanelsEvent;
 import mchorse.bbs_mod.graphics.window.Window;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.resources.Link;
@@ -18,40 +18,56 @@ import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.dashboard.panels.IFlightSupported;
 import mchorse.bbs_mod.ui.dashboard.panels.UIDashboardPanel;
 import mchorse.bbs_mod.ui.dashboard.panels.UIDashboardPanels;
+import mchorse.bbs_mod.ui.dashboard.panels.UIEditorDashboardPanel;
 import mchorse.bbs_mod.ui.dashboard.textures.UITextureManagerPanel;
-import mchorse.bbs_mod.ui.dashboard.utils.UIGraphPanel;
 import mchorse.bbs_mod.ui.dashboard.utils.UIOrbitCamera;
 import mchorse.bbs_mod.ui.dashboard.utils.UIOrbitCameraKeys;
 import mchorse.bbs_mod.ui.film.UIFilmPanel;
 import mchorse.bbs_mod.ui.framework.UIBaseMenu;
 import mchorse.bbs_mod.ui.framework.UIRenderingContext;
+import mchorse.bbs_mod.ui.framework.elements.IUIElement;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIMessageOverlayPanel;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
 import mchorse.bbs_mod.ui.model_blocks.UIModelBlockPanel;
 import mchorse.bbs_mod.ui.model_editor.UIModelEditorPanel;
 import mchorse.bbs_mod.ui.morphing.UIMorphingPanel;
+import mchorse.bbs_mod.ui.onboarding.Onboarding;
+import mchorse.bbs_mod.ui.onboarding.TourAnchors;
 import mchorse.bbs_mod.ui.particles.UIParticleSchemePanel;
 import mchorse.bbs_mod.ui.selectors.UISelectorsOverlayPanel;
 import mchorse.bbs_mod.ui.utility.UIUtilityOverlayPanel;
 import mchorse.bbs_mod.ui.utility.audio.UIAudioEditorPanel;
+import mchorse.bbs_mod.ui.utils.InterfaceBlur;
 import mchorse.bbs_mod.ui.utils.UIChalkboard;
 import mchorse.bbs_mod.ui.utils.UIUtils;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
-import mchorse.bbs_mod.utils.Direction;
 import mchorse.bbs_mod.utils.MathUtils;
 import mchorse.bbs_mod.utils.colors.Colors;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.Perspective;
 import net.minecraft.entity.Entity;
 import net.minecraft.util.math.Vec3d;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 
 public class UIDashboard extends UIBaseMenu
 {
+    /**
+     * The parts of the dashboard that haven't been built yet — the panels, and the add-on
+     * event that follows them.
+     *
+     * <p>Building every panel takes long enough to be felt, and paying for all of it at the
+     * moment the user presses the key is what makes the first open feel stuck. So building is
+     * queued here instead, for {@link DashboardWarmup} to work through a step at a time while
+     * the player is still in the world, and for {@link #finishBuilding()} to flush at once if
+     * the user gets there first.</p>
+     */
+    private final Deque<Runnable> buildSteps = new ArrayDeque<>();
+
     private UIDashboardPanels panels;
 
     public UIIcon settings;
@@ -86,27 +102,26 @@ public class UIDashboard extends UIBaseMenu
             }
 
             this.copyCurrentEntityCamera();
+            Onboarding.panelShown(e.panel);
         });
         this.panels.full(this.viewport);
         this.registerPanels();
-
-        BBSMod.events.post(new RegisterDashboardPanelsEvent(this));
 
         this.main.add(this.panels);
 
         this.settingsPanel = new UISettingsOverlayPanel();
 
         this.settings = new UIIcon(Icons.SETTINGS, (b) -> this.openSettings());
-        this.settings.tooltip(UIKeys.CONFIG_TITLE, Direction.TOP);
         this.selectors = new UIIcon(Icons.PROPERTIES, (b) ->
         {
-            UIOverlay.addOverlayRight(this.context, new UISelectorsOverlayPanel(), 240);
+            UIOverlay.addOverlay(this.context, new UISelectorsOverlayPanel(), 430, 300);
         });
-        this.selectors.tooltip(UIKeys.SELECTORS_TITLE, Direction.TOP);
         this.chalkboard = new UIChalkboard();
         this.chalkboard.full(this.getRoot());
 
-        this.panels.pinned.add(this.settings, this.selectors);
+        /* Pinned through the bar, not into it: the bar is what knows which way its icons point */
+        this.panels.pin(this.settings, UIKeys.CONFIG_TITLE);
+        this.panels.pin(this.selectors, UIKeys.SELECTORS_TITLE);
         this.getRoot().prepend(this.orbitUI);
         this.getRoot().add(this.orbitKeysUI);
         this.getRoot().add(this.chalkboard);
@@ -151,10 +166,18 @@ public class UIDashboard extends UIBaseMenu
                 return;
             }
 
-            UIOverlay.addOverlay(this.context, new UIUtilityOverlayPanel(UIKeys.UTILITY_TITLE, null), 240, 160);
+            /* Just tall enough for the panel's own content, and never taller than the screen -
+             * an overlay only has its position bounded, so an oversized one gets cut off. */
+            int height = Math.min(300, (int) (this.height * 0.9F));
+
+            UIOverlay.addOverlay(this.context, new UIUtilityOverlayPanel(UIKeys.UTILITY_TITLE, null), 240, height);
         });
 
         this.showAnnoyingPopups();
+
+        /* What the tour of this screen points at; the landing card belongs to whichever panel is up */
+        TourAnchors.register("dashboard.taskbar", () -> this.panels.taskBar);
+        TourAnchors.register("dashboard.landing", () -> this.panels.panel instanceof UIEditorDashboardPanel panel && panel.landing != null ? panel.landing.getCard() : null);
     }
 
     private void showAnnoyingPopups()
@@ -170,7 +193,7 @@ public class UIDashboard extends UIBaseMenu
 
     public void openSettings()
     {
-        UIOverlay.addOverlay(this.context, this.settingsPanel, 430, 380);
+        UIOverlay.addOverlay(this.context, this.settingsPanel, 430, 400);
     }
 
     public void copyCurrentEntityCamera()
@@ -228,10 +251,21 @@ public class UIDashboard extends UIBaseMenu
         if (oldMenu != this)
         {
             this.panels.open();
-            this.setPanel(this.panels.panel);
+
+            /* Which panel is up is a question about the screen being opened, not about it being
+             * built — the film panel is simply where a dashboard that has never been opened starts */
+            this.setPanel(this.panels.panel == null ? this.getPanel(UIFilmPanel.class) : this.panels.panel);
         }
 
         BBSModClient.getCameraController().add(this.camera);
+
+        Onboarding.dashboardOpened(this);
+    }
+
+    @Override
+    public IUIElement getPointerOwner()
+    {
+        return this.orbitUI.isFreeLook() ? this.orbitUI : null;
     }
 
     @Override
@@ -245,6 +279,11 @@ public class UIDashboard extends UIBaseMenu
         }
 
         this.orbit.reset();
+
+        /* The mouse goes back to being a cursor while the dashboard is away — the flight is
+         * kept, and the panel takes the mouse again on the frame it's back on screen. */
+        this.orbitUI.setFreeLook(false);
+
         BBSModClient.getCameraController().remove(this.camera);
 
         MinecraftClient.getInstance().options.setPerspective(this.lastPerspective);
@@ -263,21 +302,59 @@ public class UIDashboard extends UIBaseMenu
 
     protected void registerPanels()
     {
-        this.panels.registerPanel(new UIMorphingPanel(this), UIKeys.MORPHING_TITLE, Icons.MORPH);
-        this.panels.registerPanel(new UIFilmPanel(this), UIKeys.FILM_TITLE, Icons.FILM);
-        this.panels.registerPanel(new UIModelBlockPanel(this), UIKeys.MODEL_BLOCKS_TITLE, Icons.BLOCK);
-        this.panels.registerPanel(new UIParticleSchemePanel(this), UIKeys.PANELS_PARTICLES, Icons.PARTICLE).marginLeft(10);
-        this.panels.registerPanel(new UIModelEditorPanel(this), UIKeys.MODEL_EDITOR_TITLE, Icons.POSE);
-        this.panels.registerPanel(new UITextureManagerPanel(this), UIKeys.TEXTURES_TOOLTIP, Icons.MATERIAL);
-        this.panels.registerPanel(new UIAudioEditorPanel(this), UIKeys.AUDIO_TITLE, Icons.SOUND);
-        this.panels.registerPanel(new UIGraphPanel(this), UIKeys.GRAPH_TOOLTIP, Icons.GRAPH);
+        this.buildStep("morphing", () -> this.panels.registerPanel(new UIMorphingPanel(this), UIKeys.MORPHING_TITLE, Icons.MORPH));
+        this.buildStep("film", () -> this.panels.registerPanel(new UIFilmPanel(this), UIKeys.FILM_TITLE, Icons.FILM));
+        this.buildStep("model blocks", () -> this.panels.registerPanel(new UIModelBlockPanel(this), UIKeys.MODEL_BLOCKS_TITLE, Icons.BLOCK));
+        this.buildStep("particles", () -> this.panels.registerPanel(new UIParticleSchemePanel(this), UIKeys.PANELS_PARTICLES, Icons.PARTICLE));
+        this.buildStep("model editor", () -> this.panels.registerPanel(new UIModelEditorPanel(this), UIKeys.MODEL_EDITOR_TITLE, Icons.POSE));
+        this.buildStep("textures", () -> this.panels.registerPanel(new UITextureManagerPanel(this), UIKeys.TEXTURES_TOOLTIP, Icons.MATERIAL));
+        this.buildStep("audio", () -> this.panels.registerPanel(new UIAudioEditorPanel(this), UIKeys.AUDIO_TITLE, Icons.SOUND));
 
-        if (FabricLoader.getInstance().isDevelopmentEnvironment())
+        /* Add-on panels go into the bar after ours, so this waits for the last of ours */
+        this.buildStep("add-ons", () -> BBSMod.events.post(new RegisterDashboardPanelsEvent(this)));
+    }
+
+    /** Queue up a part of the dashboard to be built later — see {@link #buildSteps}. */
+    private void buildStep(String name, Runnable step)
+    {
+        this.buildSteps.add(() ->
         {
-            this.panels.registerPanel(new UIDebugPanel(this), IKey.raw("Sandbox"), Icons.CODE);
+            long start = System.nanoTime();
+
+            step.run();
+
+            /* Building is spread out now, but it is still the whole cost of the first open —
+             * the log names the part to blame instead of leaving a mystery */
+            System.out.println(String.format("Dashboard panel \"%s\" built in %.1f ms", name, (System.nanoTime() - start) / 1_000_000D));
+        });
+    }
+
+    /**
+     * Build one queued part of the dashboard, if anything is left to build. Returns whether
+     * there is more after this one.
+     */
+    public boolean buildNextStep()
+    {
+        Runnable step = this.buildSteps.poll();
+
+        if (step != null)
+        {
+            step.run();
         }
 
-        this.setPanel(this.getPanel(UIFilmPanel.class));
+        return !this.buildSteps.isEmpty();
+    }
+
+    /** Whether the dashboard is built in full, i.e. nothing is queued any more. */
+    public boolean isFullyBuilt()
+    {
+        return this.buildSteps.isEmpty();
+    }
+
+    /** Build everything that is still queued, right now — the dashboard is needed this frame. */
+    public void finishBuilding()
+    {
+        while (this.buildNextStep());
     }
 
     public <T> T getPanel(Class<T> clazz)
@@ -329,6 +406,13 @@ public class UIDashboard extends UIBaseMenu
     {
         Link background = BBSSettings.backgroundImage.get();
         int color = BBSSettings.backgroundColor.get();
+
+        /* The world shows through the tint (and through the image, tinted) — blur it, unless
+         * the tint is solid and there is nothing to see */
+        if (background != null || Colors.getA(color) < 1F)
+        {
+            InterfaceBlur.applyUnder();
+        }
 
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();

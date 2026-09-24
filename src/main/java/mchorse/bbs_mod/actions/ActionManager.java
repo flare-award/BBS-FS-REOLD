@@ -142,6 +142,12 @@ public class ActionManager
     {
         if (film != null)
         {
+            /* One playback per film, and the one asked for last wins. Playing a film for several
+             * players at once (/bbs film @a play) called this once per player, and each call put
+             * its own full cast into the world - the scene was acted two, three, five times over,
+             * on top of itself, while stopping and seeking only ever reached the first. */
+            this.stop(film.getId());
+
             ActionPlayer player = new ActionPlayer(serverPlayer, world, film, tick, countdown, exception, type);
 
             this.players.add(player);
@@ -268,11 +274,44 @@ public class ActionManager
         }
     }
 
+    /**
+     * Put a world back the way its snapshot remembers it WITHOUT letting go of anyone's hold.
+     * The film editor's restart rewinds a LIVING playback (stopping and starting again blinked
+     * the whole cast), and the stop/start restart used to put the world back by dying — the
+     * rewind keeps everything alive, so the world reset has to be asked for out loud.
+     *
+     * <p>The snapshot steps out of the registry for the walk — putting a block back is itself a
+     * block change and would be captured into the very snapshot being restored — and steps back
+     * in, emptied, to keep recording from here on with the same holders.
+     */
+    public void restoreDamage(ServerWorld world)
+    {
+        DamageControl damageControl = this.dc.remove(world);
+
+        if (damageControl != null)
+        {
+            damageControl.restore();
+            this.dc.put(world, damageControl);
+        }
+    }
+
     public void changedBlock(BlockPos pos, BlockState state, BlockEntity blockEntity)
     {
         for (DamageControl control : this.dc.values())
         {
             control.addBlock(pos, state, blockEntity);
+        }
+    }
+
+    /**
+     * Take a region out of every snapshot. Block changes go into all of them (see
+     * {@link #changedBlock}), so a region only stays gone if it leaves all of them too.
+     */
+    public void forgetBlocks(BlockPos min, BlockPos max)
+    {
+        for (DamageControl control : this.dc.values())
+        {
+            control.forget(min, max);
         }
     }
 

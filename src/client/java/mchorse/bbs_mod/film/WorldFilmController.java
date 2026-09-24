@@ -24,9 +24,14 @@ public class WorldFilmController extends BaseFilmController
 
         this.createEntities();
 
-        this.duration = film.camera.calculateDuration();
+        this.duration = film.calculateDuration();
         this.context = new CameraClipContext();
         this.context.clips = film.camera;
+    }
+
+    public CameraClipContext getContext()
+    {
+        return this.context;
     }
 
     @Override
@@ -66,12 +71,13 @@ public class WorldFilmController extends BaseFilmController
         int tick = Math.max(this.tick, 0);
         List<Clip> clips = this.context.clips.getClips(tick);
 
+        this.context.clipData.clear();
+
         if (clips.isEmpty())
         {
             return;
         }
 
-        this.context.clipData.clear();
         this.context.setup(tick, context.tickDelta());
 
         for (Clip clip : clips)

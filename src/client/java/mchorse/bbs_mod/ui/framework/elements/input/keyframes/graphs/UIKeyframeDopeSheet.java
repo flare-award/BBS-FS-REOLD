@@ -7,15 +7,14 @@ import mchorse.bbs_mod.data.types.MapType;
 import mchorse.bbs_mod.graphics.window.Window;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.framework.UIContext;
-import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeElement;
-import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeGroup;
+import mchorse.bbs_mod.ui.framework.elements.input.items.FoldState;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeSheet;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframes;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.shapes.IKeyframeShapeRenderer;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.shapes.KeyframeShapeRenderers;
 import mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer;
+import mchorse.bbs_mod.ui.framework.elements.utils.RowStyle;
 import mchorse.bbs_mod.ui.utils.Area;
-import mchorse.bbs_mod.ui.utils.Scale;
 import mchorse.bbs_mod.ui.utils.Scroll;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
@@ -23,8 +22,10 @@ import mchorse.bbs_mod.ui.utils.renderers.TimelineRulerRenderer;
 import mchorse.bbs_mod.utils.CollectionUtils;
 import mchorse.bbs_mod.utils.MathUtils;
 import mchorse.bbs_mod.utils.Pair;
+import mchorse.bbs_mod.utils.colors.Color;
 import mchorse.bbs_mod.utils.colors.Colors;
 import mchorse.bbs_mod.utils.keyframes.Keyframe;
+import mchorse.bbs_mod.utils.keyframes.KeyframeSegment;
 import mchorse.bbs_mod.utils.keyframes.KeyframeShape;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.BufferRenderer;
@@ -32,37 +33,52 @@ import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.Tessellator;
 import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
+import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.util.math.RotationAxis;
 import org.joml.Matrix4f;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
 import java.util.Map;
 
 public class UIKeyframeDopeSheet implements IUIKeyframeGraph
 {
-    private static final int POSE_TAB_BASE_INDENT = 4;
-    private static final int POSE_TAB_DEPTH_STEP = 4;
+    private static final int FOLD_BASE_INDENT = 4;
+    private static final int FOLD_DEPTH_STEP = 4;
     private static final float TRACK_BAR_ALPHA = 0.3F;
+
+    /** Width of the fold arrow's slot in the name column, left of the icon. */
+    private static final int LABEL_ARROW_SIZE = 10;
 
     /** Track-name column layout: left text indent, right padding, right-side icon slot, text/icon gap. */
     private static final int LABEL_TEXT_LEFT = 5;
     private static final int LABEL_RIGHT_PAD = 2;
     private static final int LABEL_ICON_SIZE = 16;
     private static final int LABEL_TEXT_ICON_GAP = 3;
+    private static final int LABEL_COMPACT_WIDTH = 60;
+
+    /** Horizontal cull slack: wider than any keyframe shape's radius, so edge keyframes draw whole. */
+    private static final int CULL_MARGIN = 20;
 
     private UIKeyframes keyframes;
 
-    private List<UIKeyframeElement> elements = new ArrayList<>();
+    /** Every row, parents before their children — the order the catalog handed them over in. */
     private List<UIKeyframeSheet> sheets = new ArrayList<>();
     private Map<UIKeyframeSheet, Integer> sheetYCache = new HashMap<>();
+
+    /** Which row each sheet is, counted down the visible list — what the striped background alternates on. */
+    private Map<UIKeyframeSheet, Integer> sheetRowCache = new HashMap<>();
     private UIKeyframeSheet lastSheet;
-    private Map<UIKeyframeSheet, UIKeyframeSheet> poseTabRoots = new HashMap<>();
-    private Map<UIKeyframeSheet, Integer> poseTabDepths = new HashMap<>();
-    private Set<UIKeyframeSheet> poseTabParents = new HashSet<>();
-    private Set<UIKeyframeSheet> expandedPoseTabs = new HashSet<>();
+    private final Map<UIKeyframeSheet.Section, Integer> sectionYCache = new LinkedHashMap<>();
+
+    /**
+     * Which rows the user has unfolded, by address. Owned by whoever built this timeline (so it
+     * outlives a rebuild) and folded in place here — one state, not a copy on each side that has to
+     * be kept in step. Every row starts folded.
+     */
+    private FoldState<String> folds = new FoldState<>();
 
     /** What to draw when there are no tracks at all - see {@link #setEmptyState(IKey, IKey)}. */
     private IKey emptyLabel;
@@ -73,12 +89,36 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
 
     public static IKeyframeShapeRenderer renderShape(Keyframe frame, UIContext context, BufferBuilder builder, Matrix4f matrix, int x, int y, int offset, int c)
     {
-        KeyframeShape keyframeShape = frame.getShape();
+        KeyframeShape keyframeShape = frame.getStyle().getShape();
         IKeyframeShapeRenderer shape = KeyframeShapeRenderers.SHAPES.get(keyframeShape);
 
         shape.renderKeyframe(context, builder, matrix, x, y, offset, c);
 
         return shape;
+    }
+
+    /** What a keyframe is coloured by when nothing is happening to it: its own colour, or its track's. */
+    public static int keyframeColor(Keyframe frame, UIKeyframeSheet sheet)
+    {
+        Color color = frame.getStyle().getColor();
+
+        return color != null ? color.getRGBColor() | Colors.A100 : sheet.color;
+    }
+
+    /**
+     * A keyframe is drawn twice - a wide shape in its colour, then a narrower one on top - so what
+     * that second pass is painted with decides whether the keyframe reads as a solid blob or as a
+     * ring: repeating the colour fills it, black leaves a core. Selection outranks both, because
+     * seeing what is selected matters more than seeing how it is styled.
+     */
+    public static int keyframeCoreColor(Keyframe frame, UIKeyframeSheet sheet, boolean selected)
+    {
+        if (selected)
+        {
+            return Colors.ACTIVE | Colors.A100;
+        }
+
+        return (frame.getStyle().isFilled() ? keyframeColor(frame, sheet) : 0) | Colors.A100;
     }
 
     public UIKeyframeDopeSheet(UIKeyframes keyframes)
@@ -91,6 +131,12 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         this.setTrackHeight(16);
     }
 
+    @Override
+    public UIKeyframes getKeyframes()
+    {
+        return this.keyframes;
+    }
+
     public double getTrackHeight()
     {
         return this.trackHeight;
@@ -100,92 +146,96 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
     {
         this.trackHeight = MathUtils.clamp(height, 8D, 100D);
         this.updateScrollSize();
-
-        this.dopeSheet.clamp();
     }
 
     private void updateScrollSize()
     {
         this.sheetYCache.clear();
-        this.dopeSheet.scrollSize = this.calculateLayout(this.elements, 0) + TOP_MARGIN;
-    }
+        this.sheetRowCache.clear();
+        this.sectionYCache.clear();
 
-    private int calculateLayout(List<UIKeyframeElement> elements, int y)
-    {
-        for (UIKeyframeElement element : elements)
+        int y = 0;
+        int row = 0;
+
+        for (UIKeyframeSheet sheet : this.sheets)
         {
-            if (element instanceof UIKeyframeSheet sheet)
+            if (sheet.section != null && !this.sectionYCache.containsKey(sheet.section))
             {
-                if (!this.isVisible(sheet))
-                {
-                    continue;
-                }
+                this.sectionYCache.put(sheet.section, y);
+                y += (int) this.trackHeight;
+                row += 1;
+            }
 
+            if (this.isVisible(sheet))
+            {
                 this.sheetYCache.put(sheet, y);
-            }
+                this.sheetRowCache.put(sheet, row);
 
-            y += (int) this.trackHeight;
-
-            if (element instanceof UIKeyframeGroup group && !group.collapsed)
-            {
-                y = this.calculateLayout(group.children, y);
+                y += this.getTrackHeight(sheet);
+                row += 1;
             }
         }
 
-        return y;
+        this.dopeSheet.scrollSize = y + TOP_MARGIN;
+
+        /* The content just changed height, so where the view sits may no longer exist — folding the
+         * rows away while scrolled to the bottom used to leave the timeline parked below every
+         * row that was left. Every caller changes the height, so this belongs here and not in each
+         * of them. */
+        this.dopeSheet.clamp();
     }
 
-    private int getElementHeight(UIKeyframeElement element)
+    /** All rows use the same configured track height. */
+    public int getTrackHeight(UIKeyframeSheet sheet)
     {
-        if (element instanceof UIKeyframeSheet sheet && !this.isVisible(sheet))
-        {
-            return 0;
-        }
-
-        if (element instanceof UIKeyframeGroup group)
-        {
-            int h = (int) this.trackHeight;
-
-            if (!group.collapsed)
-            {
-                for (UIKeyframeElement child : group.children)
-                {
-                    h += this.getElementHeight(child);
-                }
-            }
-
-            return h;
-        }
-
         return (int) this.trackHeight;
     }
 
+    /** A row is drawn while every row it folds under is unfolded. */
     private boolean isVisible(UIKeyframeSheet sheet)
     {
-        UIKeyframeSheet root = this.poseTabRoots.get(sheet);
+        if (sheet.section != null && !this.folds.isExpanded(sheet.section.id()))
+        {
+            return false;
+        }
 
-        return root == null || this.expandedPoseTabs.contains(root);
+        for (UIKeyframeSheet parent = sheet.parent; parent != null; parent = parent.parent)
+        {
+            if (!this.isUnfolded(parent))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** Whether a row shows what folds under it. */
+    private boolean isUnfolded(UIKeyframeSheet sheet)
+    {
+        return this.folds.isExpanded(sheet.id);
     }
 
     private int getSheetIndent(UIKeyframeSheet sheet)
     {
-        if (!this.poseTabRoots.containsKey(sheet))
+        int depth = sheet.getDepth() + (sheet.section == null ? 0 : 1);
+
+        if (depth == 0)
         {
             return 0;
         }
 
-        int depth = Math.max(0, this.poseTabDepths.getOrDefault(sheet, 0));
         int labelWidth = Math.max(1, this.keyframes.getLabelWidth());
         float scale = MathUtils.clamp(labelWidth / 120F, 0.75F, 1.5F);
-        int baseIndent = Math.max(1, Math.round(POSE_TAB_BASE_INDENT * scale));
-        int depthStep = Math.max(1, Math.round(POSE_TAB_DEPTH_STEP * scale));
+        int baseIndent = Math.max(1, Math.round(FOLD_BASE_INDENT * scale));
+        int depthStep = Math.max(1, Math.round(FOLD_DEPTH_STEP * scale));
 
-        return baseIndent + depth * depthStep;
+        return baseIndent + (depth - 1) * depthStep;
     }
 
-    private boolean isPoseTabParent(UIKeyframeSheet sheet)
+    private boolean hasChildren(UIKeyframeSheet sheet)
     {
-        return this.poseTabParents.contains(sheet);
+        return !sheet.children.isEmpty();
     }
 
     private List<UIKeyframeSheet> getInteractiveSheets()
@@ -267,85 +317,67 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         return this.sheets;
     }
 
-    public void configurePoseTabs(Map<UIKeyframeSheet, List<UIKeyframeSheet>> tabs, Map<UIKeyframeSheet, Integer> depths, Set<String> expandedPoseIds)
+    /**
+     * Take the fold state the timeline's owner keeps. It is used in place, not copied, so folding a
+     * row here is remembered across rebuilds without anything reading the state back out afterwards
+     * — which is what the old save-and-restore dance existed for.
+     */
+    public void setExpanded(FoldState<String> folds)
     {
-        this.poseTabRoots.clear();
-        this.poseTabDepths.clear();
-        this.poseTabParents.clear();
-        this.expandedPoseTabs.clear();
-
-        for (Map.Entry<UIKeyframeSheet, List<UIKeyframeSheet>> entry : tabs.entrySet())
-        {
-            UIKeyframeSheet parent = entry.getKey();
-
-            this.poseTabParents.add(parent);
-
-            if (expandedPoseIds.contains(parent.id))
-            {
-                this.expandedPoseTabs.add(parent);
-            }
-
-            for (UIKeyframeSheet child : entry.getValue())
-            {
-                this.poseTabRoots.put(child, parent);
-                this.poseTabDepths.put(child, Math.max(0, depths.getOrDefault(child, 0)));
-            }
-        }
+        this.folds = folds == null ? new FoldState<>() : folds;
 
         this.updateScrollSize();
     }
 
-    public Set<String> getExpandedPoseTabIds()
+    public boolean hasSections()
     {
-        Set<String> expandedIds = new HashSet<>();
-
-        for (UIKeyframeSheet sheet : this.expandedPoseTabs)
-        {
-            expandedIds.add(sheet.id);
-        }
-
-        return expandedIds;
+        return !this.sectionYCache.isEmpty();
     }
 
-    /**
-     * Every pose track shown here, folded or not - so a caller saving the folded state knows which
-     * tracks this sheet can answer for. A sheet the current category or filter left out says nothing
-     * about that track, and an empty answer from it must not read as "folded".
-     */
-    public Set<String> getPoseTabIds()
+    public boolean hasExpandedSections()
     {
-        Set<String> ids = new HashSet<>();
-
-        for (UIKeyframeSheet sheet : this.poseTabParents)
+        for (UIKeyframeSheet.Section section : this.sectionYCache.keySet())
         {
-            ids.add(sheet.id);
+            if (this.folds.isExpanded(section.id()))
+            {
+                return true;
+            }
         }
 
-        return ids;
+        return false;
+    }
+
+    public void setAllSectionsExpanded(boolean expanded)
+    {
+        for (UIKeyframeSheet.Section section : this.sectionYCache.keySet())
+        {
+            this.folds.set(section.id(), expanded);
+        }
+
+        if (!expanded)
+        {
+            for (UIKeyframeSheet sheet : this.sheets)
+            {
+                if (sheet.section != null)
+                {
+                    sheet.selection.clear();
+                }
+            }
+        }
+
+        this.updateScrollSize();
+        this.pickSelected();
     }
 
     public void removeAllSheets()
     {
-        this.elements.clear();
         this.sheets.clear();
-        this.poseTabRoots.clear();
-        this.poseTabDepths.clear();
-        this.poseTabParents.clear();
-        this.expandedPoseTabs.clear();
         this.updateScrollSize();
     }
 
     public void addSheet(UIKeyframeSheet sheet)
     {
-        this.elements.add(sheet);
         this.sheets.add(sheet);
-        this.updateScrollSize();
-    }
-
-    public void addElement(UIKeyframeElement element)
-    {
-        this.elements.add(element);
-        this.flatten(element);
         this.updateScrollSize();
     }
 
@@ -423,21 +455,6 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         this.pickKeyframe(null);
     }
 
-    private void flatten(UIKeyframeElement element)
-    {
-        if (element instanceof UIKeyframeSheet sheet)
-        {
-            this.sheets.add(sheet);
-        }
-        else if (element instanceof UIKeyframeGroup group)
-        {
-            for (UIKeyframeElement child : group.children)
-            {
-                this.flatten(child);
-            }
-        }
-    }
-
     /* Selection */
 
     @Override
@@ -452,7 +469,7 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
             {
                 Keyframe keyframe = (Keyframe) keyframes.get(j);
                 int x = this.keyframes.toGraphX(keyframe.getTick());
-                int y = this.getDopeSheetY(sheet) + (int) this.trackHeight / 2;
+                int y = this.getDopeSheetY(sheet) + this.getTrackHeight(sheet) / 2;
 
                 if (this.isNear(x, y, mouseX, 0, true))
                 {
@@ -478,7 +495,7 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
             {
                 Keyframe keyframe = (Keyframe) keyframes.get(j);
                 int x = this.keyframes.toGraphX(keyframe.getTick());
-                int y = this.getDopeSheetY(sheet) + (int) this.trackHeight / 2;
+                int y = this.getDopeSheetY(sheet) + this.getTrackHeight(sheet) / 2;
 
                 if (area.isInside(x, y))
                 {
@@ -499,7 +516,7 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         {
             int y = entry.getValue();
 
-            if (relY >= y && relY < y + this.trackHeight)
+            if (relY >= y && relY < y + this.getTrackHeight(entry.getKey()))
             {
                 return entry.getKey();
             }
@@ -511,13 +528,13 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
     @Override
     public boolean addKeyframe(int mouseX, int mouseY)
     {
-        float tick = (float) this.keyframes.fromGraphX(mouseX);
-        UIKeyframeSheet sheet = this.getSheet(mouseY);
+        return this.addKeyframeAt(this.keyframes.fromGraphCursor(mouseX), mouseY);
+    }
 
-        if (!Window.isShiftPressed())
-        {
-            tick = Math.round(tick);
-        }
+    @Override
+    public boolean addKeyframeAt(float tick, int mouseY)
+    {
+        UIKeyframeSheet sheet = this.getSheet(mouseY);
 
         if (sheet != null)
         {
@@ -542,7 +559,7 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         {
             Keyframe keyframe = (Keyframe) keyframes.get(j);
             int x = this.keyframes.toGraphX(keyframe.getTick());
-            int y = this.getDopeSheetY(sheet) + (int) this.trackHeight / 2;
+            int y = this.getDopeSheetY(sheet) + this.getTrackHeight(sheet) / 2;
 
             if (this.isNear(x, y, mouseX, mouseY, false))
             {
@@ -562,12 +579,6 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         {
             this.lastSheet = sheet;
         }
-    }
-
-    @Override
-    public void pickKeyframe(Keyframe keyframe)
-    {
-        this.keyframes.pickKeyframe(keyframe);
     }
 
     @Override
@@ -614,65 +625,116 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
                 return false;
             }
 
-            int y = this.getDopeSheetY();
-
-            return this.clickElements(context, this.elements, 0, y);
+            return this.clickSheets(context);
         }
 
         return false;
     }
 
-    private boolean clickElements(UIContext context, List<UIKeyframeElement> elements, int offset, int y)
+    private boolean clickSheets(UIContext context)
     {
         int labelWidth = this.keyframes.getLabelWidth();
 
-        for (UIKeyframeElement element : elements)
+        for (Map.Entry<UIKeyframeSheet.Section, Integer> entry : this.sectionYCache.entrySet())
         {
-            if (element instanceof UIKeyframeGroup group)
+            int sectionY = this.getDopeSheetY() + entry.getValue();
+
+            if (context.mouseY >= sectionY && context.mouseY < sectionY + (int) this.trackHeight)
             {
-                if (context.mouseY >= y && context.mouseY < y + this.trackHeight)
+                UIKeyframeSheet.Section section = entry.getKey();
+                boolean expanded = !this.folds.isExpanded(section.id());
+                this.folds.set(section.id(), expanded);
+
+                for (UIKeyframeSheet sheet : this.sheets)
                 {
-                    group.collapsed = !group.collapsed;
-                    this.updateScrollSize();
+                    if (section.equals(sheet.section) && !expanded)
+                    {
+                        sheet.selection.clear();
+                    }
+                }
+
+                this.updateScrollSize();
+                this.pickSelected();
+                return true;
+            }
+        }
+
+        for (UIKeyframeSheet sheet : this.sheets)
+        {
+            if (!this.isVisible(sheet))
+            {
+                continue;
+            }
+
+            int height = this.getTrackHeight(sheet);
+            int y = this.getDopeSheetY(sheet);
+
+            if (context.mouseY >= y && context.mouseY < y + height)
+            {
+                if (this.hasChildren(sheet) && this.isFoldToggleHit(context, sheet, y, labelWidth))
+                {
+                    this.toggleFold(sheet, Window.isShiftPressed());
 
                     return true;
                 }
 
-                if (!group.collapsed)
-                {
-                    if (this.clickElements(context, group.children, offset + 10, y + (int) this.trackHeight))
-                    {
-                        return true;
-                    }
-                }
+                this.addKeyframeManually(sheet, this.keyframes.getTick(), null);
+
+                return true;
             }
-            else if (element instanceof UIKeyframeSheet sheet)
-            {
-                if (!this.isVisible(sheet))
-                {
-                    continue;
-                }
-
-                if (context.mouseY >= y && context.mouseY < y + this.trackHeight)
-                {
-                    if (this.isPoseTabParent(sheet) && this.isPoseTabArrowHit(context, y, labelWidth))
-                    {
-                        this.togglePoseTab(sheet);
-                        this.updateScrollSize();
-
-                        return true;
-                    }
-
-                    this.addKeyframeManually(sheet, this.keyframes.getTick(), null);
-
-                    return true;
-                }
-            }
-
-            y += this.getElementHeight(element);
         }
 
         return false;
+    }
+
+    /**
+     * Fold or unfold a row. With shift the whole branch below it goes too — a skeleton is nested as
+     * deep as the model is, and opening a hand one joint at a time is not what anyone means by
+     * "show me the fingers".
+     */
+    private void toggleFold(UIKeyframeSheet sheet, boolean branch)
+    {
+        boolean unfold = !this.isUnfolded(sheet);
+
+        this.setFolded(sheet, unfold, branch);
+        this.updateScrollSize();
+    }
+
+    private void setFolded(UIKeyframeSheet sheet, boolean unfold, boolean branch)
+    {
+        this.folds.set(sheet.id, unfold);
+
+        if (!unfold)
+        {
+            /* Rows that just went out of sight must not keep keyframes selected — a selection nobody
+             * can see still answers to every edit. */
+            sheet.selection.clear();
+        }
+
+        if (!branch)
+        {
+            if (!unfold)
+            {
+                clearSelectionBelow(sheet);
+            }
+
+            return;
+        }
+
+        for (UIKeyframeSheet child : sheet.children)
+        {
+            this.setFolded(child, unfold, true);
+        }
+    }
+
+    private static void clearSelectionBelow(UIKeyframeSheet sheet)
+    {
+        for (UIKeyframeSheet child : sheet.children)
+        {
+            child.selection.clear();
+
+            clearSelectionBelow(child);
+        }
     }
 
     @Override
@@ -686,11 +748,9 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
     {
         if (context.mouseWheelHorizontal != 0)
         {
-            double offsetX = (25F * BBSSettings.scrollingSensitivityHorizontal.get() * context.mouseWheelHorizontal) / this.keyframes.getXAxis().getZoom();
-
-            this.keyframes.getXAxis().setShift(this.keyframes.getXAxis().getShift() - offsetX);
+            this.keyframes.panTime(context.mouseWheelHorizontal);
         }
-        else if (Window.isShiftPressed())
+        else if (Window.isShiftPressed() && !Window.isCtrlPressed())
         {
             this.dopeSheet.mouseScroll(context);
         }
@@ -708,7 +768,7 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         }
         else if (context.mouseWheel != 0D)
         {
-            this.keyframes.getXAxis().zoomAnchor(Scale.getAnchorX(context, this.keyframes.graphArea), Math.copySign(this.keyframes.getXAxis().getZoomFactor(), context.mouseWheel));
+            this.keyframes.zoomTimeAt(context, context.mouseWheel);
         }
     }
 
@@ -719,12 +779,8 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
 
         if (this.keyframes.isNavigating())
         {
-            int mouseX = context.mouseX;
-            int mouseY = context.mouseY;
-            double offset = (mouseX - lastX) / this.keyframes.getXAxis().getZoom();
-
-            this.keyframes.getXAxis().setShift(this.keyframes.getXAxis().getShift() - offset);
-            this.dopeSheet.scrollBy(-(mouseY - lastY));
+            this.keyframes.dragTimeBy(context.mouseX - lastX);
+            this.dopeSheet.scrollBy(-(context.mouseY - lastY));
         }
     }
 
@@ -734,7 +790,7 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         float offset = (float) (this.keyframes.fromGraphX(originalX) - originalT);
         float tick = (float) this.keyframes.fromGraphX(context.mouseX) - offset;
 
-        if (!Window.isShiftPressed())
+        if (this.keyframes.isSnappingToTicks())
         {
             tick = Math.round(this.keyframes.fromGraphX(context.mouseX) - offset);
         }
@@ -882,18 +938,13 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
                 }
             }
         }
-        else if (Window.isCtrlPressed())
+        else if (Window.isCtrlPressed() && !this.keyframes.isDuplicatingAtPlayhead())
         {
             UIKeyframeSheet sheet = this.getSheet(context.mouseY);
 
             if (sheet != null)
             {
-                float tick = (float) this.keyframes.fromGraphX(context.mouseX);
-
-                if (!Window.isShiftPressed())
-                {
-                    tick = Math.round(tick);
-                }
+                float tick = this.keyframes.getCreationTick(context);
 
                 this.renderPreviewKeyframe(context, sheet, tick, Colors.WHITE);
             }
@@ -901,8 +952,10 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         else if (Window.isAltPressed() && !Window.isShiftPressed())
         {
             List<UIKeyframeSheet> sheets = new ArrayList<>();
+            boolean atPlayhead = this.keyframes.isDuplicatingAtPlayhead();
+            float tick = this.keyframes.getDuplicationTick(context);
 
-            for (UIKeyframeSheet sheet : this.getInteractiveSheets())
+            for (UIKeyframeSheet sheet : atPlayhead ? this.getSheets() : this.getInteractiveSheets())
             {
                 if (sheet.selection.hasAny())
                 {
@@ -910,7 +963,7 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
                 }
             }
 
-            if (sheets.size() == 1)
+            if (sheets.size() == 1 && !atPlayhead)
             {
                 UIKeyframeSheet current = sheets.get(0);
                 UIKeyframeSheet hovered = this.getSheet(context.mouseY);
@@ -927,7 +980,7 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
                     Keyframe first = selected.get(0);
                     Keyframe keyframe = selected.get(i);
 
-                    this.renderPreviewKeyframe(context, hovered, Math.round(this.keyframes.fromGraphX(context.mouseX)) + (keyframe.getTick() - first.getTick()), Colors.YELLOW);
+                    this.renderPreviewKeyframe(context, hovered, tick + (keyframe.getTick() - first.getTick()), Colors.YELLOW);
                 }
             }
             else
@@ -946,13 +999,14 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
 
                 for (UIKeyframeSheet sheet : sheets)
                 {
+                    if (!this.isVisible(sheet)) continue;
                     List<Keyframe> selected = sheet.selection.getSelected();
 
                     for (int i = 0; i < selected.size(); i++)
                     {
                         Keyframe keyframe = selected.get(i);
 
-                        this.renderPreviewKeyframe(context, sheet, Math.round(this.keyframes.fromGraphX(context.mouseX)) + (keyframe.getTick() - min), Colors.YELLOW);
+                        this.renderPreviewKeyframe(context, sheet, tick + (keyframe.getTick() - min), Colors.YELLOW);
                     }
                 }
             }
@@ -962,7 +1016,7 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
     private void renderPreviewKeyframe(UIContext context, UIKeyframeSheet sheet, double tick, int color)
     {
         int x = this.keyframes.toGraphX(tick);
-        int y = this.getDopeSheetY(sheet) + (int) this.trackHeight / 2;
+        int y = this.getDopeSheetY(sheet) + this.getTrackHeight(sheet) / 2;
         float a = (float) Math.sin(context.getTickTransition() / 2D) * 0.1F + 0.5F;
         int r = 4;
 
@@ -975,12 +1029,14 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
     @SuppressWarnings({"rawtypes", "IntegerDivisionInFloatingPointContext"})
     protected void renderGraph(UIContext context)
     {
-        if (this.elements.isEmpty())
+        if (this.sheets.isEmpty())
         {
             return;
         }
 
-        this.updateScrollSize();
+        /* No recomputing row offsets per frame: every mutation that can change them
+         * (addSheet, removeAllSheets, setExpanded, fold toggles, setTrackHeight) already
+         * calls updateScrollSize() itself, and resize() re-clamps the scroll. */
 
         Area area = this.keyframes.graphArea;
         int rulerBottom = TimelineRulerRenderer.getRulerBottom(area);
@@ -988,15 +1044,22 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         Matrix4f matrix = context.batcher.getContext().getMatrices().peek().getPositionMatrix();
 
         context.batcher.clipBox(area.x, rulerBottom, area.ex(), area.ey(), context);
-        this.renderElements(context, builder, matrix, area, this.elements, 0, this.getDopeSheetY());
+        this.renderSheets(context, builder, matrix, area);
         this.renderOutOfRangeShading(context, builder, matrix, area);
         context.batcher.unclip(context);
     }
 
+    /**
+     * Paint over the tracks before the first tick and after the last one.
+     *
+     * <p>The rows run the full width of the view, so the field outside the film is what is left
+     * once they are covered back up — and it drops to the floor of the tonal ladder, below every
+     * surface a keyframe can sit on.</p>
+     */
     private void renderOutOfRangeShading(UIContext context, BufferBuilder builder, Matrix4f matrix, Area area)
     {
         int timelineBottom = TimelineRulerRenderer.getTimelineBottom(area);
-        int contentY = Math.min(area.ey(), timelineBottom + 1);
+        int contentY = Math.min(area.ey(), timelineBottom);
 
         if (contentY >= area.ey())
         {
@@ -1008,7 +1071,7 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         {
             int leftEx = Math.min(startX, area.ex());
 
-            context.batcher.box(area.x, contentY, leftEx, area.ey(), BBSSettings.chromeSurface());
+            context.batcher.box(area.x, contentY, leftEx, area.ey(), BBSSettings.sunkenSurface());
         }
 
         int endX = this.keyframes.toGraphX(this.keyframes.getDuration());
@@ -1016,109 +1079,108 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         {
             int rightX = Math.max(endX, area.x);
 
-            context.batcher.box(rightX, contentY, area.ex(), area.ey(), BBSSettings.chromeSurface());
+            context.batcher.box(rightX, contentY, area.ex(), area.ey(), BBSSettings.sunkenSurface());
         }
     }
 
-    private void renderLabels(UIContext context, BufferBuilder builder, Matrix4f matrix, List<UIKeyframeElement> elements, int offset, int y)
+    private void renderLabels(UIContext context)
     {
         Area area = this.keyframes.area;
         int w = this.keyframes.getLabelWidth();
 
-        /* Render background */
-        context.batcher.box(area.x + w - 1, area.y, area.x + w, area.ey(), BBSSettings.dividerColor());
-
         context.batcher.clipBox(area.x, area.y, area.x + w, area.ey(), context);
 
-        for (UIKeyframeElement element : elements)
+        for (Map.Entry<UIKeyframeSheet.Section, Integer> entry : this.sectionYCache.entrySet())
         {
-            if (element instanceof UIKeyframeSheet sheet)
+            UIKeyframeSheet.Section section = entry.getKey();
+            int sy = this.getDopeSheetY() + entry.getValue();
+            int height = (int) this.trackHeight;
+
+            if (sy + height < area.y || sy > area.ey())
             {
-                if (this.isVisible(sheet))
-                {
-                    this.renderSheetLabel(context, builder, matrix, area, sheet, offset, y, w);
-                }
-            }
-            else if (element instanceof UIKeyframeGroup group)
-            {
-                this.renderGroupLabel(context, builder, matrix, area, group, offset, y, w);
+                continue;
             }
 
-            y += this.getElementHeight(element);
+            boolean hover = area.isInside(context) && context.mouseY >= sy && context.mouseY < sy + height;
+            RowStyle.row(context.batcher, area.x, sy, w, height, section.color(), true, hover, false);
+            Icon icon = section.icon();
+            boolean hasIcon = icon != null && height >= 12;
+            int iconX = area.x + w - LABEL_RIGHT_PAD - LABEL_ICON_SIZE;
+            this.renderFoldArrow(context, this.getArrowX(area.x, w, hasIcon) + LABEL_ARROW_SIZE / 2F,
+                sy + height / 2, this.folds.isExpanded(section.id()));
 
-            if (element instanceof UIKeyframeGroup group && !group.collapsed)
+            if (hasIcon)
             {
-                this.renderLabels(context, builder, matrix, group.children, offset + 10, y);
-
-                y = this.getElementHeight(group) - (int) this.trackHeight + y;
+                context.batcher.icon(icon, iconX, sy + (height - icon.h) / 2);
             }
+
+            if (w > LABEL_COMPACT_WIDTH)
+            {
+                FontRenderer font = context.batcher.getFont();
+                int right = (hasIcon ? iconX - LABEL_TEXT_ICON_GAP : area.x + w - LABEL_RIGHT_PAD) - LABEL_ARROW_SIZE;
+                String title = font.limitToWidth(section.title().get(), Math.max(0, right - area.x - LABEL_TEXT_LEFT));
+                context.batcher.textShadow(title, area.x + LABEL_TEXT_LEFT, sy + (height - font.getHeight()) / 2, Colors.WHITE);
+            }
+        }
+
+        for (UIKeyframeSheet sheet : this.sheets)
+        {
+            if (!this.isVisible(sheet))
+            {
+                continue;
+            }
+
+            this.renderSheetLabel(context, area, sheet, this.getDopeSheetY(sheet), w);
         }
 
         context.batcher.unclip(context);
     }
 
-    private void renderGroupLabel(UIContext context, BufferBuilder builder, Matrix4f matrix, Area area, UIKeyframeGroup group, int offset, int y, int w)
+    private void renderSheetLabel(UIContext context, Area area, UIKeyframeSheet sheet, int y, int w)
     {
-        if (y + this.trackHeight < area.y || y > area.ey())
+        int height = this.getTrackHeight(sheet);
+
+        if (y + height < area.y || y > area.ey())
         {
             return;
         }
 
         /* Hover: whole row (label + track area) */
-        boolean hover = area.isInside(context) && context.mouseY >= y && context.mouseY < y + this.trackHeight;
-        int my = y + (int) this.trackHeight / 2;
+        boolean hover = area.isInside(context) && context.mouseY >= y && context.mouseY < y + height;
+        int my = y + height / 2;
         int lx = area.x;
 
-        if (hover)
-        {
-            context.batcher.gradientHBox(lx, y, lx + w, y + (int) this.trackHeight, Colors.setA(group.color, 0.2F), Colors.setA(group.color, 0.04F));
-        }
+        RowStyle.row(context.batcher, lx, y, w, height, sheet.color, false, hover, false);
 
-        context.batcher.box(lx, y, lx + 3, y + (int) this.trackHeight, group.color | Colors.A100);
-
-        int arrowX = lx + w - LABEL_RIGHT_PAD - LABEL_ICON_SIZE;
-        FontRenderer font = context.batcher.getFont();
-        int textColor = hover ? Colors.WHITE : Colors.setA(Colors.WHITE, 0.75F);
-        int textX = lx + LABEL_TEXT_LEFT + offset;
-        String label = font.limitToWidth(group.title.get(), Math.max(0, arrowX - LABEL_TEXT_ICON_GAP - textX));
-
-        context.batcher.textShadow(label, textX, my - font.getHeight() / 2, textColor);
-        context.batcher.icon(group.collapsed ? Icons.ARROW_RIGHT : Icons.ARROW_DOWN, arrowX, my - 8);
-    }
-
-    private void renderSheetLabel(UIContext context, BufferBuilder builder, Matrix4f matrix, Area area, UIKeyframeSheet sheet, int offset, int y, int w)
-    {
-        if (y + this.trackHeight < area.y || y > area.ey())
-        {
-            return;
-        }
-
-        /* Hover: whole row (label + track area) */
-        boolean hover = area.isInside(context) && context.mouseY >= y && context.mouseY < y + this.trackHeight;
-        int my = y + (int) this.trackHeight / 2;
-        int lx = area.x;
-
-        if (hover)
-        {
-            context.batcher.gradientHBox(lx, y, lx + w, y + (int) this.trackHeight, Colors.setA(sheet.color, 0.2F), Colors.setA(sheet.color, 0.04F));
-        }
-
-        context.batcher.box(lx, y, lx + 2, y + (int) this.trackHeight, sheet.color | Colors.A100);
-
-        boolean poseTab = this.isPoseTabParent(sheet);
-        Icon icon = poseTab
-            ? (this.expandedPoseTabs.contains(sheet) ? Icons.ARROW_DOWN : Icons.ARROW_RIGHT)
-            : sheet.getIcon();
-        boolean hasIcon = icon != null && this.trackHeight >= 12D;
+        /* A row that has children keeps its own icon and gets a fold arrow next to it. */
+        Icon icon = sheet.getIcon();
+        boolean hasIcon = icon != null && height >= 12D;
+        boolean foldable = this.hasChildren(sheet);
 
         int iconX = lx + w - LABEL_RIGHT_PAD - LABEL_ICON_SIZE;
-        FontRenderer font = context.batcher.getFont();
-        int textColor = hover ? Colors.WHITE : Colors.setA(Colors.WHITE, 0.75F);
-        int textX = lx + LABEL_TEXT_LEFT + offset + this.getSheetIndent(sheet);
-        int textRight = hasIcon ? iconX - LABEL_TEXT_ICON_GAP : lx + w - LABEL_RIGHT_PAD;
-        String title = font.limitToWidth(sheet.title.get(), Math.max(0, textRight - textX));
 
-        context.batcher.textShadow(title, textX, my - font.getHeight() / 2, textColor);
+        if (foldable)
+        {
+            this.renderFoldArrow(context, this.getArrowX(lx, w, hasIcon) + LABEL_ARROW_SIZE / 2F, my, this.isUnfolded(sheet));
+        }
+
+        /* Hide every title together when the column is reduced to its icon controls. */
+        if (w > LABEL_COMPACT_WIDTH)
+        {
+            FontRenderer font = context.batcher.getFont();
+            int textColor = hover ? Colors.WHITE : Colors.setA(Colors.WHITE, 0.75F);
+            int textX = lx + LABEL_TEXT_LEFT + this.getSheetIndent(sheet);
+            int textRight = hasIcon ? iconX - LABEL_TEXT_ICON_GAP : lx + w - LABEL_RIGHT_PAD;
+
+            if (foldable)
+            {
+                textRight -= LABEL_ARROW_SIZE;
+            }
+
+            String title = font.limitToWidth(sheet.title.get(), Math.max(0, textRight - textX));
+
+            context.batcher.textShadow(title, textX, my - font.getHeight() / 2, textColor);
+        }
 
         if (hasIcon)
         {
@@ -1126,109 +1188,74 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         }
     }
 
-    private int renderElements(UIContext context, BufferBuilder builder, Matrix4f matrix, Area area, List<UIKeyframeElement> elements, int offset, int y)
+    private void renderSheets(UIContext context, BufferBuilder builder, Matrix4f matrix, Area area)
     {
-        for (UIKeyframeElement element : elements)
+        if (area.isInside(context))
         {
-            if (element instanceof UIKeyframeSheet sheet)
+            for (Map.Entry<UIKeyframeSheet.Section, Integer> entry : this.sectionYCache.entrySet())
             {
-                if (this.isVisible(sheet))
+                int y = this.getDopeSheetY() + entry.getValue();
+                int height = (int) this.trackHeight;
+
+                if (context.mouseY >= y && context.mouseY < y + height)
                 {
-                    this.renderSheet(context, builder, matrix, area, sheet, offset, y);
+                    context.batcher.box(area.x, y, area.ex(), y + height,
+                        Colors.setA(entry.getKey().color(), 0.12F));
+                    break;
                 }
             }
-            else if (element instanceof UIKeyframeGroup group)
+        }
+
+        for (UIKeyframeSheet sheet : this.sheets)
+        {
+            if (!this.isVisible(sheet))
             {
-                this.renderGroup(context, builder, matrix, area, group, offset, y);
+                continue;
             }
 
-            y += this.getElementHeight(element);
-
-            if (element instanceof UIKeyframeGroup group && !group.collapsed)
-            {
-                y = this.renderElements(context, builder, matrix, area, group.children, offset + 10, y);
-            }
-        }
-
-        return y;
-    }
-
-    private int getTrackGap()
-    {
-        return 0;
-    }
-
-    private int getTrackBodyY(int y)
-    {
-        return y + this.getTrackGap();
-    }
-
-    private int getTrackBodyHeight()
-    {
-        int gap = this.getTrackGap();
-
-        return Math.max(2, (int) this.trackHeight - gap * 2);
-    }
-
-    private void renderGroup(UIContext context, BufferBuilder builder, Matrix4f matrix, Area area, UIKeyframeGroup group, int offset, int y)
-    {
-        if (y + this.trackHeight < area.y || y > area.ey())
-        {
-            return;
-        }
-
-        boolean hover = area.isInside(context) && context.mouseY >= y && context.mouseY < y + this.trackHeight;
-        int by = this.getTrackBodyY(y);
-        int bh = this.getTrackBodyHeight();
-        int row = Math.max(0, (y - TimelineRulerRenderer.getTimelineBottom(area)) / Math.max(1, (int) this.trackHeight));
-        int surface = row % 2 == 0 ? BBSSettings.deepSurface() : BBSSettings.baseSurface();
-
-        context.batcher.box(area.x, by, area.ex(), by + bh, surface);
-
-        if (hover)
-        {
-            context.batcher.box(area.x, by, area.ex(), by + bh, BBSSettings.color(BBSSettings.raisedSurface(), Colors.A25));
+            this.renderSheet(context, builder, matrix, area, sheet, this.getDopeSheetY(sheet));
         }
     }
 
-    private void renderSheet(UIContext context, BufferBuilder builder, Matrix4f matrix, Area area, UIKeyframeSheet sheet, int offset, int y)
+    private void renderSheet(UIContext context, BufferBuilder builder, Matrix4f matrix, Area area, UIKeyframeSheet sheet, int y)
     {
         if (!this.isVisible(sheet))
         {
             return;
         }
 
-        if (y + this.trackHeight < area.y || y > area.ey())
+        int height = this.getTrackHeight(sheet);
+
+        if (y + height < area.y || y > area.ey())
         {
             return;
         }
 
         List keyframes = sheet.channel.getKeyframes();
 
-        boolean hover = area.isInside(context) && context.mouseY >= y && context.mouseY < y + this.trackHeight;
-        int my = y + (int) this.trackHeight / 2;
-        int by = this.getTrackBodyY(y);
-        int bh = this.getTrackBodyHeight();
-        int row = 0;
-        Integer sheetY = this.sheetYCache.get(sheet);
-
-        if (sheetY != null)
-        {
-            row = sheetY / Math.max(1, (int) this.trackHeight);
-        }
+        boolean hover = area.isInside(context) && context.mouseY >= y && context.mouseY < y + height;
+        int my = y + height / 2;
+        int bh = Math.max(2, height);
+        int row = this.sheetRowCache.getOrDefault(sheet, 0);
 
         int trackWidth = BBSSettings.editorTrackWidth.get();
 
         int surface = row % 2 == 0 ? BBSSettings.deepSurface() : BBSSettings.baseSurface();
 
-        context.batcher.box(area.x, by, area.ex(), by + bh, surface);
+        context.batcher.box(area.x, y, area.ex(), y + bh, surface);
 
         if (hover)
         {
-            context.batcher.box(area.x, by, area.ex(), by + bh, BBSSettings.color(BBSSettings.raisedSurface(), Colors.A25));
+            context.batcher.box(area.x, y, area.ex(), y + bh, Colors.setA(sheet.color, 0.12F));
         }
 
         builder.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+
+        /* Keyframes sorted by tick map to ascending X, so everything left of the view is
+         * skipped and the first frame past the right edge ends the loop. The margin covers a
+         * shape's visual radius, so a keyframe half over the edge still draws whole. */
+        int cullMinX = area.x - CULL_MARGIN;
+        int cullMaxX = area.ex() + CULL_MARGIN;
 
         /* Render bars indicating same values */
         for (int j = 1; j < keyframes.size(); j++)
@@ -1238,6 +1265,16 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
             int c = Colors.setA(sheet.color, TRACK_BAR_ALPHA);
             int xx = this.keyframes.toGraphX(previous.getTick());
             int xxx = this.keyframes.toGraphX(frame.getTick());
+
+            if (xxx < cullMinX)
+            {
+                continue;
+            }
+
+            if (xx > cullMaxX)
+            {
+                break;
+            }
 
             if (previous.getFactory().compare(previous.getValue(), frame.getValue()))
             {
@@ -1254,7 +1291,10 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
             }
         }
 
-        /* Draw keyframe handles (outer) */
+        this.renderMotionShiftBars(context, builder, matrix, area, sheet, my, trackWidth + 2);
+
+        /* Render custom duration markers. The keyframe shapes themselves belong to the topmost
+         * pass ({@link #renderSheetKeyframeShapes}), which draws over the out-of-range shading. */
         int forcedIndex = 0;
 
         for (int j = 0; j < keyframes.size(); j++)
@@ -1264,8 +1304,18 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
             int x1 = this.keyframes.toGraphX(tick);
             int x2 = this.keyframes.toGraphX(tick + frame.getDuration());
 
-            /* Render custom duration markers */
-            if (x1 != x2)
+            if (x1 > cullMaxX)
+            {
+                break;
+            }
+
+            if (x1 == x2)
+            {
+                continue;
+            }
+
+            /* Keep the duration markers' zigzag parity stable as offscreen ones scroll out. */
+            if (Math.max(x1, x2) >= cullMinX)
             {
                 int y1 = my - 8 + (forcedIndex % 2 == 1 ? -4 : 0);
                 int color = sheet.selection.has(j) ? Colors.WHITE :  Colors.setA(Colors.mulRGB(sheet.color, 0.9F), 0.75F);
@@ -1273,46 +1323,62 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
                 context.batcher.fillRect(builder, matrix, x1, y1 - 2, 1, 5, color, color, color, color);
                 context.batcher.fillRect(builder, matrix, x2, y1 - 2, 1, 5, color, color, color, color);
                 context.batcher.fillRect(builder, matrix, x1 + 1, y1, x2 - x1, 1, color, color, color, color);
-
-                forcedIndex += 1;
             }
 
-            boolean isPointHover = this.isNear(this.keyframes.toGraphX(frame.getTick()), my, context.mouseX, context.mouseY, Window.isAltPressed() && Window.isShiftPressed());
-            boolean toRemove = Window.isCtrlPressed() && isPointHover;
-
-            if (this.keyframes.isSelecting())
-            {
-                isPointHover = isPointHover || this.keyframes.getGrabbingArea(context).isInside(x1, my);
-            }
-
-            int kc = frame.getColor() != null ? frame.getColor().getRGBColor() | Colors.A100 : sheet.color;
-            int c = (sheet.selection.has(j) || isPointHover ? Colors.WHITE : kc) | Colors.A100;
-
-            if (toRemove)
-            {
-                c = Colors.RED | Colors.A100;
-            }
-
-            int pointOffset = toRemove ? 4 : 3;
-
-            renderShape(frame, context, builder, matrix, x1, my, pointOffset, c);
-        }
-
-        /* Render keyframe handles (inner) */
-        for (int j = 0; j < keyframes.size(); j++)
-        {
-            Keyframe frame = (Keyframe) keyframes.get(j);
-            int c = sheet.selection.has(j) ? Colors.ACTIVE : 0;
-            int mx = this.keyframes.toGraphX(frame.getTick());
-            int mc = c | Colors.A100;
-            IKeyframeShapeRenderer shapeResult = renderShape(frame, context, builder, matrix, mx, my, 2, mc);
-
-            shapeResult.renderKeyframeBackground(context, builder, matrix, mx, my, 2, mc);
+            forcedIndex += 1;
         }
 
         RenderSystem.enableBlend();
         RenderSystem.setShader(GameRenderer::getPositionColorProgram);
         BufferRenderer.drawWithGlobalProgram(builder.end());
+    }
+
+    /** Uniform strip from the midpoint handle to the slow-side key; opacity follows shift intensity. */
+    private void renderMotionShiftBars(UIContext context, BufferBuilder builder, Matrix4f matrix, Area area, UIKeyframeSheet sheet, int y, int width)
+    {
+        boolean shifted = false;
+        for (Object entry : sheet.channel.getKeyframes())
+        {
+            Keyframe<?> key = (Keyframe<?>) entry;
+            if (key.getMotionShift() != 0F && key.supportsMotionShift())
+            {
+                shifted = true;
+                break;
+            }
+        }
+        if (!shifted) return;
+
+        Keyframe<?> previousA = null, previousB = null;
+        boolean same = false;
+        /* Sample playback in screen space: finite loops use their source shift too, and work
+         * stays bounded by the visible width rather than the film's duration or zoom. */
+        for (int x = area.x; x < area.ex(); x += 2)
+        {
+            int end = Math.min(x + 2, area.ex());
+            float tick = (float) this.keyframes.fromGraphX((x + end) / 2);
+            KeyframeSegment<?> segment = sheet.channel.find(tick);
+            if (segment == null || segment.isSame() || segment.a.getMotionShift() == 0F || !segment.a.supportsMotionShift()) continue;
+            if (segment.a != previousA || segment.b != previousB)
+            {
+                previousA = segment.a;
+                previousB = segment.b;
+                same = segment.a.getFactory().compare(segment.a.getValue(), segment.b.getValue());
+            }
+            /* Equal values already have their hold strip; don't make it darker by drawing twice. */
+            if (same) continue;
+
+            float shift = segment.a.getMotionShift();
+            float start = segment.a.getTick() + segment.timeOffset;
+            float finish = segment.b.getTick() + segment.timeOffset;
+            float midpoint = start + segment.duration * (0.5F + shift);
+            int left = Math.max(x, this.keyframes.toGraphX(shift > 0F ? start : midpoint));
+            int right = Math.min(end, this.keyframes.toGraphX(shift > 0F ? Math.min(midpoint, finish) : finish));
+            if (right <= left) continue;
+            float alpha = TRACK_BAR_ALPHA * Math.min(1F, Math.abs(shift) / 0.49F);
+            if (alpha < 1F / 255F) continue;
+            int color = Colors.setA(sheet.color, alpha);
+            context.batcher.fillRect(builder, matrix, left, y - width / 2, right - left, width, color, color, color, color);
+        }
     }
 
     private void renderSheetKeyframeShapes(UIContext context, BufferBuilder builder, Matrix4f matrix, Area area, UIKeyframeSheet sheet, int y)
@@ -1322,14 +1388,18 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
             return;
         }
 
-        if (y + this.trackHeight < area.y || y > area.ey())
+        int height = this.getTrackHeight(sheet);
+
+        if (y + height < area.y || y > area.ey())
         {
             return;
         }
 
         List keyframes = sheet.channel.getKeyframes();
-        int my = y + (int) this.trackHeight / 2;
+        int my = y + height / 2;
         int forcedIndex = 0;
+        int cullMinX = area.x - CULL_MARGIN;
+        int cullMaxX = area.ex() + CULL_MARGIN;
 
         for (int j = 0; j < keyframes.size(); j++)
         {
@@ -1338,20 +1408,30 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
             int x1 = this.keyframes.toGraphX(tick);
             int x2 = this.keyframes.toGraphX(tick + frame.getDuration());
 
+            if (x1 > cullMaxX)
+            {
+                break;
+            }
+
+            if (Math.max(x1, x2) < cullMinX)
+            {
+                continue;
+            }
+
             if (x1 != x2)
             {
                 forcedIndex += 1;
             }
 
             boolean isPointHover = this.isNear(x1, my, context.mouseX, context.mouseY, Window.isAltPressed() && Window.isShiftPressed());
-            boolean toRemove = Window.isCtrlPressed() && isPointHover;
+            boolean toRemove = this.keyframes.isRemovingKeyframe() && isPointHover;
 
             if (this.keyframes.isSelecting())
             {
                 isPointHover = isPointHover || this.keyframes.getGrabbingArea(context).isInside(x1, my);
             }
 
-            int kc = frame.getColor() != null ? frame.getColor().getRGBColor() | Colors.A100 : sheet.color;
+            int kc = keyframeColor(frame, sheet);
             int c = (sheet.selection.has(j) || isPointHover ? Colors.WHITE : kc) | Colors.A100;
 
             if (toRemove)
@@ -1367,39 +1447,74 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
         for (int j = 0; j < keyframes.size(); j++)
         {
             Keyframe frame = (Keyframe) keyframes.get(j);
-            int c = sheet.selection.has(j) ? Colors.ACTIVE : 0;
             int mx = this.keyframes.toGraphX(frame.getTick());
-            int mc = c | Colors.A100;
+
+            if (mx < cullMinX)
+            {
+                continue;
+            }
+
+            if (mx > cullMaxX)
+            {
+                break;
+            }
+
+            int mc = keyframeCoreColor(frame, sheet, sheet.selection.has(j));
             IKeyframeShapeRenderer shapeResult = renderShape(frame, context, builder, matrix, mx, my, 2, mc);
 
             shapeResult.renderKeyframeBackground(context, builder, matrix, mx, my, 2, mc);
         }
     }
 
-    private int renderElementsTopmostKeyframes(UIContext context, BufferBuilder builder, Matrix4f matrix, Area area, List<UIKeyframeElement> elements, int y)
+    private void renderSheetsTopmostKeyframes(UIContext context, BufferBuilder builder, Matrix4f matrix, Area area)
     {
-        for (UIKeyframeElement element : elements)
+        for (UIKeyframeSheet sheet : this.sheets)
         {
-            if (element instanceof UIKeyframeSheet sheet)
+            if (!this.isVisible(sheet))
             {
-                this.renderSheetKeyframeShapes(context, builder, matrix, area, sheet, y);
+                continue;
             }
 
-            y += this.getElementHeight(element);
+            this.renderSheetKeyframeShapes(context, builder, matrix, area, sheet, this.getDopeSheetY(sheet));
+        }
+    }
 
-            if (element instanceof UIKeyframeGroup group && !group.collapsed)
+    private void renderSectionKeyframes(UIContext context, BufferBuilder builder, Matrix4f matrix, Area area)
+    {
+        for (UIKeyframeSheet sheet : this.sheets)
+        {
+            Integer offset = this.sectionYCache.get(sheet.section);
+
+            if (offset == null)
             {
-                y = this.renderElementsTopmostKeyframes(context, builder, matrix, area, group.children, y);
+                continue;
+            }
+
+            int y = this.getDopeSheetY() + offset + (int) this.trackHeight / 2;
+
+            if (y + 3 < area.y || y - 3 > area.ey())
+            {
+                continue;
+            }
+
+            for (int i = 0; i < sheet.channel.getKeyframes().size(); i++)
+            {
+                Keyframe frame = (Keyframe) sheet.channel.getKeyframes().get(i);
+                int x = this.keyframes.toGraphX(frame.getTick());
+
+                if (x < area.x - CULL_MARGIN) continue;
+                if (x > area.ex() + CULL_MARGIN) break;
+
+                int color = sheet.section.color() | Colors.A100;
+                context.batcher.fillRect(builder, matrix, x - 3, y - 3, 6, 6, color, color, color, color);
             }
         }
-
-        return y;
     }
 
     @Override
     public void renderTopmostKeyframes(UIContext context)
     {
-        if (this.elements.isEmpty())
+        if (this.sheets.isEmpty())
         {
             return;
         }
@@ -1411,50 +1526,56 @@ public class UIKeyframeDopeSheet implements IUIKeyframeGraph
 
         context.batcher.clipBox(area.x, rulerBottom, area.ex(), area.ey(), context);
         builder.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
-        this.renderElementsTopmostKeyframes(context, builder, matrix, area, this.elements, this.getDopeSheetY());
+        this.renderSectionKeyframes(context, builder, matrix, area);
+        this.renderSheetsTopmostKeyframes(context, builder, matrix, area);
         RenderSystem.enableBlend();
         RenderSystem.setShader(GameRenderer::getPositionColorProgram);
         BufferRenderer.drawWithGlobalProgram(builder.end());
         context.batcher.unclip(context);
     }
 
-    private boolean isPoseTabArrowHit(UIContext context, int y, int labelWidth)
+    /** Left edge of the fold arrow's slot: just left of the icon, or where the icon would have been. */
+    private int getArrowX(int labelX, int labelWidth, boolean hasIcon)
     {
-        int x = this.keyframes.area.x + labelWidth - LABEL_RIGHT_PAD - LABEL_ICON_SIZE;
-        int minY = y + (int) this.trackHeight / 2 - 8;
+        int iconX = labelX + labelWidth - LABEL_RIGHT_PAD - LABEL_ICON_SIZE;
 
-        return context.mouseX >= x && context.mouseX < x + LABEL_ICON_SIZE && context.mouseY >= minY && context.mouseY < minY + LABEL_ICON_SIZE;
+        return hasIcon ? iconX - LABEL_ARROW_SIZE : iconX + (LABEL_ICON_SIZE - LABEL_ARROW_SIZE) / 2;
     }
 
-    private void togglePoseTab(UIKeyframeSheet parent)
+    /** {@link Icons#ARROW_SMALL}, turned down when the row is unfolded — the same arrow the collapsible sections use. */
+    private void renderFoldArrow(UIContext context, float cx, float cy, boolean unfolded)
     {
-        if (this.expandedPoseTabs.contains(parent))
-        {
-            this.expandedPoseTabs.remove(parent);
+        MatrixStack matrices = context.batcher.getContext().getMatrices();
 
-            for (Map.Entry<UIKeyframeSheet, UIKeyframeSheet> entry : this.poseTabRoots.entrySet())
-            {
-                if (entry.getValue() == parent)
-                {
-                    entry.getKey().selection.clear();
-                }
-            }
-        }
-        else
-        {
-            this.expandedPoseTabs.add(parent);
-        }
+        matrices.push();
+        matrices.translate(cx, cy, 0F);
+        matrices.multiply(RotationAxis.POSITIVE_Z.rotationDegrees(unfolded ? 90F : 0F), 0F, 0F, 0F);
+        context.batcher.icon(Icons.ARROW_SMALL, Colors.WHITE, 0, 0, 0.5F, 0.5F);
+        matrices.pop();
+    }
+
+    /**
+     * Whether a click on this row lands on its fold toggle: the arrow, and the icon next to it. The
+     * two sit together at the right end of the name column and read as one control, so hitting either
+     * folds the row — the arrow alone is a 10px target, which is a lot to ask of a mouse.
+     */
+    private boolean isFoldToggleHit(UIContext context, UIKeyframeSheet sheet, int y, int labelWidth)
+    {
+        int height = this.getTrackHeight(sheet);
+        boolean hasIcon = sheet.getIcon() != null && height >= 12D;
+        int x = this.getArrowX(this.keyframes.area.x, labelWidth, hasIcon);
+        int right = this.keyframes.area.x + labelWidth - LABEL_RIGHT_PAD;
+
+        return context.mouseX >= x && context.mouseX < right
+            && context.mouseY >= y && context.mouseY < y + height;
     }
 
     @Override
     public void postRender(UIContext context)
     {
-        if (!this.elements.isEmpty())
+        if (!this.sheets.isEmpty())
         {
-            BufferBuilder builder = Tessellator.getInstance().getBuffer();
-            Matrix4f matrix = context.batcher.getContext().getMatrices().peek().getPositionMatrix();
-
-            this.renderLabels(context, builder, matrix, this.elements, 0, this.getDopeSheetY());
+            this.renderLabels(context);
         }
 
         this.dopeSheet.renderScrollbar(context.batcher);

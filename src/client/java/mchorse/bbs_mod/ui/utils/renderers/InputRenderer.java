@@ -24,6 +24,10 @@ import java.util.List;
  */
 public class InputRenderer
 {
+    /** Footprint of {@link #renderMouseButtons}, for callers laying anything out beside it. */
+    public static final int MOUSE_WIDTH = 14;
+    public static final int MOUSE_HEIGHT = 18;
+
     private static boolean disabledForFrame = false;
 
     private List<PressedKey> pressedKeys = new ArrayList<>();
@@ -103,7 +107,12 @@ public class InputRenderer
             return;
         }
 
-        this.renderMouse(menu.context.batcher, mouseX, mouseY);
+        /* The keys are still worth showing while the pointer is gone - flying is a keyboard
+         * thing - but the mouse has nothing left to sit beside. */
+        if (!menu.isPointerHidden())
+        {
+            this.renderMouse(menu.context.batcher, mouseX, mouseY);
+        }
 
         if (BBSSettings.enableKeystrokeRendering.get())
         {

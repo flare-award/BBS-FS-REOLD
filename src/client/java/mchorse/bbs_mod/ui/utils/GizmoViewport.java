@@ -16,7 +16,10 @@ public interface GizmoViewport
     StencilFormFramebuffer getGizmoStencil();
 
     /** Projection paired with the matrix captured in {@link Gizmo#render}
-     *  this frame, so origin/radius project into this viewport's pixels. */
+     *  this frame, so origin/radius project into this viewport's pixels.
+     *  It must be the very projection this viewport had on
+     *  {@link com.mojang.blaze3d.systems.RenderSystem} while the gizmo was
+     *  drawn, or the hover disc would be offset from the handles. */
     Matrix4f getGizmoProjection();
 
     Area getGizmoArea();

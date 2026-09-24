@@ -3,16 +3,17 @@ package mchorse.bbs_mod.ui.film.replays;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.forms.forms.Form;
+import mchorse.bbs_mod.l10n.L10n;
 import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.film.UIFilmPanel;
+import mchorse.bbs_mod.ui.forms.editors.UIForms;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
+import mchorse.bbs_mod.ui.framework.elements.UISection;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
-import mchorse.bbs_mod.ui.utils.UIDataUtils;
+import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
+import mchorse.bbs_mod.ui.utils.UIConstants;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
-import mchorse.bbs_mod.ui.utils.Area;
-import mchorse.bbs_mod.utils.Direction;
-import mchorse.bbs_mod.utils.colors.Colors;
 
 import java.util.List;
 import java.util.function.Consumer;
@@ -27,57 +28,86 @@ public class UIReplaysListPanel extends UIElement
 
     public final UIElement content = new UIElement();
     public final UIElement bar = new UIElement();
-    public final UIElement leftBar = new UIElement();
     public final UIIcon addReplay;
-    public final UIIcon dupeReplay;
-    public final UIIcon removeReplay;
-    public final UIIcon presets;
+    /**
+     * The one thing the bar is worth its height for. Duplicating, removing and presets live in the
+     * list's own context menu, where every other thing done to a replay lives; searching has
+     * nowhere else to go, and a list of a hundred replays needs it far more than it needs buttons.
+     */
+    public final UITextbox search;
 
     public final UIReplayList replays;
+    public final UIForms bodyParts;
+    private Replay bodyPartsReplay;
+    private final UISection bodyPartsSection = new UISection(L10n.lang("bbs.ui.film.replays.body_parts"));
 
-    private final Area rightClickAnchorArea = new Area();
-
-    public UIReplaysListPanel(UIFilmPanel panel, Consumer<List<Replay>> callback, Consumer<Form> formConsumer)
+    public UIReplaysListPanel(UIFilmPanel panel, Consumer<List<Replay>> callback, Consumer<Form> formConsumer, Consumer<String> partConsumer)
     {
         this.filmPanel = panel;
         this.replays = new UIReplayList(callback, formConsumer, panel);
+        this.bodyParts = new UIForms(list ->
+        {
+            if (!list.isEmpty())
+            {
+                partConsumer.accept(list.get(0).getPath());
+            }
+        });
 
         this.addReplay = new UIIcon(Icons.ADD, (b) -> this.replays.addReplay());
-        this.dupeReplay = new UIIcon(Icons.DUPE, (b) -> this.replays.dupeReplay());
-        this.removeReplay = new UIIcon(Icons.REMOVE, (b) -> this.replays.removeReplay());
-        this.presets = new UIIcon(Icons.MORE, (b) -> this.replays.openReplayPresets());
-        this.presets.tooltip(UIKeys.GENERAL_PRESETS, Direction.LEFT);
+        this.addReplay.tooltip(UIKeys.SCENE_REPLAYS_CONTEXT_ADD);
 
-        int leftW = BAR_ICON_SIZE * 3 + BAR_ICON_MARGIN * 2;
+        this.search = new UITextbox(1000, (text) -> this.replays.filter(text));
+        this.search.placeholder(UIKeys.GENERAL_SEARCH);
 
         this.bar.relative(this.content).x(0).y(0).w(1F).h(BAR_HEIGHT);
-        this.leftBar.relative(this.bar).x(0).y(0).w(leftW).h(BAR_HEIGHT).row(BAR_ICON_MARGIN).height(BAR_HEIGHT);
 
-        this.addReplay.w(BAR_ICON_SIZE);
-        this.dupeReplay.w(BAR_ICON_SIZE);
-        this.removeReplay.w(BAR_ICON_SIZE);
+        this.addReplay.relative(this.bar).x(0).y(0).w(BAR_ICON_SIZE).h(BAR_HEIGHT);
+        this.search.relative(this.bar).x(BAR_ICON_SIZE + BAR_ICON_MARGIN).y(0).w(1F, -BAR_ICON_SIZE - BAR_ICON_MARGIN).h(BAR_HEIGHT);
 
-        this.presets.relative(this.bar).x(1F, -BAR_ICON_SIZE - BAR_ICON_MARGIN).y(0).w(BAR_ICON_SIZE).h(BAR_HEIGHT);
-
-        this.leftBar.add(this.addReplay, this.dupeReplay, this.removeReplay);
-        this.bar.add(this.leftBar, this.presets);
+        this.bar.add(this.addReplay, this.search);
 
         this.replays.relative(this.content).x(0).y(0, BAR_HEIGHT).w(1F).h(1F, -BAR_HEIGHT);
-        this.content.add(this.bar, this.replays);
+        int padding = UIConstants.MARGIN;
+
+        this.bodyPartsSection.relative(this.content).x(padding).y(1F, -padding).w(1F, -padding * 2).anchorY(1F);
+        this.bodyPartsSection.fields.add(this.bodyParts);
+        /* Lay out the section first: its natural height sets the bottom of the replay list. */
+        this.content.add(this.bar, this.bodyPartsSection, this.replays);
 
         this.content.relative(this).x(0).y(0).w(1F).h(1F);
         this.add(this.content);
     }
 
-    private void updateButtonsState()
+    public String setBodyPartsReplay(Replay replay, String path)
     {
-        boolean hasFilm = this.filmPanel.getData() != null;
-        boolean hasSelection = this.replays.hasReplaySelection();
+        double scroll = this.bodyPartsReplay == replay ? this.bodyParts.scroll.getScroll() : 0;
+        this.bodyPartsReplay = replay;
 
-        this.addReplay.setEnabled(hasFilm);
-        this.dupeReplay.setEnabled(hasSelection);
-        this.removeReplay.setEnabled(hasSelection);
-        this.presets.setEnabled(hasFilm);
+        if (replay == null)
+        {
+            this.bodyParts.clear();
+
+            return "";
+        }
+
+        this.bodyParts.setForm(replay.form.get());
+        this.bodyParts.scroll.setScroll(scroll);
+
+        return this.bodyParts.setCurrentPath(path);
+    }
+
+    @Override
+    public void resize()
+    {
+        boolean visible = this.bodyPartsReplay != null;
+        int rowsHeight = this.bodyParts.getList().size() * this.bodyParts.scroll.scrollItemSize;
+        int maxHeight = Math.min(160, this.getFlex().getH() / 2);
+
+        this.bodyParts.h(Math.max(1, Math.min(rowsHeight, maxHeight)));
+        this.bodyPartsSection.setVisible(visible);
+        this.replays.hTo(visible ? this.bodyPartsSection.area : this.content.area, visible ? 0F : 1F);
+
+        super.resize();
     }
 
     @Override
@@ -85,8 +115,9 @@ public class UIReplaysListPanel extends UIElement
     {
         int barBg = BBSSettings.baseSurface();
 
-        this.updateButtonsState();
+        this.addReplay.setEnabled(this.filmPanel.getData() != null);
         context.batcher.box(this.bar.area.x, this.bar.area.y, this.bar.area.ex(), this.bar.area.ey(), barBg);
+
         super.render(context);
     }
 }

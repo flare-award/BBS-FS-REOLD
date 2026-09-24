@@ -4,6 +4,7 @@ import mchorse.bbs_mod.bobj.BOBJBone;
 import mchorse.bbs_mod.cubic.CubicModelAnimator;
 import mchorse.bbs_mod.cubic.IModel;
 import mchorse.bbs_mod.cubic.MolangHelper;
+import mchorse.bbs_mod.cubic.RigBone;
 import mchorse.bbs_mod.cubic.data.animation.Animation;
 import mchorse.bbs_mod.data.IMapSerializable;
 import mchorse.bbs_mod.data.types.ListType;
@@ -15,7 +16,6 @@ import mchorse.bbs_mod.utils.joml.Matrices;
 import mchorse.bbs_mod.utils.pose.Pose;
 import mchorse.bbs_mod.utils.pose.PoseTransform;
 import mchorse.bbs_mod.utils.pose.Transform;
-import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
@@ -47,6 +47,18 @@ public class Model implements IMapSerializable, IModel
     public Model(MolangParser parser)
     {
         this.parser = parser;
+    }
+
+    /**
+     * Replace the groups with the ones in {@code data} — a snapshot from {@link #toData()}, the way
+     * the model editor's undo keeps them — and settle the hierarchy again. Every group object is a
+     * new one: whatever held one now holds a dead one.
+     */
+    public void reload(MapType data)
+    {
+        this.topGroups.clear();
+        this.fromData(data);
+        this.initialize();
     }
 
     public void initialize()
@@ -88,9 +100,112 @@ public class Model implements IMapSerializable, IModel
         return this.orderedGroups;
     }
 
+    @Override
+    public Collection<? extends RigBone> getRigBones()
+    {
+        return this.orderedGroups;
+    }
+
+    @Override
+    public RigBone getBone(String name)
+    {
+        return this.getGroup(name);
+    }
+
     public ModelGroup getGroup(String id)
     {
         return this.namedGroups.get(id);
+    }
+
+    /** Rebuild what these groups' cubes draw as, after their numbers changed. */
+    public void refreshGeometry(Collection<ModelGroup> groups)
+    {
+        for (ModelGroup group : groups)
+        {
+            group.generateQuads(this.textureWidth, this.textureHeight);
+        }
+    }
+
+    /** Rebuild what every cube of the model draws as — what a change to the unwrap's sheet needs. */
+    public void regenerateQuads()
+    {
+        this.refreshGeometry(this.orderedGroups);
+    }
+
+    /**
+     * The size of the sheet every face's unwrap is measured against — the {@code texture} of the
+     * file, not the size of the PNG. Changing it re-reads every cube's unwrap against the new one,
+     * so the same numbers cover a different share of the sheet.
+     */
+    public void setTextureSize(int width, int height)
+    {
+        this.textureWidth = width;
+        this.textureHeight = height;
+
+        this.regenerateQuads();
+    }
+
+    /**
+     * Move a group and everything under it by {@code delta}, in the model's own units: the pivot it
+     * rests at, the cubes and meshes it carries, and the same for every group below it. A cubic
+     * model's geometry is absolute — a group's cubes stand where the file puts them, and the
+     * hierarchy passes down rotations alone — so moving a group's geometry means moving its whole
+     * subtree's along with it.
+     *
+     * <p>Only the numbers move here. The quads the cubes draw as are rebuilt by
+     * {@link #refreshGeometry(Collection)} over {@link #collectSubtree}, once the numbers of a
+     * gesture have settled, rather than on every sample of a drag.</p>
+     */
+    public void shiftGroup(ModelGroup group, Vector3f delta)
+    {
+        group.initial.translate.add(delta);
+
+        /* The pose rides along, so the bone doesn't jump by the delta over the frames between here
+         * and the next reset — which copies the rest into it again. */
+        group.current.translate.add(delta);
+
+        for (ModelCube cube : group.cubes)
+        {
+            cube.shift(delta);
+        }
+
+        /* A mesh moves by its vertices alone, and its origin — the point it turns about — stays.
+         * ModelMesh reads its vertices relative to that origin and writes them back absolute, so an
+         * origin this editor moved off zero would shift the mesh again on every reload; the pivot of
+         * a mesh is left to whatever authored it. */
+        for (ModelMesh mesh : group.meshes)
+        {
+            for (Vector3f vertex : mesh.baseData.vertices)
+            {
+                vertex.add(delta);
+            }
+
+            for (ModelData shapeKey : mesh.data.values())
+            {
+                for (Vector3f vertex : shapeKey.vertices)
+                {
+                    vertex.add(delta);
+                }
+            }
+        }
+
+        for (ModelGroup child : group.children)
+        {
+            this.shiftGroup(child, delta);
+        }
+    }
+
+    /** A group and every group under it, parents before children. */
+    public List<ModelGroup> collectSubtree(ModelGroup group, List<ModelGroup> out)
+    {
+        out.add(group);
+
+        for (ModelGroup child : group.children)
+        {
+            this.collectSubtree(child, out);
+        }
+
+        return out;
     }
 
     /* IModel implementation */
@@ -102,7 +217,7 @@ public class Model implements IMapSerializable, IModel
 
         for (String key : this.getAllGroupKeys())
         {
-            PoseTransform poseTransform = pose.get(key);
+            PoseTransform poseTransform = pose.getOrCreate(key);
             ModelGroup group = this.getGroup(key);
 
             poseTransform.copy(group.current);
@@ -123,6 +238,26 @@ public class Model implements IMapSerializable, IModel
         for (ModelGroup orderedGroup : this.orderedGroups)
         {
             orderedGroup.reset();
+        }
+    }
+
+    /** Record every group's channels-phase orient/offset — see {@link ModelGroup#snapshotChannels()}. */
+    @Override
+    public void snapshotChannels()
+    {
+        for (ModelGroup orderedGroup : this.orderedGroups)
+        {
+            orderedGroup.snapshotChannels();
+        }
+    }
+
+    /** Rewind every group's orient/offset to the channels-phase snapshot. */
+    @Override
+    public void restoreChannels()
+    {
+        for (ModelGroup orderedGroup : this.orderedGroups)
+        {
+            orderedGroup.restoreChannels();
         }
     }
 
@@ -154,7 +289,9 @@ public class Model implements IMapSerializable, IModel
             }
 
             group.lighting = transform.lighting;
+            group.poseVisible &= transform.visible;
             group.color.copy(transform.color);
+            group.overlay.copy(transform.overlay);
             group.current.translate.add(transform.translate);
             group.current.scale.add(transform.scale).sub(1, 1, 1);
 
@@ -385,33 +522,30 @@ public class Model implements IMapSerializable, IModel
         texture.addInt(this.textureWidth);
         texture.addInt(this.textureHeight);
 
-        Map<String, String> parents = new HashMap<>();
-        Collection<ModelGroup> allGroups = this.getAllGroups();
+        /* The groups go out in tree order — parents before children, siblings as they stand — into an
+         * ordered map: the file's order is the order they come back in, so a save must not shuffle
+         * the tree. */
+        MapType groups = new MapType(false);
 
-        for (ModelGroup parent : allGroups)
-        {
-            for (ModelGroup child : parent.children)
-            {
-                parents.put(child.id, parent.id);
-            }
-        }
-
-        MapType groups = new MapType();
-
-        for (ModelGroup group : allGroups)
-        {
-            MapType groupData = group.toData();
-            String parentId = parents.get(group.id);
-
-            if (parentId != null)
-            {
-                groupData.putString("parent", parentId);
-            }
-
-            groups.put(group.id, groupData);
-        }
+        this.writeGroups(this.topGroups, null, groups);
 
         data.put("texture", texture);
         data.put("groups", groups);
+    }
+
+    private void writeGroups(List<ModelGroup> list, ModelGroup parent, MapType groups)
+    {
+        for (ModelGroup group : list)
+        {
+            MapType groupData = group.toData();
+
+            if (parent != null)
+            {
+                groupData.putString("parent", parent.id);
+            }
+
+            groups.put(group.id, groupData);
+            this.writeGroups(group.children, group, groups);
+        }
     }
 }

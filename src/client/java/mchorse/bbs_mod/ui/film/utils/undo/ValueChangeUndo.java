@@ -18,6 +18,12 @@ public class ValueChangeUndo extends FilmEditorUndo
 
     private boolean mergable = true;
     private boolean invalid;
+    private BaseValue appliedValue;
+
+    public BaseValue getAppliedValue()
+    {
+        return this.appliedValue;
+    }
 
     public ValueChangeUndo(DataPath name, BaseType oldValue, BaseType newValue)
     {
@@ -114,7 +120,7 @@ public class ValueChangeUndo extends FilmEditorUndo
     @Override
     public void undo(ValueGroup context)
     {
-        BaseValue value = this.resolveValue(context);
+        BaseValue value = this.appliedValue = this.resolveValue(context);
 
         if (value != null)
         {
@@ -125,7 +131,7 @@ public class ValueChangeUndo extends FilmEditorUndo
     @Override
     public void redo(ValueGroup context)
     {
-        BaseValue value = this.resolveValue(context);
+        BaseValue value = this.appliedValue = this.resolveValue(context);
 
         if (value != null)
         {

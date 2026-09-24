@@ -1,7 +1,12 @@
 package mchorse.bbs_mod.forms.renderers;
 
+import mchorse.bbs_mod.api.client.events.FormPoseEvents;
+import mchorse.bbs_mod.api.client.render.RenderAttachment;
+import java.util.IdentityHashMap;
+import java.util.Map;
+
 import mchorse.bbs_mod.client.BBSRendering;
-import mchorse.bbs_mod.forms.FormUtils;
+import mchorse.bbs_mod.cubic.IBoneHierarchy;
 import mchorse.bbs_mod.forms.FormUtilsClient;
 import mchorse.bbs_mod.forms.entities.IEntity;
 import mchorse.bbs_mod.forms.forms.BodyPart;
@@ -16,6 +21,7 @@ import mchorse.bbs_mod.utils.MatrixStackUtils;
 import mchorse.bbs_mod.utils.StringUtils;
 import mchorse.bbs_mod.utils.colors.Colors;
 import mchorse.bbs_mod.utils.interps.Lerps;
+import mchorse.bbs_mod.utils.profiler.BBSProfiler;
 import mchorse.bbs_mod.utils.pose.Transform;
 import net.minecraft.client.gl.GlUniform;
 import net.minecraft.client.gl.ShaderProgram;
@@ -33,6 +39,26 @@ import java.util.function.Supplier;
 public abstract class FormRenderer <T extends Form>
 {
     protected T form;
+    private Map<RenderAttachment<?>, Object> attachments;
+
+    @SuppressWarnings("unchecked")
+    public <V> V getAttachment(RenderAttachment<V> key)
+    {
+        return this.attachments == null ? null : (V) this.attachments.get(key);
+    }
+
+    public <V> void setAttachment(RenderAttachment<V> key, V value)
+    {
+        if (value == null)
+        {
+            if (this.attachments != null) this.attachments.remove(key);
+        }
+        else
+        {
+            if (this.attachments == null) this.attachments = new IdentityHashMap<>();
+            this.attachments.put(key, value);
+        }
+    }
 
     public FormRenderer(T form)
     {
@@ -47,6 +73,17 @@ public abstract class FormRenderer <T extends Form>
     public List<String> getBones()
     {
         return Collections.emptyList();
+    }
+
+    /**
+     * The shape of this form's skeleton, or null when it has none. The one question the bone
+     * widgets ask a form - the tree list, the pose editor's bone column, the bone picker menus -
+     * so they no longer have to know whether they are looking at a cubic model, a BOBJ armature or
+     * a vanilla entity model.
+     */
+    public IBoneHierarchy getBoneHierarchy()
+    {
+        return null;
     }
 
     public final void renderUI(UIContext context, int x1, int y1, int x2, int y2)
@@ -78,6 +115,15 @@ public abstract class FormRenderer <T extends Form>
         }
     }
 
+    /**
+     * The form alone, without the name and hotkey cards {@link #renderUI} lays over it — for a
+     * host that draws its own captions around the picture.
+     */
+    public final void renderPreview(UIContext context, int x1, int y1, int x2, int y2)
+    {
+        this.renderInUI(context, x1, y1, x2, y2);
+    }
+
     protected abstract void renderInUI(UIContext context, int x1, int y1, int x2, int y2);
 
     public boolean renderArm(MatrixStack matrices, int light, AbstractClientPlayerEntity player, Hand hand)
@@ -87,24 +133,25 @@ public abstract class FormRenderer <T extends Form>
 
     public final void render(FormRenderingContext context)
     {
-        if (BBSRendering.isIrisShadowPass() && !this.form.shaderShadow.get() && !FormUtils.getRoot(this.form).shaderShadow.get())
+        if (!this.form.shaderShadow.get() && BBSRendering.isIrisShadowPass())
         {
-            /* The root form's toggle carries the whole hierarchy: enabling the
-             * shader shadow on the model shouldn't leave its body parts shadowless. */
             return;
         }
+
+        BBSProfiler.count(BBSProfiler.Section.FORM_RENDER);
 
         this.form.applyStates(context.transition);
 
         int light = context.light;
         boolean visible = this.form.visible.get();
+        boolean isPicking = context.isPicking();
 
-        if (!visible)
+        if (!visible || (isPicking && !this.form.pickable.get()))
         {
+            this.form.unapplyStates();
+
             return;
         }
-
-        boolean isPicking = context.stencilMap != null;
 
         context.stack.push();
         if (context.world != null)
@@ -146,7 +193,7 @@ public abstract class FormRenderer <T extends Form>
 
     protected void applyTransforms(MatrixStack stack, boolean origin, float transition)
     {
-        Transform transform = this.createTransform();
+        Transform transform = this.createEvaluatedTransform(transition);
 
         if (origin)
         {
@@ -160,11 +207,26 @@ public abstract class FormRenderer <T extends Form>
 
     protected void applyTransforms(Matrix4f matrix, float transition)
     {
-        matrix.mul(this.createTransform().createMatrix());
+        matrix.mul(this.createEvaluatedTransform(transition).createMatrix());
     }
 
-    protected Transform createTransform()
+    /**
+     * The form's own transform as it is actually rendered: its transform, its overlay and
+     * whatever else was hung on it. Public because the film's orbit camera attaches to this
+     * frame - what the camera follows has to be what the eye sees, not just where the replay
+     * stands.
+     */
+    /** Saved animation plus overlays and external pose contributions. */
+    public Transform createEvaluatedTransform(float transition)
     {
+        Transform transform = this.createTransform();
+        FormPoseEvents.TRANSFORM.invoker().apply(this.form, transform, transition);
+        return transform;
+    }
+
+    public Transform createTransform()
+    {
+        this.form.syncOverlayTracks();
         Transform transform = new Transform();
 
         transform.copy(this.form.transform.get());
@@ -254,8 +316,6 @@ public abstract class FormRenderer <T extends Form>
 
         if (part.getForm() != null)
         {
-            Matrix4f attachOffset = getAttachBoneOffset(part, context.entity, context.getTransition());
-
             context.stack.push();
             if (context.world != null)
             {
@@ -265,16 +325,6 @@ public abstract class FormRenderer <T extends Form>
             if (context.world != null)
             {
                 MatrixStackUtils.applyTransform(context.world, part.transform.get());
-            }
-
-            if (attachOffset != null)
-            {
-                MatrixStackUtils.multiply(context.stack, attachOffset);
-
-                if (context.world != null)
-                {
-                    MatrixStackUtils.multiply(context.world, attachOffset);
-                }
             }
 
             FormUtilsClient.render(part.getForm(), context);
@@ -289,57 +339,10 @@ public abstract class FormRenderer <T extends Form>
         context.entity = oldEntity;
     }
 
-    /**
-     * The correction that puts the part's chosen bone - not its origin - onto the
-     * attachment point: the form is shifted by minus that bone's position, so
-     * wherever the bone travels in the animation, it lands on the anchor.
-     *
-     * <p>Only the bone's POSITION is cancelled, never its rotation. Cancelling the
-     * full matrix looks right at first, but it pins the bone's frame rigidly: turning
-     * a bone that the attached one hangs off (the root, the torso) rotates that bone
-     * too, the inverse takes the rotation straight back out, and the model does not
-     * move at all - the pose sliders appear dead. With the position alone, the chosen
-     * bone stays glued to the point and the rest of the body poses and swings freely
-     * around it, which is also what hanging by a hand actually looks like.</p>
-     *
-     * <p>Returns null when the part attaches by its origin (the default) or when the
-     * form has no such bone.</p>
-     */
-    public static Matrix4f getAttachBoneOffset(BodyPart part, IEntity entity, float transition)
-    {
-        String bone = part.attachBone.get();
-
-        if (bone == null || bone.isEmpty() || part.getForm() == null)
-        {
-            return null;
-        }
-
-        FormRenderer renderer = FormUtilsClient.getRenderer(part.getForm());
-
-        if (renderer == null)
-        {
-            return null;
-        }
-
-        Matrix4f matrix = renderer.collectMatrices(entity, transition).get(bone).matrix();
-
-        if (matrix == null)
-        {
-            return null;
-        }
-
-        Vector3f translation = matrix.getTranslation(new Vector3f());
-
-        if (!Float.isFinite(translation.x) || !Float.isFinite(translation.y) || !Float.isFinite(translation.z))
-        {
-            return null;
-        }
-
-        return new Matrix4f().translate(translation.negate());
-    }
-
     public MatrixCache collectMatrices(IEntity entity, float transition)
     {
+        BBSProfiler.count(BBSProfiler.Section.COLLECT_MATRICES);
+
         MatrixCache map = new MatrixCache();
         MatrixStack stack = new MatrixStack();
 
@@ -350,6 +353,8 @@ public abstract class FormRenderer <T extends Form>
 
     public void collectMatrices(IEntity entity, MatrixStack stack, MatrixCache matrices, String prefix, float transition)
     {
+        FormPoseEvents.PARENT_FRAME.invoker().capture(this.form, entity, stack.peek().getPositionMatrix(), prefix, transition);
+
         Matrix4f mm = new Matrix4f();
         Matrix4f oo = new Matrix4f();
 
@@ -364,8 +369,6 @@ public abstract class FormRenderer <T extends Form>
 
         matrices.put(prefix, mm, oo);
 
-        int i = 0;
-
         for (BodyPart part : this.form.parts.getAllTyped())
         {
             Form form = part.getForm();
@@ -375,12 +378,10 @@ public abstract class FormRenderer <T extends Form>
                 stack.push();
                 MatrixStackUtils.applyTransform(stack, part.transform.get());
 
-                FormUtilsClient.getRenderer(form).collectMatrices(entity, stack, matrices, StringUtils.combinePaths(prefix, String.valueOf(i)), transition);
+                FormUtilsClient.getRenderer(form).collectMatrices(entity, stack, matrices, StringUtils.combinePaths(prefix, part.getId()), transition);
 
                 stack.pop();
             }
-
-            i += 1;
         }
 
         stack.pop();

@@ -1,12 +1,13 @@
 package mchorse.bbs_mod.ui.selectors;
 
 import mchorse.bbs_mod.BBSSettings;
+import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.forms.FormUtilsClient;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.selectors.EntitySelector;
+import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.input.list.UIList;
-import mchorse.bbs_mod.ui.utils.UIDataUtils;
 
 import java.util.List;
 import java.util.function.Consumer;
@@ -16,17 +17,17 @@ public class UISelectorList extends UIList<EntitySelector>
     public UISelectorList(Consumer<List<EntitySelector>> callback)
     {
         super(callback);
+
+        this.sorting();
+        this.emptyState(UIKeys.GENERAL_RIGHT_CLICK);
     }
 
     @Override
-    public void render(UIContext context)
+    protected void handleSwap(int from, int to)
     {
-        super.render(context);
+        super.handleSwap(from, to);
 
-        if (this.list.isEmpty())
-        {
-            UIDataUtils.renderRightClickHere(context, this.area);
-        }
+        BBSModClient.getSelectors().update();
     }
 
     @Override
@@ -36,7 +37,7 @@ public class UISelectorList extends UIList<EntitySelector>
 
         if (element.entity != null)
         {
-            id = element.name.isEmpty() ? element.entity.toString() : element.entity.toString() + " - " + element.name;
+            id = element.name.isEmpty() ? element.entity.toString() : element.name + " - " + element.entity.toString();
         }
 
         return id;
