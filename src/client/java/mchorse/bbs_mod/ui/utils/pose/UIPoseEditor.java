@@ -3,6 +3,7 @@ package mchorse.bbs_mod.ui.utils.pose;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.cubic.IBoneHierarchy;
 import mchorse.bbs_mod.data.types.MapType;
+import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.Keys;
 import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
@@ -121,7 +122,7 @@ public class UIPoseEditor extends UIElement
                 this.applyChildren((p) -> this.setFix(p, (float) this.fix.getValue()));
             });
         });
-        this.fullFix = new UIToggle(UIKeys.POSE_CONTEXT_FULL_FIX, false, (toggle) ->
+        this.fullFix = new UIToggle(IKey.EMPTY, false, (toggle) ->
         {
             this.applyFullFix(toggle.getValue() ? 1F : 0F);
         });
@@ -527,6 +528,7 @@ public class UIPoseEditor extends UIElement
         {
             this.boneSelection().set("");
             this.fix.setValue(0F);
+            this.fullFixSlider.setValue(0F);
             this.boneVisible.setValue(true);
             this.color.setColor(Colors.WHITE);
             this.overlay.setColor(0x00ffffff);
@@ -543,6 +545,7 @@ public class UIPoseEditor extends UIElement
         PoseTransform poseTransform = this.pose.getOrCreate(primary);
 
         this.fix.setValue(poseTransform.fix);
+        this.fullFixSlider.setValue(poseTransform.fix);
         this.boneVisible.setValue(poseTransform.visible);
         this.color.setColor(poseTransform.color.getARGBColor());
         this.overlay.setColor(poseTransform.overlay.getARGBColor());
@@ -732,6 +735,27 @@ public class UIPoseEditor extends UIElement
 
         this.fullFixToggleRow.setVisible(this.hasBones && !slider);
         this.fullFixSliderRow.setVisible(this.hasBones && slider);
+
+        /* Coming in on the slider (a mode switch) must not show 0 for a skeleton that was
+         * just fully fixed: read the value the regular fix slider already reads. */
+        if (slider)
+        {
+            this.syncFullFixSlider();
+        }
+    }
+
+    /** The full-fix slider tracks the same bone the regular fix slider does, so the two never disagree. */
+    private void syncFullFixSlider()
+    {
+        if (this.pose == null)
+        {
+            this.fullFixSlider.setValue(0F);
+            return;
+        }
+
+        String primary = this.groups.list.getCurrentFirst();
+
+        this.fullFixSlider.setValue(primary == null || primary.isEmpty() ? 0F : this.pose.getOrCreate(primary).fix);
     }
 
     private static void attachFullFixListener()
@@ -745,12 +769,9 @@ public class UIPoseEditor extends UIElement
 
         BBSSettings.fullFixSlider.postCallback((v, f) ->
         {
-            boolean slider = BBSSettings.fullFixSlider.get();
-
             for (UIPoseEditor editor : new ArrayList<>(INSTANCES))
             {
-                editor.fullFixToggleRow.setVisible(editor.hasBones && !slider);
-                editor.fullFixSliderRow.setVisible(editor.hasBones && slider);
+                editor.syncFullFixRows();
             }
         });
     }
