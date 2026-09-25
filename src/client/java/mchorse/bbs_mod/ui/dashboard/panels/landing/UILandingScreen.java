@@ -41,11 +41,12 @@ import java.util.Set;
  */
 public class UILandingScreen extends UIElement
 {
-    private static final int CARD_W = 440;
-    private static final int CARD_H = 360;
+    /** The card, and the banner it carries, in UI pixels — the editor's preview measures itself against these. */
+    public static final int CARD_W = 440;
+    public static final int CARD_H = 360;
 
     /** The banner is the top half of the card, exactly. */
-    private static final int BANNER_H = CARD_H / 2;
+    public static final int BANNER_H = CARD_H / 2;
     private static final int BANNER_MARGIN = 12;
     private static final int PADDING = 10;
     private static final int HEADER_H = 16;
@@ -84,6 +85,9 @@ public class UILandingScreen extends UIElement
 
     /** Ids the repository reported last; null until it answered, when nothing is filtered out. */
     private Set<String> known;
+
+    /** The width of the list column docked to the left edge; 0 while the column is not on screen. */
+    private int listInset;
 
     public UILandingScreen(ILandingHost host)
     {
@@ -212,6 +216,39 @@ public class UILandingScreen extends UIElement
             this.refresh();
             this.host.requestNames();
         }
+    }
+
+    /**
+     * The width of the list column the panel docks to the left edge, 0 while it is away.
+     * The card stays centered as long as it fits; only when the screen is so narrow that the
+     * column would cover it does the card step aside, by just the amount that is needed.
+     */
+    public void setListInset(int inset)
+    {
+        this.listInset = Math.max(inset, 0);
+
+        this.syncCardShift();
+    }
+
+    private void syncCardShift()
+    {
+        int shift = Math.max(0, this.listInset + PADDING - (this.area.w - CARD_W) / 2);
+
+        if (shift != this.card.getFlex().x.offset)
+        {
+            this.card.getFlex().x.offset = shift;
+            this.resize();
+        }
+    }
+
+    @Override
+    public void render(UIContext context)
+    {
+        /* The column can appear and disappear under the screen, and the window can resize;
+         * re-check the shift where the screen's own width is known for sure. */
+        this.syncCardShift();
+
+        super.render(context);
     }
 
     /** The repository answered: whatever it no longer has drops out of the list. */

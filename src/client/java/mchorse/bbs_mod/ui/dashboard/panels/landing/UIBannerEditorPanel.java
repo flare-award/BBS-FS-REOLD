@@ -8,6 +8,7 @@ import mchorse.bbs_mod.resources.Link;
 import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
+import mchorse.bbs_mod.ui.framework.elements.UISection;
 import mchorse.bbs_mod.ui.framework.elements.UIScrollView;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UICirculate;
@@ -30,8 +31,9 @@ import mchorse.bbs_mod.utils.presets.PresetManager;
 import mchorse.bbs_mod.utils.resources.GifFrames;
 
 /**
- * The pencil editor for the banners every landing screen shows: the list of what cycles,
- * how each of it is framed, the credit line and the plate under the artwork.
+ * The pencil editor for the banners every landing screen shows, in the same sections the
+ * settings are made of: what cycles, how each of it is framed, the credit line and the plate
+ * under the artwork.
  *
  * <p>Everything here edits the one shared state and saves it as it goes, so the tab the
  * pencil was picked from and the next empty tab of the next editor see the same banner.
@@ -45,14 +47,20 @@ public class UIBannerEditorPanel extends UIOverlayPanel
 
     private static final int PADDING = 6;
     private static final int ROW_H = 44;
-    private static final int LIST_H = ROW_H * 3;
     private static final int THUMB_W = 64;
     private static final int THUMB_H = 32;
-    private static final int PREVIEW_H = 108;
     private static final float SCROLL_ZOOM_STEP = 1.1F;
 
-    private UIScrollView list;
+    /**
+     * The preview shows the banner the way a tab shows it — the card's banner area, 440 by 180
+     * — only smaller, so it takes less of the screen than the thing it previews.
+     */
+    private static final int PREVIEW_W = 280;
+    private static final int PREVIEW_H = Math.round(PREVIEW_W * UILandingScreen.BANNER_H / (float) UILandingScreen.CARD_W);
+
+    private UIElement list;
     private UIButton add;
+    private UIButton reset;
     private UIBannerPreview preview;
     private UITrackpad x;
     private UITrackpad y;
@@ -63,6 +71,9 @@ public class UIBannerEditorPanel extends UIOverlayPanel
     private UIToggle plateToggle;
 
     private int selected;
+
+    /** The pending "add banner" pick; the texture picker calls back twice, once per fire. */
+    private Object addToken;
 
     /** Presets of the whole shared state: banners, crops, credit and plate together. */
     private final UICopyPasteController presets = new UICopyPasteController(PresetManager.BANNERS, "_BannerPreset")
@@ -84,21 +95,21 @@ public class UIBannerEditorPanel extends UIOverlayPanel
         presetsButton.tooltip(UIKeys.GENERAL_PRESETS, Direction.LEFT);
         this.icons.add(presetsButton);
 
-        this.list = new UIScrollView(ScrollDirection.VERTICAL);
-        this.list.relative(this.content).xy(PADDING, 0).w(1F, -PADDING * 2).h(LIST_H);
-        this.list.scroll.scrollSpeed = 51;
-        this.list.column(4).vertical().stretch().scroll().padding(0);
+        this.list = new UIElement();
+        this.list.column(4).vertical().stretch().padding(0);
 
         this.add = new UIButton(UIKeys.BANNER_EDITOR_ADD, (b) -> this.addBanner());
-        this.add.relative(this.content).x(PADDING).y(LIST_H + PADDING).w(1F, -PADDING * 2).h(20);
-
-        int y = LIST_H + PADDING * 2 + 20;
+        this.add.h(20);
 
         this.preview = new UIBannerPreview();
         this.preview.tooltip(UIKeys.BANNER_EDITOR_HINT, Direction.BOTTOM);
-        this.preview.relative(this.content).x(PADDING).y(y).w(1F, -PADDING * 2).h(PREVIEW_H);
+        this.preview.wh(PREVIEW_W, PREVIEW_H);
 
-        y += PREVIEW_H + PADDING;
+        /* Centered in its row: two spacers share what the preview does not take. */
+        UIElement previewRow = new UIElement();
+        previewRow.row(0).preferred(0);
+        previewRow.h(PREVIEW_H);
+        previewRow.add(new UIElement(), this.preview, new UIElement());
 
         this.x = new UITrackpad((v) -> this.setCrop(v.floatValue() / 100F, null, null));
         this.x.limit(0D, 100D, true);
@@ -107,32 +118,20 @@ public class UIBannerEditorPanel extends UIOverlayPanel
         this.zoom = new UITrackpad((v) -> this.setCrop(null, null, v.floatValue()));
         this.zoom.limit(1D, 8D).values(0.05D, 0.01D, 0.25D);
 
-        this.content.add(this.labeledRow(UIKeys.BANNER_EDITOR_X, this.x).y(y));
-        y += 20;
-        this.content.add(this.labeledRow(UIKeys.BANNER_EDITOR_Y, this.y).y(y));
-        y += 20;
-        this.content.add(this.labeledRow(UIKeys.BANNER_EDITOR_ZOOM, this.zoom).y(y));
-        y += 20;
-
-        y += 20;
+        this.reset = new UIButton(UIKeys.BANNER_EDITOR_RESET, (b) -> this.resetCrop());
+        this.reset.h(20);
 
         this.creditToggle = new UIToggle(IKey.EMPTY, BannerConfig.get().creditEnabled, (t) ->
         {
             BannerConfig.get().creditEnabled = t.getValue();
             BannerConfig.save();
         });
-        this.content.add(this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT, this.creditToggle).y(y));
-
-        y += 20;
 
         this.creditText = new UITextbox(BannerConfig.MAX_CREDIT_LENGTH, (str) ->
         {
             BannerConfig.get().creditText = str;
             BannerConfig.save();
         });
-        this.content.add(this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT_TEXT, this.creditText).y(y));
-
-        y += 20;
 
         this.creditStyle = new UICirculate((b) ->
         {
@@ -144,20 +143,41 @@ public class UIBannerEditorPanel extends UIOverlayPanel
         this.creditStyle.addLabel(UIKeys.BANNER_EDITOR_CREDIT_STYLE_ALL);
         this.creditStyle.addLabel(UIKeys.BANNER_EDITOR_CREDIT_STYLE_NONE);
         this.creditStyle.tooltip(UIKeys.BANNER_EDITOR_CREDIT_STYLE);
-        this.content.add(this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT_STYLE, this.creditStyle).y(y));
-
-        y += 20;
 
         this.plateToggle = new UIToggle(IKey.EMPTY, BannerConfig.get().plateEnabled, (t) ->
         {
             BannerConfig.get().plateEnabled = t.getValue();
             BannerConfig.save();
         });
-        this.content.add(this.labeledRow(UIKeys.BANNER_EDITOR_PLATE, this.plateToggle).y(y));
+        this.plateToggle.h(20);
 
-        this.content.add(this.list, this.add, this.preview);
+        UISection banners = this.section(UIKeys.BANNER_EDITOR_BANNERS);
+        banners.fields.add(this.list, this.add);
+
+        UISection crop = this.section(UIKeys.BANNER_EDITOR_CROP);
+        crop.fields.add(previewRow, this.labeledRow(UIKeys.BANNER_EDITOR_X, this.x), this.labeledRow(UIKeys.BANNER_EDITOR_Y, this.y), this.labeledRow(UIKeys.BANNER_EDITOR_ZOOM, this.zoom), this.reset);
+
+        UISection credit = this.section(UIKeys.BANNER_EDITOR_CREDIT);
+        credit.fields.add(this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT, this.creditToggle), this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT_TEXT, this.creditText), this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT_STYLE, this.creditStyle));
+
+        UISection plate = this.section(UIKeys.BANNER_EDITOR_PLATE);
+        plate.fields.add(this.plateToggle);
+
+        UIScrollView sections = new UIScrollView(ScrollDirection.VERTICAL);
+        sections.relative(this.content).xy(PADDING, PADDING).w(1F, -PADDING * 2).h(1F, -PADDING * 2);
+        sections.scroll.scrollSpeed = 51;
+        sections.column(3).vertical().stretch().scroll().padding(0);
+        sections.add(banners, crop, credit, plate);
+
+        this.content.add(sections);
 
         this.rebuild();
+    }
+
+    /** A foldable block the way the settings are made; its content keeps its own heights. */
+    private UISection section(IKey title)
+    {
+        return new UISection(title);
     }
 
     /** The same shape UIValueFactory.column builds for a settings row: a label and a control. */
@@ -167,7 +187,6 @@ public class UIBannerEditorPanel extends UIOverlayPanel
 
         element.row(0).preferred(0).height(20);
         element.add(UI.label(label, 0).labelAnchor(0, 0.5F), control);
-        element.relative(this.content).x(PADDING).w(1F, -PADDING * 2);
 
         return element;
     }
@@ -234,8 +253,20 @@ public class UIBannerEditorPanel extends UIOverlayPanel
 
     private void addBanner()
     {
+        Object token = new Object();
+        this.addToken = token;
+
         UITexturePicker.open(this.getContext(), null, (link) ->
         {
+            /* The picker calls back once when the file is picked and once more when it is
+             * closed; only the first of the two may add, so one photo becomes one banner. */
+            if (this.addToken != token)
+            {
+                return;
+            }
+
+            this.addToken = null;
+
             if (link == null)
             {
                 return;

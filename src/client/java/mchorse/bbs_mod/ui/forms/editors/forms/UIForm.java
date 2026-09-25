@@ -109,6 +109,7 @@ public abstract class UIForm <T extends Form> extends UIPanelBase<UIFormPanel<T>
         this.direction = side;
         this.setButtonsPlacement();
         this.buttons.activeEdge(side);
+        this.buttons.resize();
 
         /* The tooltips point from the bar into the panel; a new side is a new direction to point. */
         for (int i = 0; i < this.buttons.getTabCount(); i++)
@@ -123,10 +124,13 @@ public abstract class UIForm <T extends Form> extends UIPanelBase<UIFormPanel<T>
 
         if (this.view != null)
         {
+            /* The panel must give up the edge the strip takes: without this the strip is drawn
+             * over whatever already stands there, the way it is not over the bar on the right. */
             this.setPanelPlacement(this.view);
+            this.view.resize();
         }
 
-        this.resize();
+        this.invalidateLayout();
     }
 
     public UIPropTransform getEditableTransform()

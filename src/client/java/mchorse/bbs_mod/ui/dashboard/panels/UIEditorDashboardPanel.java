@@ -118,12 +118,15 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
     }
 
     /**
-     * Keep the list on screen as a column of the panel while the setting is on, and keep the
-     * button that opens it as an overlay while the setting is off.
+     * Keep the list on screen as a column of the panel while the setting is on and the landing
+     * screen is what the panel shows — the column belongs next to the menu of an empty tab, and
+     * an opened tab keeps its editor unshifted, with the list reachable from the top bar.
      */
     public void syncDataManager()
     {
-        UIOverlayPanel desired = BBSSettings.openDataList.get() ? this.createDataManager() : null;
+        UIOverlayPanel desired = BBSSettings.openDataList.get() && this.landing != null && this.landing.isVisible()
+            ? this.createDataManager()
+            : null;
 
         if (desired == this.dataManager)
         {
@@ -132,6 +135,9 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
 
         if (this.dataManager != null)
         {
+            /* It comes back later as a floating overlay; its close button and drag must not stay hidden. */
+            this.dataManager.close.setVisible(true);
+            this.dataManager.movable = true;
             this.remove(this.dataManager);
         }
 
@@ -147,25 +153,16 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
             desired.relative(this).x(0).y(UIPanelTopBar.HEIGHT).w(DATA_LIST_WIDTH).h(1F, -UIPanelTopBar.HEIGHT);
         }
 
-        this.insetContent();
+        if (this.landing != null)
+        {
+            this.landing.setListInset(this.dataManager == null ? 0 : DATA_LIST_WIDTH);
+        }
+
         this.syncListButton();
         this.resize();
     }
 
-    /** The editor and the landing screen give the column its width. */
-    private void insetContent()
-    {
-        int inset = this.dataManager == null ? 0 : DATA_LIST_WIDTH;
-
-        this.editor.x(inset).w(1F, -inset);
-
-        if (this.landing != null)
-        {
-            this.landing.x(inset).w(1F, -inset);
-        }
-    }
-
-    /** The button that opens the list as an overlay; the column replaces it. */
+    /** The button that opens the list as an overlay; the column on the landing screen replaces it. */
     protected void syncListButton()
     {}
 
