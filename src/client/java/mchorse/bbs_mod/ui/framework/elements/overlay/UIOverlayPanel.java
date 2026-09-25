@@ -47,6 +47,12 @@ public class UIOverlayPanel extends UIElement
      */
     private boolean sizeless;
 
+    /**
+     * Whether grabbing the title moves the panel around. A panel embedded as a fixed column of
+     * some interface has nowhere to move to, so it answers to the setting rather than the hand.
+     */
+    public boolean movable = true;
+
     /** The corner grip, on the panels that offer sizing; null on the ones that don't. */
     private UIDraggable grip;
 
@@ -238,7 +244,7 @@ public class UIOverlayPanel extends UIElement
     @Override
     public boolean subMouseClicked(UIContext context)
     {
-        if (this.title.area.isInside(context))
+        if (this.movable && this.title.area.isInside(context))
         {
             if (Window.isCtrlPressed())
             {

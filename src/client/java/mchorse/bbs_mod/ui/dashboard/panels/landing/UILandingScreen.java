@@ -5,11 +5,13 @@ import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.l10n.keys.IKey;
-import mchorse.bbs_mod.resources.Link;
 import mchorse.bbs_mod.settings.values.core.ValueRecentData.Entry;
 import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
+import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
+import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
+import mchorse.bbs_mod.ui.framework.elements.utils.Batcher2D;
 import mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
 import mchorse.bbs_mod.ui.framework.elements.utils.UIRenderable;
@@ -18,6 +20,8 @@ import mchorse.bbs_mod.ui.utils.UI;
 import mchorse.bbs_mod.ui.utils.UIUtils;
 import mchorse.bbs_mod.ui.utils.context.ContextMenuManager;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
+import mchorse.bbs_mod.utils.Direction;
+import mchorse.bbs_mod.utils.MathUtils;
 import mchorse.bbs_mod.utils.colors.Colors;
 import net.fabricmc.loader.api.FabricLoader;
 
@@ -58,11 +62,6 @@ public class UILandingScreen extends UIElement
     private static final int DIMMED = Colors.setA(Colors.WHITE, 0.7F);
     private static final int MUTED = Colors.setA(Colors.WHITE, 0.5F);
 
-    private static final Link[] BANNERS = {
-        Link.assets("textures/banners/bg1.png"),
-        Link.assets("textures/banners/bg2.png"),
-        Link.assets("textures/banners/bg3.png")
-    };
     private static final double BANNER_HOLD_SECONDS = 6;
     private static final double BANNER_FADE_SECONDS = 2;
 
@@ -98,6 +97,13 @@ public class UILandingScreen extends UIElement
         this.banner.relative(this.card).xy(0, 0).w(1F).h(BANNER_H);
         this.banner.add(new UIRenderable((context) -> this.renderBanner(context, this.banner.area)));
         this.banner.add(new UIRenderable((context) -> this.renderBannerCaption(context, this.banner.area)));
+
+        /* The pencil: the same in every tab, one shared banner state behind it */
+        UIIcon pencil = new UIIcon(Icons.EDIT, (b) -> this.openBannerEditor());
+        pencil.tooltip(UIKeys.PANELS_LANDING_BANNER_EDIT, Direction.BOTTOM);
+        pencil.wh(20, 20);
+        pencil.relative(this.banner).x(1F, -24).y(4);
+        this.banner.add(pencil);
 
         UILabel title = UI.label(host.getTitle()).color(DIMMED);
         title.labelAnchor(0, 0.5F);
@@ -163,12 +169,22 @@ public class UILandingScreen extends UIElement
         return this.card;
     }
 
-    /** "BBS FS 2.6.0" — the mod's own version, without the Minecraft version the build appends. */
+    /** "BBS FS REOLD 2.7.1" — the mod's own version, without the Minecraft version the build appends. */
     public static String getVersion()
     {
         String version = getReleaseVersion();
 
-        return "BBS FS" + (version.isEmpty() ? "" : " " + version);
+        return "BBS FS REOLD" + (version.isEmpty() ? "" : " " + version);
+    }
+
+    private void openBannerEditor()
+    {
+        UIContext context = this.getContext();
+
+        if (context != null)
+        {
+            UIOverlay.addOverlay(context, new UIBannerEditorPanel(), UIBannerEditorPanel.WIDTH, UIBannerEditorPanel.HEIGHT);
+        }
     }
 
     private static String getReleaseVersion()
@@ -311,47 +327,132 @@ public class UILandingScreen extends UIElement
     private void renderBannerCaption(UIContext context, Area area)
     {
         FontRenderer font = context.batcher.getFont();
-        String brand = "\u00a7lBBS FS";
-        String credit = "render by ";
-        String artist = "Kizrum";
-        int brandWidth = font.getWidth(brand);
-        int versionWidth = this.bannerVersion.isEmpty() ? 0 : font.getWidth(this.bannerVersion) + 16;
-        int x = area.x + PADDING;
+        BannerConfig config = BannerConfig.get();
         int height = font.getHeight() + 14;
         int y = area.ey() - PADDING - height;
-        int width = brandWidth + versionWidth + 18;
-        int textY = y + 7;
 
         /* These captions sit on artwork in either theme, so use fixed light ink. */
         int ink = 0xfff2f4f8;
         int secondary = 0xffb4bccb;
 
         context.batcher.gradientVBox(area.x, y - 24, area.ex(), area.ey(), 0x00070910, 0xa0070910);
+
+        if (config.plateEnabled)
+        {
+            this.renderPlate(context, font, area, ink, secondary);
+        }
+
+        if (config.creditEnabled && !config.creditText.trim().isEmpty())
+        {
+            this.renderCredit(context, font, area, y + 7, ink, secondary);
+        }
+    }
+
+    /** The "BBS FS REOLD <version>" plate on the left; it keeps its wording and only switches off. */
+    private void renderPlate(UIContext context, FontRenderer font, Area area, int ink, int secondary)
+    {
+        String brand = "\u00a7lBBS FS REOLD";
+        int brandWidth = font.getWidth(brand);
+        int versionWidth = this.bannerVersion.isEmpty() ? 0 : font.getWidth(this.bannerVersion) + 16;
+        int x = area.x + PADDING;
+        int height = font.getHeight() + 14;
+        int y = area.ey() - PADDING - height;
+        int width = brandWidth + versionWidth + 18;
+
         context.batcher.box(x, y, x + width, y + height, 0xc010141d);
         context.batcher.outline(x, y, x + width, y + height, 0x28f2f4f8);
         context.batcher.box(x, y + 4, x + 2, y + height - 4, Colors.A100 | BBSSettings.primaryColor.get());
-        context.batcher.text(brand, x + 9, textY, ink, false);
+        context.batcher.text(brand, x + 9, y + 7, ink, false);
 
         if (!this.bannerVersion.isEmpty())
         {
             int dividerX = x + 9 + brandWidth + 7;
 
-            context.batcher.box(dividerX, textY, dividerX + 1, textY + font.getHeight(), 0x40b4bccb);
-            context.batcher.text(this.bannerVersion, dividerX + 8, textY, secondary, false);
+            context.batcher.box(dividerX, y + 7, dividerX + 1, y + 7 + font.getHeight(), 0x40b4bccb);
+            context.batcher.text(this.bannerVersion, dividerX + 8, y + 7, secondary, false);
+        }
+    }
+
+    /**
+     * The credit line on the right, word by word: the pencil picks which word (or all of them)
+     * gets the bright ink, the rest stays in the muted tone.
+     */
+    private void renderCredit(UIContext context, FontRenderer font, Area area, int textY, int ink, int secondary)
+    {
+        String[] words = BannerConfig.get().creditText.trim().split(" ");
+
+        if (words.length == 0)
+        {
+            return;
         }
 
-        int creditX = area.ex() - PADDING - font.getWidth(credit) - font.getWidth(artist);
+        int space = font.getWidth(" ");
+        int width = 0;
 
-        context.batcher.text(credit, creditX, textY, secondary, false);
-        context.batcher.text(artist, creditX + font.getWidth(credit), textY, ink, false);
+        for (String word : words)
+        {
+            width += font.getWidth(word);
+        }
+
+        width += space * (words.length - 1);
+
+        int x = area.ex() - PADDING - width;
+        int accent = BannerConfig.get().creditStyle;
+
+        for (int i = 0; i < words.length; i++)
+        {
+            int color;
+
+            switch (accent)
+            {
+                case BannerConfig.CREDIT_STYLE_FIRST:
+                {
+                    color = i == 0 ? ink : secondary;
+                    break;
+                }
+                case BannerConfig.CREDIT_STYLE_ALL:
+                {
+                    color = ink;
+                    break;
+                }
+                case BannerConfig.CREDIT_STYLE_NONE:
+                {
+                    color = secondary;
+                    break;
+                }
+                default:
+                {
+                    /* The stock look: the name at the end in white, the words before it muted. */
+                    color = i == words.length - 1 ? ink : secondary;
+                }
+            }
+
+            context.batcher.text(words[i], x, textY, color, false);
+            x += font.getWidth(words[i]) + space;
+        }
     }
 
     private void renderBanner(UIContext context, Area area)
     {
-        /* Warm the texture cache before timing the slideshow, including after a reload. */
-        for (Link link : BANNERS)
+        BannerConfig config = BannerConfig.get();
+        List<BannerConfig.Banner> banners = config.banners;
+
+        if (banners.isEmpty())
         {
-            BBSModClient.getTextures().getTexture(link);
+            return;
+        }
+
+        /* Warm the texture cache before timing the slideshow, including after a reload.
+         * A GIF answers with the frame its own delays say to show right now. */
+        for (BannerConfig.Banner banner : banners)
+        {
+            BBSModClient.getTextures().getTexture(banner.link);
+        }
+
+        if (banners.size() == 1)
+        {
+            this.renderBannerImage(context, area, banners.get(0), 1F);
+            return;
         }
 
         if (bannerStarted == 0)
@@ -361,61 +462,51 @@ public class UILandingScreen extends UIElement
 
         double duration = BANNER_HOLD_SECONDS + BANNER_FADE_SECONDS;
         double time = (System.nanoTime() - bannerStarted) / 1_000_000_000.0;
-        double cycle = time % (duration * BANNERS.length);
+        double cycle = time % (duration * banners.size());
         int current = (int) (cycle / duration);
         float progress = (float) Math.max(0, (cycle % duration - BANNER_HOLD_SECONDS) / BANNER_FADE_SECONDS);
         float alpha = progress * progress * (3F - 2F * progress);
 
         /* Keep the lower image opaque: fading both layers would darken the midpoint. */
-        this.renderBannerImage(context, area, BANNERS[current], 1F);
+        this.renderBannerImage(context, area, banners.get(current), 1F);
 
         if (alpha > 0F)
         {
-            this.renderBannerImage(context, area, BANNERS[(current + 1) % BANNERS.length], alpha);
+            this.renderBannerImage(context, area, banners.get((current + 1) % banners.size()), alpha);
         }
     }
 
-    private void renderBannerImage(UIContext context, Area area, Link bannerLink, float alpha)
+    private void renderBannerImage(UIContext context, Area area, BannerConfig.Banner banner, float alpha)
     {
-        Texture texture = BBSModClient.getTextures().getTexture(bannerLink);
+        Texture texture = BBSModClient.getTextures().getTexture(banner.link);
 
         if (texture == null)
         {
             return;
         }
 
-        float texW = texture.width;
-        float texH = texture.height;
-        float areaW = area.w;
-        float areaH = area.h;
+        renderBannerCrop(context.batcher, area, texture, banner.focusX, banner.focusY, banner.zoom, alpha);
+    }
 
-        float texAspect = texW / texH;
-        float areaAspect = areaW / areaH;
+    /**
+     * Draws {@code texture} into {@code area} cover-cropped: scaled so the image fills the area,
+     * zoomed in further by {@code zoom}, and panned so {@code focusX}/{@code focusY} (0..1) pick
+     * which slice of the leftover image is shown. Centre focus at zoom 1 is a plain cover crop;
+     * {@code alpha} fades the whole slice, for the crossfade between banners.
+     */
+    public static void renderBannerCrop(Batcher2D batcher, Area area, Texture texture, float focusX, float focusY, float zoom, float alpha)
+    {
+        float scale = Math.max(area.w / (float) texture.width, area.h / (float) texture.height) * Math.max(zoom, 1F);
+        float cropW = area.w / scale;
+        float cropH = area.h / scale;
+        float u1 = (texture.width - cropW) * MathUtils.clamp(focusX, 0F, 1F);
+        float v1 = (texture.height - cropH) * MathUtils.clamp(focusY, 0F, 1F);
 
-        float u1;
-        float u2;
-        float v1;
-        float v2;
+        batcher.texturedBox(texture, Colors.setA(Colors.WHITE, alpha), area.x, area.y, area.w, area.h, u1, v1, u1 + cropW, v1 + cropH, texture.width, texture.height);
+    }
 
-        if (areaAspect > texAspect)
-        {
-            float cropH = texW / areaAspect;
-
-            u1 = 0;
-            u2 = texW;
-            v1 = (texH - cropH) * 0.5F;
-            v2 = v1 + cropH;
-        }
-        else
-        {
-            float cropW = texH * areaAspect;
-
-            u1 = (texW - cropW) * 0.5F;
-            u2 = u1 + cropW;
-            v1 = 0;
-            v2 = texH;
-        }
-
-        context.batcher.texturedBox(texture, Colors.setA(Colors.WHITE, alpha), area.x, area.y, area.w, area.h, u1, v1, u2, v2, texture.width, texture.height);
+    public static void renderBannerCrop(Batcher2D batcher, Area area, Texture texture, float focusX, float focusY, float zoom)
+    {
+        renderBannerCrop(batcher, area, texture, focusX, focusY, zoom, 1F);
     }
 }

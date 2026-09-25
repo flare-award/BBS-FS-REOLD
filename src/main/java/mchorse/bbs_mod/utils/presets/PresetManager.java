@@ -28,6 +28,7 @@ public class PresetManager
     public static final PresetManager FILTERS = new PresetManager(BBSMod.getSettingsPath("presets/filters"));
     public static final PresetManager PHOTOS = new PresetManager(BBSMod.getSettingsPath("presets/photos"));
     public static final PresetManager THEMES = new PresetManager(BBSMod.getSettingsPath("presets/themes"));
+    public static final PresetManager BANNERS = new PresetManager(BBSMod.getSettingsPath("presets/banners"));
 
     private final File folder;
     private final Path rootPath;

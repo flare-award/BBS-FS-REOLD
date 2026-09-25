@@ -21,7 +21,9 @@ import mchorse.bbs_mod.ui.forms.editors.panels.UIFormPanel;
 import mchorse.bbs_mod.ui.forms.editors.panels.UIGeneralFormPanel;
 import mchorse.bbs_mod.ui.forms.editors.panels.UIMaterialFormPanel;
 import mchorse.bbs_mod.ui.framework.UIContext;
+import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.UIPanelBase;
+import mchorse.bbs_mod.ui.framework.tooltips.LabelTooltip;
 import mchorse.bbs_mod.forms.forms.IPosedForm;
 import mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform;
 import mchorse.bbs_mod.ui.utils.pose.UIPoseEditor;
@@ -55,10 +57,76 @@ public abstract class UIForm <T extends Form> extends UIPanelBase<UIFormPanel<T>
 
     public UIForm()
     {
-        super(Direction.RIGHT);
+        super(getSettingsSide());
 
-        this.buttons.activeEdge(Direction.RIGHT);
+        this.buttons.activeEdge(this.direction);
         this.keys().register(Keys.FILM_CONTROLLER_CYCLE_EDITORS, this::cyclePanels);
+    }
+
+    /**
+     * Which edge the tab strip is docked to, as the settings currently have it. The order of the
+     * modes in the settings is bottom, top, left, right, so the right side (the 2.7 default) is 3.
+     */
+    public static Direction getSettingsSide()
+    {
+        int value = MathUtils.clamp(BBSSettings.tabStripSide.get(), 0, 3);
+
+        switch (value)
+        {
+            case 0:
+            {
+                return Direction.BOTTOM;
+            }
+            case 1:
+            {
+                return Direction.TOP;
+            }
+            case 2:
+            {
+                return Direction.LEFT;
+            }
+            default:
+            {
+                return Direction.RIGHT;
+            }
+        }
+    }
+
+    /**
+     * Move the tab strip to the side the settings currently have it, when it is somewhere else.
+     * Checked at render time, so a change made from the settings lands on every open editor
+     * immediately, the way the panel bar side does for the dashboard.
+     */
+    public void syncStripSide()
+    {
+        Direction side = getSettingsSide();
+
+        if (side == this.direction)
+        {
+            return;
+        }
+
+        this.direction = side;
+        this.setButtonsPlacement();
+        this.buttons.activeEdge(side);
+
+        /* The tooltips point from the bar into the panel; a new side is a new direction to point. */
+        for (int i = 0; i < this.buttons.getTabCount(); i++)
+        {
+            UIElement tab = this.buttons.getTab(i);
+
+            if (tab.tooltip instanceof LabelTooltip)
+            {
+                ((LabelTooltip) tab.tooltip).direction = side.opposite();
+            }
+        }
+
+        if (this.view != null)
+        {
+            this.setPanelPlacement(this.view);
+        }
+
+        this.resize();
     }
 
     public UIPropTransform getEditableTransform()
@@ -340,6 +408,8 @@ public abstract class UIForm <T extends Form> extends UIPanelBase<UIFormPanel<T>
     @Override
     public void render(UIContext context)
     {
+        this.syncStripSide();
+
         if (this.view != null)
         {
             this.view.options.area.render(context.batcher, BBSSettings.deepSurface());

@@ -15,6 +15,7 @@ import mchorse.bbs_mod.ui.onboarding.TourAnchors;
 import mchorse.bbs_mod.ui.dashboard.panels.UIEditorDashboardPanel;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
+import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlayPanel;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UISoundOverlayPanel;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
@@ -30,6 +31,9 @@ public class UIAudioEditorPanel extends UIEditorDashboardPanel
     public UIIcon plause;
     public UIIcon saveColors;
     public UIAudioEditor audioEditor;
+
+    /** The sound list, built once while the "open list" setting keeps it on screen. */
+    private UISoundOverlayPanel soundList;
 
     public UIAudioEditorPanel(UIDashboard dashboard)
     {
@@ -149,12 +153,41 @@ public class UIAudioEditorPanel extends UIEditorDashboardPanel
     @Override
     public void openDataManager()
     {
+        if (this.dataManager != null)
+        {
+            /* The list is already on screen as a column of the panel */
+            return;
+        }
+
         UIOverlay.addOverlay(this.getContext(), new UISoundOverlayPanel(this::openAudio));
+    }
+
+    @Override
+    protected UIOverlayPanel createDataManager()
+    {
+        if (this.soundList == null)
+        {
+            this.soundList = new UISoundOverlayPanel(this::openAudio);
+        }
+
+        return this.soundList;
+    }
+
+    @Override
+    protected void syncListButton()
+    {
+        this.pickAudio.setVisible(this.dataManager == null);
     }
 
     @Override
     public void showInList(String id)
     {
+        if (this.dataManager != null)
+        {
+            ((UISoundOverlayPanel) this.dataManager).set(id);
+            return;
+        }
+
         UISoundOverlayPanel panel = new UISoundOverlayPanel(this::openAudio);
 
         UIOverlay.addOverlay(this.getContext(), panel);

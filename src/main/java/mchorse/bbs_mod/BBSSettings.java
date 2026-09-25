@@ -61,6 +61,8 @@ public class BBSSettings {
 	public static ValueFloat userIntefaceScale;
 	public static ValueBoolean pixelArtSmoothing;
 	public static ValueInt taskbarSide;
+	public static ValueInt tabStripSide;
+	public static ValueBoolean openDataList;
 	public static ValueFloat fov;
 	public static ValueBoolean colorPickerHsvTab;
 	public static ValueBoolean forceQwerty;
@@ -866,6 +868,9 @@ public class BBSSettings {
 		userIntefaceScale = builder.getFloat("ui_scale", 2F, 0F, 4F).slider(0.25D);
 		pixelArtSmoothing = builder.getBoolean("pixel_art_smoothing", true);
 		taskbarSide = builder.getInt("taskbar_side", 0);
+		/* Which edge of the form editor the strip of tab buttons is docked to; right is the 2.7 default. */
+		tabStripSide = builder.getInt("tab_strip_side", 3);
+		openDataList = builder.getBoolean("open_data_list", false);
 		fov = builder.getFloat("fov", 70, 0, 180);
 		colorPickerHsvTab = builder.getBoolean("hsv_color_picker", true);
 		forceQwerty = builder.getBoolean("force_qwerty", false);

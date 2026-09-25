@@ -606,6 +606,13 @@ public class BBSModClient implements ClientModInitializer
 
         BBSSettings.taskbarSide.modes(UIDashboardPanels.getSideLabels());
 
+        BBSSettings.tabStripSide.modes(
+            UIKeys.FORMS_TABS_STRIP_SIDE_BOTTOM,
+            UIKeys.FORMS_TABS_STRIP_SIDE_TOP,
+            UIKeys.FORMS_TABS_STRIP_SIDE_LEFT,
+            UIKeys.FORMS_TABS_STRIP_SIDE_RIGHT
+        );
+
         BBSSettings.keystrokeMode.modes(
             UIKeys.ENGINE_KEYSTROKES_POSITION_AUTO,
             UIKeys.ENGINE_KEYSTROKES_POSITION_BOTTOM_LEFT,

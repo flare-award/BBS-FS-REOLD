@@ -61,7 +61,7 @@ public class UIPanelBase <T extends UIElement> extends UIElement
         return this.direction == Direction.BOTTOM || this.direction == Direction.RIGHT;
     }
 
-    private void setButtonsPlacement()
+    protected void setButtonsPlacement()
     {
         boolean side = this.isSideBar();
         boolean far = this.isFarBar();
@@ -91,7 +91,7 @@ public class UIPanelBase <T extends UIElement> extends UIElement
         }
     }
 
-    private void setPanelPlacement(UIElement panel)
+    protected void setPanelPlacement(UIElement panel)
     {
         Flex flex = panel.getFlex();
 

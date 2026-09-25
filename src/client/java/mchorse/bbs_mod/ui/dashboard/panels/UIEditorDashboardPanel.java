@@ -1,5 +1,6 @@
 package mchorse.bbs_mod.ui.dashboard.panels;
 
+import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.Keys;
 import mchorse.bbs_mod.ui.UIKeys;
@@ -10,7 +11,9 @@ import mchorse.bbs_mod.ui.dashboard.panels.landing.ILandingHost;
 import mchorse.bbs_mod.ui.dashboard.panels.landing.UILandingScreen;
 import mchorse.bbs_mod.ui.dashboard.panels.tabs.IUITabsHost;
 import mchorse.bbs_mod.ui.dashboard.panels.tabs.UITabList;
+import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
+import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlayPanel;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 
@@ -33,12 +36,21 @@ import java.util.Collection;
  */
 public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements IUITabsHost, ILandingHost
 {
+    /** How wide the embedded list column is; the same width the list takes as a floating overlay. */
+    public static final int DATA_LIST_WIDTH = 200;
+
     public final UIPanelTopBar topBar;
     public final UIElement editor;
     public final UITabList tabs;
 
     /** The screen of an empty tab, or null for a panel that never called {@link #mountLanding()}. */
     public UILandingScreen landing;
+
+    /**
+     * The list of what this panel edits, kept as a column on the left while
+     * {@code BBSSettings.openDataList} is on; null while it is off.
+     */
+    public UIOverlayPanel dataManager;
 
     protected boolean update;
 
@@ -95,6 +107,77 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
         return element;
     }
 
+    /**
+     * The list of what this panel edits, built to sit as a column on the left, or null for a
+     * panel without a list. Called only while the "open list" setting is on, and expected to be
+     * cheap: it is asked again every frame while the panel is on screen.
+     */
+    protected UIOverlayPanel createDataManager()
+    {
+        return null;
+    }
+
+    /**
+     * Keep the list on screen as a column of the panel while the setting is on, and keep the
+     * button that opens it as an overlay while the setting is off.
+     */
+    public void syncDataManager()
+    {
+        UIOverlayPanel desired = BBSSettings.openDataList.get() ? this.createDataManager() : null;
+
+        if (desired == this.dataManager)
+        {
+            return;
+        }
+
+        if (this.dataManager != null)
+        {
+            this.remove(this.dataManager);
+        }
+
+        this.dataManager = desired;
+
+        if (desired != null)
+        {
+            /* A column that is always there does not close itself and does not move from its place. */
+            desired.close.setVisible(false);
+            desired.movable = false;
+
+            this.add(desired);
+            desired.relative(this).x(0).y(UIPanelTopBar.HEIGHT).w(DATA_LIST_WIDTH).h(1F, -UIPanelTopBar.HEIGHT);
+        }
+
+        this.insetContent();
+        this.syncListButton();
+        this.resize();
+    }
+
+    /** The editor and the landing screen give the column its width. */
+    private void insetContent()
+    {
+        int inset = this.dataManager == null ? 0 : DATA_LIST_WIDTH;
+
+        this.editor.x(inset).w(1F, -inset);
+
+        if (this.landing != null)
+        {
+            this.landing.x(inset).w(1F, -inset);
+        }
+    }
+
+    /** The button that opens the list as an overlay; the column replaces it. */
+    protected void syncListButton()
+    {}
+
+    @Override
+    public void render(UIContext context)
+    {
+        /* A setting flipped while the panel is on screen lands here, the way the panel bar side does. */
+        this.syncDataManager();
+
+        super.render(context);
+    }
+
     /* The landing screen of an empty tab */
 
     /**
@@ -112,6 +195,7 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
         this.add(this.layoutUnderTopBar(this.landing));
 
         this.syncLanding();
+        this.syncDataManager();
     }
 
     /**
