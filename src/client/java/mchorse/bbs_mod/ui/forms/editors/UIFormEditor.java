@@ -1241,9 +1241,57 @@ public class UIFormEditor extends UIElement implements IUIFormList, ICursor, IBo
         this.lastTick = tick;
     }
 
+    /** The strip side the tree column last yielded to; the inset is re-derived only on a change. */
+    private Direction lastStripSide;
+
+    /**
+     * The tree column is anchored to the editor, not to the panel the strip belongs to, so it
+     * does not yield to a docked strip on its own &mdash; a left strip would sit under the list,
+     * the way the panel does not. The column steps aside exactly as the panel does: off the
+     * edge the strip takes, and no further.
+     */
+    private void syncStripInset()
+    {
+        Direction side = UIForm.getSettingsSide();
+
+        if (side == this.lastStripSide)
+        {
+            return;
+        }
+
+        this.lastStripSide = side;
+
+        if (side == Direction.LEFT)
+        {
+            this.forms.x(20).y(0).h(1F);
+            this.icons.y(1F);
+        }
+        else if (side == Direction.TOP)
+        {
+            this.forms.x(0).y(20).h(1F, -20);
+            this.icons.y(1F);
+        }
+        else if (side == Direction.BOTTOM)
+        {
+            this.forms.x(0).y(0).h(1F, -20);
+            /* The corner buttons would stand on the strip itself. */
+            this.icons.y(1F, -20);
+        }
+        else
+        {
+            this.forms.x(0).y(0).h(1F);
+            this.icons.y(1F);
+        }
+
+        this.forms.resize();
+        this.icons.resize();
+    }
+
     @Override
     public void render(UIContext context)
     {
+        this.syncStripInset();
+
         if (this.undoHandler != null)
         {
             this.undoHandler.submitUndo();

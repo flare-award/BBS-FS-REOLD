@@ -174,12 +174,6 @@ public class UIAudioEditorPanel extends UIEditorDashboardPanel
     }
 
     @Override
-    protected void syncListButton()
-    {
-        this.pickAudio.setVisible(this.dataManager == null);
-    }
-
-    @Override
     public void showInList(String id)
     {
         if (this.dataManager != null)

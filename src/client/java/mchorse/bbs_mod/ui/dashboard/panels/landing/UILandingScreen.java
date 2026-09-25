@@ -78,6 +78,7 @@ public class UILandingScreen extends UIElement
     private final LandingBackdrop backdrop = new LandingBackdrop();
     private final UIElement card;
     private final UIElement banner;
+    private final UILandingRow list;
     private final UIElement menu;
     private final UILandingRow folder;
     private final UIRecentDataList recent;
@@ -119,7 +120,7 @@ public class UILandingScreen extends UIElement
 
         /* The menu: what leads into the editor first, what leads out of it after a gap */
         IKey createLabel = host.getCreateLabel();
-        UILandingRow list = new UILandingRow(Icons.MORE, host.getListLabel(), (b) -> host.openDataManager());
+        this.list = new UILandingRow(Icons.MORE, host.getListLabel(), (b) -> host.openDataManager());
         UIElement gap = new UIElement();
         UILandingRow discord = new UILandingRow(Icons.DISCORD, IKey.constant("Discord"), (b) -> UIUtils.openWebLink(DISCORD_LINK));
         UILandingRow tutorials = new UILandingRow(Icons.PLAY, UIKeys.SUPPORTERS_TUTORIALS, (b) -> UIUtils.openWebLink(TUTORIALS_LINK));
@@ -222,12 +223,23 @@ public class UILandingScreen extends UIElement
      * The width of the list column the panel docks to the left edge, 0 while it is away.
      * The card stays centered as long as it fits; only when the screen is so narrow that the
      * column would cover it does the card step aside, by just the amount that is needed.
+     * While the column is on screen the menu gives up its "list" entry &mdash; the column is
+     * that list, and the entry would just point at itself.
      */
     public void setListInset(int inset)
     {
-        this.listInset = Math.max(inset, 0);
+        inset = Math.max(inset, 0);
+
+        if (inset == this.listInset)
+        {
+            return;
+        }
+
+        this.listInset = inset;
+        this.list.setVisible(inset == 0);
 
         this.syncCardShift();
+        this.menu.resize();
     }
 
     private void syncCardShift()

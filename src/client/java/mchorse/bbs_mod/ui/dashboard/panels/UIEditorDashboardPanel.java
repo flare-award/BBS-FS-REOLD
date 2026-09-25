@@ -13,6 +13,7 @@ import mchorse.bbs_mod.ui.dashboard.panels.tabs.IUITabsHost;
 import mchorse.bbs_mod.ui.dashboard.panels.tabs.UITabList;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
+import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlayPanel;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
@@ -135,9 +136,12 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
 
         if (this.dataManager != null)
         {
-            /* It comes back later as a floating overlay; its close button and drag must not stay hidden. */
+            /* It comes back later as a floating overlay: its close button and drag must not stay
+             * hidden, and the column's placement must not travel with it, or the next open lands
+             * wherever the column sat rather than where overlays belong. */
             this.dataManager.close.setVisible(true);
             this.dataManager.movable = true;
+            this.dataManager.resetFlex();
             this.remove(this.dataManager);
         }
 
@@ -145,9 +149,27 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
 
         if (desired != null)
         {
-            /* A column that is always there does not close itself and does not move from its place. */
+            /* A column that is always there does not close itself and does not move from its
+             * place. Whatever the panel was last placed as (a floating overlay's anchor
+             * included) is thrown away, so the column lands exactly where it is told. */
             desired.close.setVisible(false);
             desired.movable = false;
+            desired.resetFlex();
+
+            /* The setting can be switched on while the list is still open as a floating overlay;
+             * it cannot be in two places at once, so the floating copy &mdash; and the empty
+             * overlay container that would keep blocking the screen with it &mdash; goes first. */
+            UIElement parent = desired.getParent();
+
+            if (parent instanceof UIOverlay)
+            {
+                parent.removeFromParent();
+            }
+
+            if (desired.hasParent())
+            {
+                desired.removeFromParent();
+            }
 
             this.add(desired);
             desired.relative(this).x(0).y(UIPanelTopBar.HEIGHT).w(DATA_LIST_WIDTH).h(1F, -UIPanelTopBar.HEIGHT);
@@ -162,7 +184,11 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
         this.resize();
     }
 
-    /** The button that opens the list as an overlay; the column on the landing screen replaces it. */
+    /**
+     * Hook for the button that opens the list as a floating overlay. The button itself is
+     * always on the panel's top bar; the column on the landing screen takes the place of the
+     * landing's own list entry, not of this button.
+     */
     protected void syncListButton()
     {}
 

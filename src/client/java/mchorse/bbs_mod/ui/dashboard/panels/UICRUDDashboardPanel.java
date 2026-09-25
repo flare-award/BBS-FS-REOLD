@@ -56,11 +56,5 @@ public abstract class UICRUDDashboardPanel extends UIEditorDashboardPanel
         return this.overlay;
     }
 
-    @Override
-    protected void syncListButton()
-    {
-        this.openOverlay.setVisible(this.dataManager != this.overlay);
-    }
-
     protected abstract UICRUDOverlayPanel createOverlayPanel();
 }
