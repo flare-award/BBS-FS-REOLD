@@ -97,6 +97,8 @@ public class BBSSettings {
 	public static ValueBoolean poseMirrorEdit;
 	public static ValueBoolean poseAlternateInvert;
 	public static ValueBoolean poseShowDisabledBones;
+	/* When on, the pose editor's "full fix" control is a 0-1 slider instead of a toggle. */
+	public static ValueBoolean fullFixSlider;
 	public static ValueOrder translateHotkeyOrder;
 	public static ValueOrder scaleHotkeyOrder;
 	public static ValueOrder rotateHotkeyOrder;
@@ -1044,6 +1046,7 @@ public class BBSSettings {
 		poseAlternateInvert = builder.getBoolean("pose_alternate_invert", false);
 		poseAlternateInvert.invisible();
 		poseShowDisabledBones = builder.getBoolean("pose_show_disabled_bones", false);
+		fullFixSlider = builder.getBoolean("full_fix_slider", false);
 		translateHotkeyOrder = new ValueOrder("translate_hotkey_order", "screen", "x", "y", "z");
 		builder.register(translateHotkeyOrder);
 		scaleHotkeyOrder = new ValueOrder("scale_hotkey_order", "all", "x", "y", "z");

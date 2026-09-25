@@ -1,5 +1,6 @@
 package mchorse.bbs_mod.ui.utils.pose;
 
+import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.cubic.IBoneHierarchy;
 import mchorse.bbs_mod.data.types.MapType;
 import mchorse.bbs_mod.ui.Keys;
@@ -33,9 +34,11 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 public class UIPoseEditor extends UIElement
@@ -48,6 +51,8 @@ public class UIPoseEditor extends UIElement
 
     public UIBoneList groups;
     public UISliderTrackpad fix;
+    public UIToggle fullFix;
+    public UISliderTrackpad fullFixSlider;
     public UIToggle boneVisible;
     public UIColor color;
     public UIColor overlay;
@@ -57,6 +62,15 @@ public class UIPoseEditor extends UIElement
 
     private String group = "";
     private boolean hasBones = true;
+    private UIElement fullFixToggleRow;
+    private UIElement fullFixSliderRow;
+
+    /** Every bone the editor lists (the model's full skeleton, hidden ones aside) - the "full fix" target. */
+    protected List<String> allBones = Collections.emptyList();
+
+    /** Live pose editors, so the full-fix control setting switches the row at once, without waiting for a relayout. */
+    private static final Set<UIPoseEditor> INSTANCES = new HashSet<>();
+    private static boolean fullFixListenerAttached;
 
     /** Only the bone list and the transform: for a pose whose material and fix never show (a model's sneaking pose). */
     private boolean poseOnly;
@@ -107,6 +121,20 @@ public class UIPoseEditor extends UIElement
                 this.applyChildren((p) -> this.setFix(p, (float) this.fix.getValue()));
             });
         });
+        this.fullFix = new UIToggle(UIKeys.POSE_CONTEXT_FULL_FIX, false, (toggle) ->
+        {
+            this.applyFullFix(toggle.getValue() ? 1F : 0F);
+        });
+        this.fullFix.tooltip(UIKeys.POSE_CONTEXT_FULL_FIX_TOOLTIP);
+        this.fullFixSlider = new UISliderTrackpad((v) -> this.applyFullFix(v.floatValue()));
+        this.fullFixSlider.limit(0D, 1D).increment(0.1D).values(0.1, 0.05D, 0.2D);
+        this.fullFixSlider.tooltip(UIKeys.POSE_CONTEXT_FULL_FIX_TOOLTIP);
+        this.fullFixToggleRow = UI.labelRow(UIKeys.POSE_CONTEXT_FULL_FIX, this.fullFix);
+        this.fullFixSliderRow = UI.labelRow(UIKeys.POSE_CONTEXT_FULL_FIX, this.fullFixSlider);
+        this.fullFixToggleRow.setVisible(!BBSSettings.fullFixSlider.get());
+        this.fullFixSliderRow.setVisible(BBSSettings.fullFixSlider.get());
+        INSTANCES.add(this);
+        attachFullFixListener();
         this.color = new UIColor((c) -> this.applyColorToSelection(c));
         this.color.withAlpha();
         this.color.context((menu) ->
@@ -188,6 +216,8 @@ public class UIPoseEditor extends UIElement
         UIElement[] fields = this.poseOnly ? new UIElement[] {this.boneVisible, this.transform} : new UIElement[] {
             this.boneVisible,
             UI.labelRow(UIKeys.POSE_CONTEXT_FIX, this.fix),
+            this.fullFixToggleRow,
+            this.fullFixSliderRow,
             this.transform,
             this.material
         };
@@ -278,6 +308,7 @@ public class UIPoseEditor extends UIElement
     {
         this.model = null;
         this.flippedParts = null;
+        this.allBones = new ArrayList<>(groups);
 
         this.groups.list.setHierarchy(null, null);
         this.fillInGroups(groups, reset, true);
@@ -299,6 +330,7 @@ public class UIPoseEditor extends UIElement
 
         if (model == null)
         {
+            this.allBones = Collections.emptyList();
             this.fillInGroups(Collections.emptyList(), reset, false);
             return;
         }
@@ -306,6 +338,7 @@ public class UIPoseEditor extends UIElement
         List<String> bones = new ArrayList<>(model.getGroupKeysInHierarchyOrder());
 
         bones.removeIf((bone) -> PoseBones.isHidden(disabledBones, bone));
+        this.allBones = bones;
         this.fillInGroups(bones, reset, false);
     }
 
@@ -358,6 +391,8 @@ public class UIPoseEditor extends UIElement
         this.boneVisible.setVisible(hasBones);
         this.transform.setVisible(hasBones);
         this.material.setVisible(hasBones);
+
+        syncFullFixRows();
 
         List<String> list = this.groups.list.getList();
         int i = Math.max(reset ? 0 : list.indexOf(this.boneSelection().get()), 0);
@@ -668,6 +703,63 @@ public class UIPoseEditor extends UIElement
     {
         this.forEachSelectedPose((pt) -> this.setFix(pt, value));
         this.fix.setValue(value);
+    }
+
+    /**
+     * The "full fix" action: write the given fix value into every bone the editor lists,
+     * not just the selection. The base implementation touches the fields directly and does
+     * not notify anything - editors that own a value wrap the call in a single undo
+     * transaction (see UIModelPoseEditor), and the keyframe popup routes it through one
+     * keyframe notify round (see UIPoseKeyframeFactory.UIPoseFactoryEditor).
+     */
+    protected void applyFullFix(float value)
+    {
+        if (this.pose == null)
+        {
+            return;
+        }
+
+        for (String bone : this.allBones)
+        {
+            this.pose.getOrCreate(bone).fix = value;
+        }
+    }
+
+    /** Which of the two full-fix rows is shown: the toggle, or the slider when the setting says so. */
+    private void syncFullFixRows()
+    {
+        boolean slider = BBSSettings.fullFixSlider.get();
+
+        this.fullFixToggleRow.setVisible(this.hasBones && !slider);
+        this.fullFixSliderRow.setVisible(this.hasBones && slider);
+    }
+
+    private static void attachFullFixListener()
+    {
+        if (fullFixListenerAttached)
+        {
+            return;
+        }
+
+        fullFixListenerAttached = true;
+
+        BBSSettings.fullFixSlider.postCallback((v, f) ->
+        {
+            boolean slider = BBSSettings.fullFixSlider.get();
+
+            for (UIPoseEditor editor : new ArrayList<>(INSTANCES))
+            {
+                editor.fullFixToggleRow.setVisible(editor.hasBones && !slider);
+                editor.fullFixSliderRow.setVisible(editor.hasBones && slider);
+            }
+        });
+    }
+
+    @Override
+    protected void onRemove(UIElement parent)
+    {
+        INSTANCES.remove(this);
+        super.onRemove(parent);
     }
 
     private void applyColorToSelection(int argb)

@@ -225,6 +225,13 @@ public class UIPoseKeyframeFactory extends UIKeyframeFactory<Pose>
             apply(this.editor, this.keyframe, this.getGroup(transform), (poseT) -> poseT.fix = value);
         }
 
+        /* Every bone in one keyframe notify round: the whole skeleton gets the value at once. */
+        @Override
+        protected void applyFullFix(float value)
+        {
+            apply(this.editor, this.keyframe, this.allBones, (poseT) -> poseT.fix = value);
+        }
+
         @Override
         protected void setBoneVisible(PoseTransform transform, boolean value)
         {

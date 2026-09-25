@@ -51,6 +51,15 @@ public class UIModelPoseEditor extends UIPoseEditor
         this.valuePose.postNotify(IValueListener.FLAG_UNMERGEABLE);
     }
 
+    /* One undo entry for the whole skeleton instead of one per bone. */
+    @Override
+    protected void applyFullFix(float value)
+    {
+        this.valuePose.preNotify(IValueListener.FLAG_UNMERGEABLE);
+        super.applyFullFix(value);
+        this.valuePose.postNotify(IValueListener.FLAG_UNMERGEABLE);
+    }
+
     @Override
     protected void setBoneVisible(PoseTransform transform, boolean value)
     {
