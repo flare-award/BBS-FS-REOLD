@@ -370,13 +370,13 @@ public class UIBannerEditorPanel extends UIOverlayPanel
 
             if (this.index == UIBannerEditorPanel.this.selected)
             {
-                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), BBSSettings.primaryColor(Colors.A40));
-                context.batcher.outline(this.area.x, this.area.y, this.area.ex(), this.area.ey(), BBSSettings.primaryColor(Colors.A80));
+                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), BBSSettings.primaryColor(Colors.A50));
+                context.batcher.outline(this.area.x, this.area.y, this.area.ex(), this.area.ey(), BBSSettings.primaryColor(Colors.A75));
             }
 
             Area thumb = new Area(this.area.x + 2, this.area.my() - THUMB_H / 2, THUMB_W, THUMB_H);
 
-            context.batcher.box(thumb.x, thumb.y, thumb.ex(), thumb.ey(), Colors.BLACK);
+            context.batcher.box(thumb.x, thumb.y, thumb.ex(), thumb.ey(), Colors.A100);
 
             Texture texture = BBSModClient.getTextures().getTexture(banner.link);
 
@@ -460,7 +460,7 @@ public class UIBannerEditorPanel extends UIOverlayPanel
                 this.drag(context, texture);
             }
 
-            context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), Colors.BLACK);
+            context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), Colors.A100);
 
             if (texture != null)
             {
