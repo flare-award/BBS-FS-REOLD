@@ -1,5 +1,6 @@
 package mchorse.bbs_mod.ui.forms.editors.utils;
 
+import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.api.client.events.FormPreviewEvents;
 import mchorse.bbs_mod.client.FilmEffects;
 import mchorse.bbs_mod.forms.FormUtilsClient;
@@ -28,16 +29,24 @@ public class UIFormRenderer extends UIModelRenderer
 {
     public Form form;
 
-    /* The studio space: a dark frame with a gridded plane under the model, in the spirit of
-     * Blockbench's grid background. The plane is 32x32 around the origin, a fine line every
-     * unit and a bold one every 8, so it reads as nine big cells like in Blockbench. All of
-     * it is drawn with the depth test off - it is a backdrop, not geometry, so it never hides
-     * or fights the model no matter where the camera is. */
+    /* The studio space: a dark far fill with a gridded plane under the model, in the spirit
+     * of Blockbench's grid background. The plane is 32x32 around the origin, a fine line
+     * every unit and a bold one every 8, so it reads as nine big cells like in Blockbench.
+     * Both composite by depth: the fill at the far plane, the plane at its real place, so
+     * the model stands in the floor and occludes it exactly where it is in front. */
     private static final Color STUDIO_BACKGROUND = new Color(0.102F, 0.114F, 0.141F);
     private static final Color STUDIO_PLANE = new Color(0.149F, 0.165F, 0.200F);
     private static final Color STUDIO_GRID_FINE = new Color(0.227F, 0.255F, 0.314F);
     private static final Color STUDIO_GRID_BOLD = new Color(0.361F, 0.400F, 0.471F);
     private static final float STUDIO_PLANE_HALF = 16F;
+
+    /**
+     * The depth the space fill sits at: just inside the far plane, so the model and the grid
+     * (which wrote real depth in front of it) always occlude it. The fill is a quad at this
+     * depth, not a color clear - a clear's result depends on the scissor and buffer state at
+     * the moment, the quad composites by depth, so it can never land over the model.
+     */
+    private static final float SPACE_FAR_Z = 0.9999F;
 
     @Override
     protected void renderUserModelOverlay(UIContext context)
@@ -63,9 +72,10 @@ public class UIFormRenderer extends UIModelRenderer
 
     /**
      * The space this form's viewport shows around the model. Normal leaves whatever is under
-     * the viewport in place; solid and studio fill it (the scissor keeps it inside); photo
-     * lays the picture over it. The values are the form's own, live - a change in the space
-     * tab is visible on the next frame without any plumbing.
+     * the viewport in place; solid and studio fill it; photo lays the picture over it. The
+     * fill sits at {@link #SPACE_FAR_Z} behind the model and the grid, so the compositing is
+     * decided by the depth buffer, not by draw order. The values are the form's own, live - a
+     * change in the space tab is visible on the next frame without any plumbing.
      */
     @Override
     protected void renderBackground(UIContext context)
@@ -85,8 +95,7 @@ public class UIFormRenderer extends UIModelRenderer
             {
                 Color color = form.spaceColor.get();
 
-                GL11.glClearColor(color.r, color.g, color.b, 1F);
-                GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
+                this.renderSpaceFill(context, color.r, color.g, color.b);
 
                 break;
             }
@@ -111,10 +120,51 @@ public class UIFormRenderer extends UIModelRenderer
     }
 
     /**
+     * The flat space fill: a full-viewport quad at the far depth, in NDC. Depth is tested
+     * (the viewport's depth was just cleared, so nothing is in front of it yet) and written,
+     * so everything the pass draws afterwards - the grid, the model, its translucent parts -
+     * composites over it by depth, and nothing drawn earlier can show through except what
+     * the quad itself leaves alone.
+     */
+    private void renderSpaceFill(UIContext context, float r, float g, float b)
+    {
+        Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
+        VertexSorter previousSorter = RenderSystem.getVertexSorting();
+
+        RenderSystem.setProjectionMatrix(new Matrix4f(), VertexSorter.BY_Z);
+        RenderSystem.disableBlend();
+        RenderSystem.enableDepthTest();
+        RenderSystem.depthMask(true);
+        RenderSystem.disableCull();
+        RenderSystem.setShader(GameRenderer::getPositionColorProgram);
+        RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+
+        try
+        {
+            Matrix4f identity = new Matrix4f();
+            BufferBuilder builder = Tessellator.getInstance().getBuffer();
+
+            builder.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+
+            builder.vertex(identity, -1F, -1F, SPACE_FAR_Z).color(r, g, b, 1F).next();
+            builder.vertex(identity, -1F, 1F, SPACE_FAR_Z).color(r, g, b, 1F).next();
+            builder.vertex(identity, 1F, 1F, SPACE_FAR_Z).color(r, g, b, 1F).next();
+            builder.vertex(identity, 1F, -1F, SPACE_FAR_Z).color(r, g, b, 1F).next();
+
+            BufferRenderer.drawWithGlobalProgram(builder.end());
+        }
+        finally
+        {
+            RenderSystem.enableCull();
+            RenderSystem.setProjectionMatrix(previousProjection, previousSorter);
+        }
+    }
+
+    /**
      * The photo behind the model: a screen-space quad in the same placement language as the
      * film's photo layers (scale 1 spans the viewport's full height, x/y roam +-2, the width
-     * keeps the photo's aspect). Depth is not tested and not written, so the model and its
-     * translucent parts draw on top of it afterwards. Where the quad does not reach, whatever
+     * keeps the photo's aspect). It sits at the far depth with the depth test on, so the
+     * model and its translucent parts draw over it. Where the quad does not reach, whatever
      * was under the viewport - the world - stays visible, on purpose.
      */
     private void renderSpacePhoto(UIContext context, Form form)
@@ -152,10 +202,11 @@ public class UIFormRenderer extends UIModelRenderer
          * identity (the vertices carry their own identity model matrix) and restored
          * afterwards */
         RenderSystem.setProjectionMatrix(new Matrix4f(), VertexSorter.BY_Z);
+        BBSModClient.getTextures().bindTexture(photo);
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
-        RenderSystem.disableDepthTest();
-        RenderSystem.depthMask(false);
+        RenderSystem.enableDepthTest();
+        RenderSystem.depthMask(true);
         RenderSystem.disableCull();
         RenderSystem.setShader(GameRenderer::getPositionTexColorProgram);
         RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
@@ -168,15 +219,13 @@ public class UIFormRenderer extends UIModelRenderer
         }
         finally
         {
-            RenderSystem.depthMask(true);
-            RenderSystem.enableDepthTest();
             RenderSystem.enableCull();
             RenderSystem.disableBlend();
             RenderSystem.setProjectionMatrix(previousProjection, previousSorter);
         }
     }
 
-    /** One photo quad in NDC; the placement math is the film's, so both features agree. */
+    /** One photo quad in NDC at the far depth; the placement math is the film's, so both features agree. */
     private void drawSpacePhotoQuad(Texture photo, float opacity, float x, float y, float scale, float rotate, int width, int height)
     {
         float halfW = scale * (photo.width / (float) photo.height) * (height / (float) width);
@@ -204,7 +253,7 @@ public class UIFormRenderer extends UIModelRenderer
             float rx = (px * cos - py * sin) / aspect;
             float ry = px * sin + py * cos;
 
-            builder.vertex(identity, x + rx, -y + ry, 0F)
+            builder.vertex(identity, x + rx, -y + ry, SPACE_FAR_Z)
                 .texture(cx * 0.5F + 0.5F, 0.5F - cy * 0.5F)
                 .color(1F, 1F, 1F, opacity)
                 .next();
@@ -214,23 +263,21 @@ public class UIFormRenderer extends UIModelRenderer
     }
 
     /**
-     * The studio space: the dark fill, then the plane with its grid. The fill is a color
-     * clear (the scissor keeps it inside the viewport); the plane and the lines follow the
-     * scene matrix, so when a rotated model block is edited immersively the floor turns
-     * with it, the way the grid does.
+     * The studio space: the dark far fill, then the plane with its grid in scene space. The
+     * plane and the lines follow the scene matrix, so when a rotated model block is edited
+     * immersively the floor turns with it, the way the grid does; real depth, so the model
+     * stands in it and occludes it where it is in front.
      */
     private void renderSpaceStudio(UIContext context)
     {
-        GL11.glClearColor(STUDIO_BACKGROUND.r, STUDIO_BACKGROUND.g, STUDIO_BACKGROUND.b, 1F);
-        GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
+        this.renderSpaceFill(context, STUDIO_BACKGROUND.r, STUDIO_BACKGROUND.g, STUDIO_BACKGROUND.b);
 
         Matrix4f matrix4f = context.batcher.getContext().getMatrices().peek().getPositionMatrix();
         BufferBuilder builder = Tessellator.getInstance().getBuffer();
 
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.disableDepthTest();
-        RenderSystem.depthMask(false);
+        RenderSystem.disableBlend();
+        RenderSystem.enableDepthTest();
+        RenderSystem.depthMask(true);
         RenderSystem.disableCull();
         RenderSystem.setShader(GameRenderer::getPositionColorProgram);
         RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
@@ -247,10 +294,7 @@ public class UIFormRenderer extends UIModelRenderer
         }
         finally
         {
-            RenderSystem.depthMask(true);
-            RenderSystem.enableDepthTest();
             RenderSystem.enableCull();
-            RenderSystem.disableBlend();
         }
     }
 

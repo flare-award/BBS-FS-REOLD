@@ -558,7 +558,9 @@ public class Batcher2D
             float pEnd = back ? 0F : r;
             float qEnd = back ? r : 0F;
 
-            while (p != pEnd || q != qEnd)
+            /* The walk is bounded; the guard is there so a pathological radius can truncate
+             * the corner, never spin the game. */
+            for (int guard = 0; guard < 512 && (p != pEnd || q != qEnd); guard ++)
             {
                 float pNext = back ? Math.max(0F, p - step) : Math.min(r, p + step);
                 float qNext = back ? Math.min(r, q + step) : Math.max(0F, q - step);

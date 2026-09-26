@@ -606,10 +606,20 @@ public class BBSModClient implements ClientModInitializer
 
         BBSSettings.taskbarSide.modes(UIDashboardPanels.getSideLabels());
 
-        /* The strip only docks to the left and the right now; the old bottom/top values are
-         * mapped onto the default right side so the setting stays in range of the two modes. */
+        /* The strip only docks to the left and the right now. The old four values map onto
+         * the two: old left (2) to left, old right (3) to right. Left (0) and right (1) are
+         * the values this setting itself saves, so the map must leave them alone - re-running
+         * it on every start used to clobber a saved left side back to right. */
         int tabSide = BBSSettings.tabStripSide.get();
-        BBSSettings.tabStripSide.set(tabSide == 2 ? 0 : 1);
+
+        if (tabSide == 2)
+        {
+            BBSSettings.tabStripSide.set(0);
+        }
+        else if (tabSide == 3)
+        {
+            BBSSettings.tabStripSide.set(1);
+        }
 
         BBSSettings.tabStripSide.modes(
             UIKeys.FORMS_TABS_STRIP_SIDE_LEFT,
