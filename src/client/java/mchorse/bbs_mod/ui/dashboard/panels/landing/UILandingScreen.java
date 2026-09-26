@@ -554,11 +554,6 @@ public class UILandingScreen extends UIElement
         batcher.texturedBox(texture, Colors.setA(Colors.WHITE, alpha), area.x, area.y, area.ex() - area.x, area.ey() - area.y, u1, v1, u1 + cropW, v1 + cropH);
     }
 
-    public static void renderBannerCrop(Batcher2D batcher, Area area, Texture texture, float focusX, float focusY, float zoom, float alpha)
-    {
-        renderBannerCrop(batcher, area, texture, focusX, focusY, zoom, alpha, 0F, 0F, 0F, 0F);
-    }
-
     public static void renderBannerCrop(Batcher2D batcher, Area area, Texture texture, float focusX, float focusY, float zoom)
     {
         renderBannerCrop(batcher, area, texture, focusX, focusY, zoom, 1F);
