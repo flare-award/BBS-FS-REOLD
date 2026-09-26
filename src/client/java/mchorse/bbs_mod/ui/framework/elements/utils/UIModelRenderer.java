@@ -327,6 +327,10 @@ public abstract class UIModelRenderer extends UIElement
             this.camera.view
         );
 
+        /* The space behind the model, in front of the grid: by default nothing (whatever was
+         * under the viewport stays), overridden by renderers that know what their background is */
+        this.renderBackground(context);
+
         if (this.grid)
         {
             this.renderGrid(context);
@@ -423,6 +427,15 @@ public abstract class UIModelRenderer extends UIElement
         this.camera.updatePerspectiveProjection(viewport[2], viewport[3]);
         this.camera.updateView();
     }
+
+    /**
+     * The space around the model: what the viewport's background is. Called with the
+     * camera's projection and model matrices in place and the viewport's depth buffer
+     * freshly cleared, before the grid and the model, while the viewport is still
+     * scissored - so a color clear here fills exactly the viewport, nowhere else.
+     */
+    protected void renderBackground(UIContext context)
+    {}
 
     /**
      * Draw your model here

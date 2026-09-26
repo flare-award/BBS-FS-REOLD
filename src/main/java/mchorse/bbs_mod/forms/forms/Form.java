@@ -96,6 +96,23 @@ public abstract class Form extends ValueGroup
 
     public final ValueInt hotkey = new ValueInt("keybind", 0);
 
+    /* The space around the form in the editor's viewport - what the background is:
+     * the world (normal), a solid color, a photo, or the studio grid. Authoring
+     * appearance only, never animated; stored per form so each form keeps its own space. */
+    public static final int SPACE_NORMAL = 0;
+    public static final int SPACE_SOLID = 1;
+    public static final int SPACE_PHOTO = 2;
+    public static final int SPACE_STUDIO = 3;
+
+    public final ValueInt spaceMode = new ValueInt("space_mode", SPACE_NORMAL, SPACE_NORMAL, SPACE_STUDIO);
+    public final ValueColor spaceColor = new ValueColor("space_color", new Color(0.12F, 0.16F, 0.30F));
+    public final ValueString spacePhoto = new ValueString("space_photo", "");
+    public final ValueFloat spacePhotoOpacity = new ValueFloat("space_photo_opacity", 1F);
+    public final ValueFloat spacePhotoX = new ValueFloat("space_photo_x", 0F);
+    public final ValueFloat spacePhotoY = new ValueFloat("space_photo_y", 0F);
+    public final ValueFloat spacePhotoScale = new ValueFloat("space_photo_scale", 1F);
+    public final ValueFloat spacePhotoRotate = new ValueFloat("space_photo_rotate", 0F);
+
     public final BodyPartManager parts = new BodyPartManager("parts");
     public final AnimationStates states = new AnimationStates("states");
 
@@ -190,6 +207,25 @@ public abstract class Form extends ValueGroup
         this.hotkey.invisible();
 
         this.add(this.hotkey);
+
+        /* The editor's space is authoring appearance, not part of the pose: invisible tracks. */
+        this.spaceMode.invisible();
+        this.spaceColor.invisible();
+        this.spacePhoto.invisible();
+        this.spacePhotoOpacity.invisible();
+        this.spacePhotoX.invisible();
+        this.spacePhotoY.invisible();
+        this.spacePhotoScale.invisible();
+        this.spacePhotoRotate.invisible();
+
+        this.add(this.spaceMode);
+        this.add(this.spaceColor);
+        this.add(this.spacePhoto);
+        this.add(this.spacePhotoOpacity);
+        this.add(this.spacePhotoX);
+        this.add(this.spacePhotoY);
+        this.add(this.spacePhotoScale);
+        this.add(this.spacePhotoRotate);
 
         this.add(this.parts);
         this.add(this.states);

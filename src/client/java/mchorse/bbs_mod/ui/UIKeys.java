@@ -274,6 +274,10 @@ public class UIKeys
     public static final IKey ENGINE_BACKGROUND_MODE_DEFAULT = L10n.lang("bbs.background_mode.default");
     public static final IKey ENGINE_BACKGROUND_MODE_SOLID = L10n.lang("bbs.background_mode.solid");
     public static final IKey ENGINE_BACKGROUND_MODE_GRADIENT = L10n.lang("bbs.background_mode.gradient");
+    public static final IKey SETTINGS_ROUND_CORNERS_OFF = L10n.lang("bbs.config.appearance.round_corners.off");
+    public static final IKey SETTINGS_ROUND_CORNERS_SMOOTH = L10n.lang("bbs.config.appearance.round_corners.smooth");
+    public static final IKey SETTINGS_ROUND_CORNERS_PIXEL = L10n.lang("bbs.config.appearance.round_corners.pixel");
+
     public static final IKey ENGINE_GRADIENT_DIRECTION_HORIZONTAL = L10n.lang("bbs.gradient_direction.horizontal");
     public static final IKey ENGINE_GRADIENT_DIRECTION_VERTICAL = L10n.lang("bbs.gradient_direction.vertical");
     public static final IKey ENGINE_GRADIENT_DIRECTION_DIAGONAL = L10n.lang("bbs.gradient_direction.diagonal");
@@ -862,6 +866,30 @@ public class UIKeys
     public static final IKey FORMS_EDITORS_MATERIAL_SSS = L10n.lang("bbs.ui.forms.editors.material.sss");
     public static final IKey FORMS_EDITORS_MATERIAL_PIXEL_EMISSION = L10n.lang("bbs.ui.forms.editors.material.pixel_emission");
     public static final IKey FORMS_EDITORS_MATERIAL_RELIEF = L10n.lang("bbs.ui.forms.editors.material.relief");
+
+    /* Space tab */
+    public static final IKey FORMS_EDITORS_SPACE = L10n.lang("bbs.ui.forms.editors.space");
+    public static final IKey FORMS_EDITORS_SPACE_MODE = L10n.lang("bbs.ui.forms.editors.space.mode");
+    public static final IKey FORMS_EDITORS_SPACE_MODE_TOOLTIP = L10n.lang("bbs.ui.forms.editors.space.mode-tooltip");
+    public static final IKey FORMS_EDITORS_SPACE_MODE_NORMAL = L10n.lang("bbs.ui.forms.editors.space.mode.normal");
+    public static final IKey FORMS_EDITORS_SPACE_MODE_SOLID = L10n.lang("bbs.ui.forms.editors.space.mode.solid");
+    public static final IKey FORMS_EDITORS_SPACE_MODE_PHOTO = L10n.lang("bbs.ui.forms.editors.space.mode.photo");
+    public static final IKey FORMS_EDITORS_SPACE_MODE_STUDIO = L10n.lang("bbs.ui.forms.editors.space.mode.studio");
+    public static final IKey FORMS_EDITORS_SPACE_SECTION_MODE = L10n.lang("bbs.ui.forms.editors.space.section_mode");
+    public static final IKey FORMS_EDITORS_SPACE_SECTION_COLOR = L10n.lang("bbs.ui.forms.editors.space.section_color");
+    public static final IKey FORMS_EDITORS_SPACE_SECTION_PHOTO = L10n.lang("bbs.ui.forms.editors.space.section_photo");
+    public static final IKey FORMS_EDITORS_SPACE_COLOR = L10n.lang("bbs.ui.forms.editors.space.color");
+    public static final IKey FORMS_EDITORS_SPACE_COLOR_TOOLTIP = L10n.lang("bbs.ui.forms.editors.space.color-tooltip");
+    public static final IKey FORMS_EDITORS_SPACE_PHOTO_PICK = L10n.lang("bbs.ui.forms.editors.space.photo.pick");
+    public static final IKey FORMS_EDITORS_SPACE_PHOTO_PICK_TOOLTIP = L10n.lang("bbs.ui.forms.editors.space.photo.pick-tooltip");
+    public static final IKey FORMS_EDITORS_SPACE_PHOTO_RESET = L10n.lang("bbs.ui.forms.editors.space.photo.reset");
+    public static final IKey FORMS_EDITORS_SPACE_PHOTO_OPACITY = L10n.lang("bbs.ui.forms.editors.space.photo.opacity");
+    public static final IKey FORMS_EDITORS_SPACE_PHOTO_OPACITY_TOOLTIP = L10n.lang("bbs.ui.forms.editors.space.photo.opacity-tooltip");
+    public static final IKey FORMS_EDITORS_SPACE_PHOTO_SIZE = L10n.lang("bbs.ui.forms.editors.space.photo.size");
+    public static final IKey FORMS_EDITORS_SPACE_PHOTO_SIZE_TOOLTIP = L10n.lang("bbs.ui.forms.editors.space.photo.size-tooltip");
+    public static final IKey FORMS_EDITORS_SPACE_PHOTO_ROTATE = L10n.lang("bbs.ui.forms.editors.space.photo.rotate");
+    public static final IKey FORMS_EDITORS_SPACE_PHOTO_ROTATE_TOOLTIP = L10n.lang("bbs.ui.forms.editors.space.photo.rotate-tooltip");
+
     public static final IKey FORMS_EDITORS_TRAIL_LENGTH = L10n.lang("bbs.ui.forms.editors.trail.length");
     public static final IKey FORMS_EDITORS_TRAIL_LOOP = L10n.lang("bbs.ui.forms.editors.trail.loop");
     public static final IKey FORMS_EDITORS_TRAIL_TITLE = L10n.lang("bbs.ui.forms.editors.trail.title");
