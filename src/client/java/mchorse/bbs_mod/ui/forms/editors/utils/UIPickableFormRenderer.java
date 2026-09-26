@@ -65,6 +65,18 @@ public class UIPickableFormRenderer extends UIFormRenderer implements GizmoViewp
         this.renderForm = renderForm;
     }
 
+    /** Whether the viewport draws the form's own preview right now (the default). */
+    protected boolean rendersForm()
+    {
+        return this.renderForm == null || this.renderForm.get();
+    }
+
+    @Override
+    protected boolean viewportShowsWorld()
+    {
+        return !this.rendersForm();
+    }
+
     public IEntity getTargetEntity()
     {
         return this.target == null ? this.entity : this.target;

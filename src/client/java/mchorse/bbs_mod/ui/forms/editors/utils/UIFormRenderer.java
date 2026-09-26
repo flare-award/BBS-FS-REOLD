@@ -70,11 +70,24 @@ public class UIFormRenderer extends UIModelRenderer
     }
 
     /**
+     * Whether the viewport is currently showing the world through it instead of an isolated
+     * preview (the block editor's "show the real block" mode, F7). The space's background is
+     * a property of the isolated preview - the "around the model" that it fills. Against the
+     * live world there is no such around: the world itself is the background, and the block
+     * stands in it, so the space draws nothing and the world stays exactly as it is.
+     */
+    protected boolean viewportShowsWorld()
+    {
+        return false;
+    }
+
+    /**
      * The space this form's viewport shows around the model. Normal leaves whatever is under
      * the viewport in place; solid and studio fill it; photo lays the picture over it. The
-     * fill sits at {@link #SPACE_FAR_Z} behind the model and the grid, so the compositing is
-     * decided by the depth buffer, not by draw order. The values are the form's own, live - a
-     * change in the space tab is visible on the next frame without any plumbing.
+     * fill is drawn first in the pass and touches no depth, so it sits behind the grid and
+     * the model at every zoom and angle - the pass order (fill, grid, model, overlays) is
+     * what keeps it there, no depth comparison involved. The values are the form's own, live
+     * - a change in the space tab is visible on the next frame without any plumbing.
      */
     @Override
     protected void renderBackground(UIContext context)
@@ -82,6 +95,11 @@ public class UIFormRenderer extends UIModelRenderer
         Form form = this.form;
 
         if (form == null)
+        {
+            return;
+        }
+
+        if (this.viewportShowsWorld())
         {
             return;
         }
