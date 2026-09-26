@@ -1412,6 +1412,8 @@ public class UIKeys
     public static final IKey PANELS_LANDING_BANNER_EDIT = L10n.lang("bbs.ui.panels.landing.banner_edit");
 
     public static final IKey BANNER_EDITOR_TITLE = L10n.lang("bbs.ui.banner_editor.title");
+    public static final IKey BANNER_EDITOR_PAGE_BANNER = L10n.lang("bbs.ui.banner_editor.page.banner");
+    public static final IKey BANNER_EDITOR_PAGE_CREDIT = L10n.lang("bbs.ui.banner_editor.page.credit");
     public static final IKey BANNER_EDITOR_BANNERS = L10n.lang("bbs.ui.banner_editor.banners");
     public static final IKey BANNER_EDITOR_ADD = L10n.lang("bbs.ui.banner_editor.add");
     public static final IKey BANNER_EDITOR_PICK = L10n.lang("bbs.ui.banner_editor.pick");

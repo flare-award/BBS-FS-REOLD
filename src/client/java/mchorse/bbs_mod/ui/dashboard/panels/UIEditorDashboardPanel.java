@@ -15,8 +15,11 @@ import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlayPanel;
+import mchorse.bbs_mod.ui.framework.elements.utils.UIDraggable;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
+import mchorse.bbs_mod.utils.MathUtils;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.Collection;
 
@@ -52,6 +55,15 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
      * {@code BBSSettings.openDataList} is on; null while it is off.
      */
     public UIOverlayPanel dataManager;
+
+    /** How thin the column may get: the list has to stay readable. */
+    private static final int DATA_LIST_MIN_WIDTH = 160;
+
+    /** The width the column asks for; the user can drag its right edge within the limits. */
+    private int dataListWidth = DATA_LIST_WIDTH;
+
+    /** The drag handle on the column's right edge; attached while the column is on screen. */
+    private UIDraggable dataListEdge;
 
     protected boolean update;
 
@@ -136,24 +148,32 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
 
         if (this.dataManager != null)
         {
-            /* It comes back later as a floating overlay: its close button and drag must not stay
-             * hidden, and the column's placement must not travel with it, or the next open lands
-             * wherever the column sat rather than where overlays belong. */
+            /* It comes back later as a floating overlay: its close button, drag and corner grip
+             * must not stay hidden, and the column's placement must not travel with it, or the
+             * next open lands wherever the column sat rather than where overlays belong. */
             this.dataManager.close.setVisible(true);
             this.dataManager.movable = true;
+            this.dataManager.setResizable(true);
             this.dataManager.resetFlex();
             this.remove(this.dataManager);
+
+            if (this.dataListEdge != null)
+            {
+                this.dataListEdge.removeFromParent();
+            }
         }
 
         this.dataManager = desired;
 
         if (desired != null)
         {
-            /* A column that is always there does not close itself and does not move from its
-             * place. Whatever the panel was last placed as (a floating overlay's anchor
-             * included) is thrown away, so the column lands exactly where it is told. */
+            /* A column that is always there does not close itself, does not move from its place
+             * and does not resize from a corner. Whatever the panel was last placed as (a
+             * floating overlay's anchor included) is thrown away, so the column lands exactly
+             * where it is told. */
             desired.close.setVisible(false);
             desired.movable = false;
+            desired.setResizable(false);
             desired.resetFlex();
 
             /* The setting can be switched on while the list is still open as a floating overlay;
@@ -171,17 +191,75 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
                 desired.removeFromParent();
             }
 
+            if (this.dataListEdge == null)
+            {
+                this.dataListEdge = new UIDraggable(this::dragDataListWidth)
+                    .cursors(GLFW.GLFW_HRESIZE_CURSOR, GLFW.GLFW_HRESIZE_CURSOR)
+                    .dragEnd(() -> BBSSettings.editorLayoutSettings.setSplitSize("open_data_list", this.dataListWidth));
+            }
+
+            /* The width the user last dragged to, the default until there is one; a screen
+             * that got narrower since must not inherit a column it cannot fit. */
+            this.dataListWidth = (int) BBSSettings.editorLayoutSettings.getSplitSize("open_data_list", DATA_LIST_WIDTH);
+
+            if (this.landing != null && this.landing.area.w > 0)
+            {
+                this.dataListWidth = MathUtils.clamp(this.dataListWidth, DATA_LIST_MIN_WIDTH, this.dataListMaxWidth());
+            }
+
             this.add(desired);
-            desired.relative(this).x(0).y(UIPanelTopBar.HEIGHT).w(DATA_LIST_WIDTH).h(1F, -UIPanelTopBar.HEIGHT);
+            desired.relative(this).x(0).y(UIPanelTopBar.HEIGHT).w(this.dataListWidth).h(1F, -UIPanelTopBar.HEIGHT);
+            this.dataListEdge.relative(desired).x(1F).y(0).w(6).h(1F).anchorX(0.5F);
+            desired.add(this.dataListEdge);
         }
 
         if (this.landing != null)
         {
-            this.landing.setListInset(this.dataManager == null ? 0 : DATA_LIST_WIDTH);
+            this.landing.setListInset(this.dataManager == null ? 0 : this.dataListWidth);
         }
 
         this.syncListButton();
         this.resize();
+    }
+
+    /**
+     * How wide the column may get: the card in the middle of the screen stays clear, with a
+     * breath of space between the two.
+     */
+    private int dataListMaxWidth()
+    {
+        if (this.landing == null || this.landing.area.w <= 0)
+        {
+            return DATA_LIST_MIN_WIDTH;
+        }
+
+        return Math.max(DATA_LIST_MIN_WIDTH, (this.landing.area.w - UILandingScreen.CARD_W) / 2 - 12);
+    }
+
+    /**
+     * Drag the column's right edge: wider or thinner, but never so wide that it reaches the
+     * card in the middle of the screen, and never so thin that the list cannot be read.
+     */
+    private void dragDataListWidth(UIContext context)
+    {
+        UIOverlayPanel column = this.dataManager;
+
+        if (column == null || this.landing == null || this.landing.area.w <= 0)
+        {
+            return;
+        }
+
+        int width = MathUtils.clamp(context.mouseX - column.area.x, DATA_LIST_MIN_WIDTH, this.dataListMaxWidth());
+
+        if (width == this.dataListWidth)
+        {
+            return;
+        }
+
+        this.dataListWidth = width;
+        column.w(width);
+        column.resize();
+        this.landing.setListInset(width);
     }
 
     /**

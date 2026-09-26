@@ -1654,6 +1654,8 @@
   "bbs.ui.panels.landing.forget": "Remove from recent",
   "bbs.ui.panels.landing.banner_edit": "Edit banner",
   "bbs.ui.banner_editor.title": "Banner settings",
+  "bbs.ui.banner_editor.page.banner": "Adjust the banner",
+  "bbs.ui.banner_editor.page.credit": "Captions",
   "bbs.ui.banner_editor.banners": "Banners",
   "bbs.ui.banner_editor.add": "Add a banner",
   "bbs.ui.banner_editor.pick": "Pick a file",

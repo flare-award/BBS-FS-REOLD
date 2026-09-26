@@ -1648,6 +1648,8 @@
   "bbs.ui.panels.landing.forget": "Убрать из недавних",
   "bbs.ui.panels.landing.banner_edit": "Изменить баннер",
   "bbs.ui.banner_editor.title": "Настройка баннера",
+  "bbs.ui.banner_editor.page.banner": "Настроить баннер",
+  "bbs.ui.banner_editor.page.credit": "Подписи",
   "bbs.ui.banner_editor.banners": "Баннеры",
   "bbs.ui.banner_editor.add": "Добавить баннер",
   "bbs.ui.banner_editor.pick": "Выбрать файл",

@@ -53,6 +53,24 @@ public class UIOverlayPanel extends UIElement
      */
     public boolean movable = true;
 
+    /**
+     * Whether the corner grip is offered. A panel embedded as a fixed column of some interface
+     * has nothing to resize from a corner, so the grip comes off with it and comes back when the
+     * panel is floating again.
+     */
+    public boolean resizable = true;
+
+    /** Toggles the corner grip: the flag for a not-yet-built grip, its visibility for an existing one. */
+    public void setResizable(boolean resizable)
+    {
+        this.resizable = resizable;
+
+        if (this.grip != null)
+        {
+            this.grip.setVisible(resizable);
+        }
+    }
+
     /** The corner grip, on the panels that offer sizing; null on the ones that don't. */
     private UIDraggable grip;
 
@@ -106,7 +124,7 @@ public class UIOverlayPanel extends UIElement
      */
     public void setupResize()
     {
-        if (this.grip != null || !this.isResizable())
+        if (this.grip != null || !this.isResizable() || !this.resizable)
         {
             return;
         }

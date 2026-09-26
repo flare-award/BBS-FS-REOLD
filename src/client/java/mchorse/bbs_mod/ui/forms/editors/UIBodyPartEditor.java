@@ -8,6 +8,7 @@ import mchorse.bbs_mod.forms.FormUtilsClient;
 import mchorse.bbs_mod.forms.forms.BodyPart;
 import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.forms.forms.ModelForm;
+import mchorse.bbs_mod.forms.forms.WebForm;
 import mchorse.bbs_mod.forms.renderers.ModelFormRenderer;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.Keys;
@@ -287,7 +288,14 @@ public class UIBodyPartEditor extends UIScrollView
             this.add(this.attachBone);
         }
 
-        this.add(this.weightEnabled, this.weightRow, this.useTarget, this.transform);
+        /* A part's mass only means anything to the web it hangs from &mdash; the rope is the
+         * one thing that weighs parts &mdash; so the weight controls come out everywhere else. */
+        if (form instanceof WebForm)
+        {
+            this.add(this.weightEnabled, this.weightRow);
+        }
+
+        this.add(this.useTarget, this.transform);
 
         this.scroll.setScroll(0);
         this.resize();

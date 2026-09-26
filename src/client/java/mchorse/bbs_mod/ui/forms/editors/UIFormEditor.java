@@ -75,6 +75,7 @@ import mchorse.bbs_mod.ui.utils.IBoneSelectionHost;
 import mchorse.bbs_mod.ui.utils.Gizmo;
 import mchorse.bbs_mod.ui.utils.GizmoDrag;
 import mchorse.bbs_mod.ui.utils.StencilFormFramebuffer;
+import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.bones.UIBonePicker;
 import mchorse.bbs_mod.ui.utils.UI;
 import mchorse.bbs_mod.ui.utils.UIUtils;
@@ -399,9 +400,31 @@ public class UIFormEditor extends UIElement implements IUIFormList, ICursor, IBo
             }
         });
 
+        /* The state editor's button strip, in the strip's color; it follows
+         * {@link #syncStripLayout()} the same way the buttons do. */
         UIRenderable backgroundStates = new UIRenderable((context) ->
         {
-            context.batcher.box(this.area.ex() - 20, this.area.y, this.area.ex(), this.area.ey(), BBSSettings.chromeSurface());
+            Area a = this.area;
+            int x, y, w, h;
+
+            if (this.lastStripSide == Direction.LEFT)
+            {
+                x = a.x; y = a.y; w = 20; h = a.h;
+            }
+            else if (this.lastStripSide == Direction.TOP)
+            {
+                x = a.x; y = a.y; w = a.w; h = 20;
+            }
+            else if (this.lastStripSide == Direction.BOTTOM)
+            {
+                x = a.x; y = a.ey() - 20; w = a.w; h = 20;
+            }
+            else
+            {
+                x = a.ex() - 20; y = a.y; w = 20; h = a.h;
+            }
+
+            context.batcher.box(x, y, x + w, y + h, BBSSettings.chromeSurface());
         });
 
         draggable.relative(this.forms).x(1F).y(0.5F).w(6).h(40).anchor(0.5F, 0.5F);
@@ -1245,12 +1268,16 @@ public class UIFormEditor extends UIElement implements IUIFormList, ICursor, IBo
     private Direction lastStripSide;
 
     /**
-     * The tree column is anchored to the editor, not to the panel the strip belongs to, so it
-     * does not yield to a docked strip on its own &mdash; a left strip would sit under the list,
-     * the way the panel does not. The column steps aside exactly as the panel does: off the
-     * edge the strip takes, and no further.
+     * Keep the tree, the corner buttons and the state editor's own strip out of the tab strip's
+     * way, wherever the strip lives. The tree column is anchored to the editor, not to the
+     * panel the strip belongs to, so it does not yield to a docked strip on its own &mdash; a
+     * left strip would sit under the list; it steps aside exactly as the panel does, off the
+     * edge the strip takes and no further. The strip is 20 pixels and always on the edge, so
+     * everything that used to live on the right edge is pushed the other way: the corner
+     * buttons ride the strip's corner and the state editor's button strip follows the setting
+     * too &mdash; it used to stay on the right no matter where the tab strip went.
      */
-    private void syncStripInset()
+    private void syncStripLayout()
     {
         Direction side = UIForm.getSettingsSide();
 
@@ -1264,33 +1291,76 @@ public class UIFormEditor extends UIElement implements IUIFormList, ICursor, IBo
         if (side == Direction.LEFT)
         {
             this.forms.x(20).y(0).h(1F);
-            this.icons.y(1F);
+            this.icons.x(0).y(1F).anchorY(1F);
         }
         else if (side == Direction.TOP)
         {
             this.forms.x(0).y(20).h(1F, -20);
-            this.icons.y(1F);
+            this.icons.x(1F, -20).y(0).anchorY(0F);
         }
         else if (side == Direction.BOTTOM)
         {
             this.forms.x(0).y(0).h(1F, -20);
             /* The corner buttons would stand on the strip itself. */
-            this.icons.y(1F, -20);
+            this.icons.x(1F, -20).y(1F, -20).anchorY(1F);
         }
         else
         {
             this.forms.x(0).y(0).h(1F);
-            this.icons.y(1F);
+            this.icons.x(1F, -20).y(1F).anchorY(1F);
         }
+
+        Direction tip;
+
+        if (side == Direction.LEFT)
+        {
+            this.openStates.relative(this.statesEditor).x(0).y(0);
+            this.plause.relative(this.openStates).x(0).y(1F);
+            this.shiftDuration.relative(this.plause).x(0).y(1F);
+            this.statesKeyframes.relative(this.statesEditor).x(20).y(0).w(1F, -20).h(1F);
+            tip = Direction.RIGHT;
+        }
+        else if (side == Direction.TOP)
+        {
+            this.openStates.relative(this.statesEditor).x(0).y(0);
+            this.plause.relative(this.openStates).x(1F).y(0);
+            this.shiftDuration.relative(this.plause).x(1F).y(0);
+            this.statesKeyframes.relative(this.statesEditor).x(0).y(20).w(1F).h(1F, -20);
+            tip = Direction.DOWN;
+        }
+        else if (side == Direction.BOTTOM)
+        {
+            this.openStates.relative(this.statesEditor).x(0).y(1F, -20);
+            this.plause.relative(this.openStates).x(1F).y(0);
+            this.shiftDuration.relative(this.plause).x(1F).y(0);
+            this.statesKeyframes.relative(this.statesEditor).x(0).y(0).w(1F).h(1F, -20);
+            tip = Direction.UP;
+        }
+        else
+        {
+            this.openStates.relative(this.statesEditor).x(1F, -20).y(0);
+            this.plause.relative(this.openStates).x(0).y(1F);
+            this.shiftDuration.relative(this.plause).x(0).y(1F);
+            this.statesKeyframes.relative(this.statesEditor).x(0).y(0).w(1F, -20).h(1F);
+            tip = Direction.LEFT;
+        }
+
+        this.openStates.tooltip(UIKeys.FORMS_EDITOR_STATES_OPEN, tip);
+        this.plause.tooltip(UIKeys.CAMERA_EDITOR_KEYS_EDITOR_PLAUSE, tip);
+        this.shiftDuration.tooltip(UIKeys.CAMERA_TIMELINE_CONTEXT_SHIFT_DURATION, tip);
 
         this.forms.resize();
         this.icons.resize();
+        this.openStates.resize();
+        this.plause.resize();
+        this.shiftDuration.resize();
+        this.statesKeyframes.resize();
     }
 
     @Override
     public void render(UIContext context)
     {
-        this.syncStripInset();
+        this.syncStripLayout();
 
         if (this.undoHandler != null)
         {

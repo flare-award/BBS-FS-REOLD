@@ -8,7 +8,6 @@ import mchorse.bbs_mod.resources.Link;
 import mchorse.bbs_mod.ui.UIKeys;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
-import mchorse.bbs_mod.ui.framework.elements.UISection;
 import mchorse.bbs_mod.ui.framework.elements.UIScrollView;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UICirculate;
@@ -18,6 +17,8 @@ import mchorse.bbs_mod.ui.framework.elements.input.UITexturePicker;
 import mchorse.bbs_mod.ui.framework.elements.input.UITrackpad;
 import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlayPanel;
+import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
+import mchorse.bbs_mod.ui.framework.elements.utils.UIRenderable;
 import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.ScrollDirection;
 import mchorse.bbs_mod.ui.utils.UI;
@@ -58,6 +59,19 @@ public class UIBannerEditorPanel extends UIOverlayPanel
     private static final int PREVIEW_W = 280;
     private static final int PREVIEW_H = Math.round(PREVIEW_W * UILandingScreen.BANNER_H / (float) UILandingScreen.CARD_W);
 
+    /** The side pages: 0 — the banner itself (what cycles, how it is framed), 1 — the captions. */
+    public static final int PAGE_BANNER = 0;
+    public static final int PAGE_CREDIT = 1;
+
+    private int page;
+    private int selected;
+
+    private UIIcon bannerButton;
+    private UIIcon creditButton;
+    private UIElement bannerPage;
+    private UIElement creditPage;
+    private UIScrollView sections;
+
     private UIElement list;
     private UIButton add;
     private UIButton reset;
@@ -69,8 +83,6 @@ public class UIBannerEditorPanel extends UIOverlayPanel
     private UICirculate creditStyle;
     private UIToggle creditToggle;
     private UIToggle plateToggle;
-
-    private int selected;
 
     /** The pending "add banner" pick; the texture picker calls back twice, once per fire. */
     private Object addToken;
@@ -91,9 +103,20 @@ public class UIBannerEditorPanel extends UIOverlayPanel
     {
         super(UIKeys.BANNER_EDITOR_TITLE);
 
+        /* The side buttons split the editor into two pages, the way the sound list splits its
+         * modes: the preset keeps its place, below the pages. */
+        this.bannerButton = new UIIcon(Icons.PICTURE, (b) -> this.showPage(PAGE_BANNER));
+        this.bannerButton.tooltip(UIKeys.BANNER_EDITOR_PAGE_BANNER, Direction.LEFT);
+        this.bannerButton.highlight(() -> this.page == PAGE_BANNER, Direction.LEFT);
+
+        this.creditButton = new UIIcon(Icons.FONT, (b) -> this.showPage(PAGE_CREDIT));
+        this.creditButton.tooltip(UIKeys.BANNER_EDITOR_PAGE_CREDIT, Direction.LEFT);
+        this.creditButton.highlight(() -> this.page == PAGE_CREDIT, Direction.LEFT);
+
         UIIcon presetsButton = new UIIcon(Icons.BUCKET, (b) -> this.presets.openPresets(b.getContext(), b.area.mx(), b.area.ey()));
         presetsButton.tooltip(UIKeys.GENERAL_PRESETS, Direction.LEFT);
-        this.icons.add(presetsButton);
+
+        this.icons.add(this.bannerButton, this.creditButton, presetsButton);
 
         this.list = new UIElement();
         this.list.column(4).vertical().stretch().padding(0);
@@ -126,6 +149,7 @@ public class UIBannerEditorPanel extends UIOverlayPanel
             BannerConfig.get().creditEnabled = t.getValue();
             BannerConfig.save();
         });
+        this.creditToggle.h(20);
 
         this.creditText = new UITextbox(BannerConfig.MAX_CREDIT_LENGTH, (str) ->
         {
@@ -151,33 +175,81 @@ public class UIBannerEditorPanel extends UIOverlayPanel
         });
         this.plateToggle.h(20);
 
-        UISection banners = this.section(UIKeys.BANNER_EDITOR_BANNERS);
-        banners.fields.add(this.list, this.add);
+        /* Page one: the banner itself — what cycles and how each of it is framed. */
+        this.bannerPage = new UIElement();
+        this.bannerPage.column(6).vertical().stretch().padding(0);
+        this.bannerPage.add(
+            this.sectionHeader(UIKeys.BANNER_EDITOR_BANNERS),
+            this.list,
+            this.add,
+            this.sectionHeader(UIKeys.BANNER_EDITOR_CROP),
+            previewRow,
+            this.labeledRow(UIKeys.BANNER_EDITOR_X, this.x),
+            this.labeledRow(UIKeys.BANNER_EDITOR_Y, this.y),
+            this.labeledRow(UIKeys.BANNER_EDITOR_ZOOM, this.zoom),
+            this.reset
+        );
 
-        UISection crop = this.section(UIKeys.BANNER_EDITOR_CROP);
-        crop.fields.add(previewRow, this.labeledRow(UIKeys.BANNER_EDITOR_X, this.x), this.labeledRow(UIKeys.BANNER_EDITOR_Y, this.y), this.labeledRow(UIKeys.BANNER_EDITOR_ZOOM, this.zoom), this.reset);
+        /* Page two: the captions — the credit line and the plate under the artwork. The rows
+         * carry no caption of their own where a section above already says what they are. */
+        this.creditPage = new UIElement();
+        this.creditPage.column(6).vertical().stretch().padding(0);
+        this.creditPage.add(
+            this.sectionHeader(UIKeys.BANNER_EDITOR_CREDIT),
+            this.creditToggle,
+            this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT_TEXT, this.creditText),
+            this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT_STYLE, this.creditStyle),
+            this.sectionHeader(UIKeys.BANNER_EDITOR_PLATE),
+            this.plateToggle
+        );
+        this.creditPage.setVisible(false);
 
-        UISection credit = this.section(UIKeys.BANNER_EDITOR_CREDIT);
-        credit.fields.add(this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT, this.creditToggle), this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT_TEXT, this.creditText), this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT_STYLE, this.creditStyle));
+        this.sections = new UIScrollView(ScrollDirection.VERTICAL);
+        this.sections.relative(this.content).xy(PADDING, PADDING).w(1F, -PADDING * 2).h(1F, -PADDING * 2);
+        this.sections.scroll.scrollSpeed = 51;
+        this.sections.column(0).vertical().stretch().scroll().padding(0);
+        this.sections.add(this.bannerPage, this.creditPage);
 
-        UISection plate = this.section(UIKeys.BANNER_EDITOR_PLATE);
-        plate.fields.add(this.plateToggle);
+        this.content.add(this.sections);
 
-        UIScrollView sections = new UIScrollView(ScrollDirection.VERTICAL);
-        sections.relative(this.content).xy(PADDING, PADDING).w(1F, -PADDING * 2).h(1F, -PADDING * 2);
-        sections.scroll.scrollSpeed = 51;
-        sections.column(3).vertical().stretch().scroll().padding(0);
-        sections.add(banners, crop, credit, plate);
-
-        this.content.add(sections);
-
+        this.page = PAGE_BANNER;
         this.rebuild();
     }
 
-    /** A foldable block the way the settings are made; its content keeps its own heights. */
-    private UISection section(IKey title)
+    /** Switches the side page the editor shows. */
+    private void showPage(int page)
     {
-        return new UISection(title);
+        if (this.page == page)
+        {
+            return;
+        }
+
+        this.page = page;
+        this.bannerPage.setVisible(page == PAGE_BANNER);
+        this.creditPage.setVisible(page != PAGE_BANNER);
+        this.sections.resize();
+        UIUtils.playClick();
+    }
+
+    /**
+     * A section title on its own darker ground: it must read as a divider, not as one of the
+     * controls under it, and it keeps its distance from the first row.
+     */
+    private UIElement sectionHeader(IKey title)
+    {
+        UIElement header = new UIElement();
+        header.h(18);
+
+        header.add(new UIRenderable((context) ->
+            context.batcher.box(header.area.x, header.area.y, header.area.ex(), header.area.ey(), BBSSettings.chromeSurface())
+        ));
+
+        UILabel label = UI.label(title, 18);
+        label.labelAnchor(0, 0.5F);
+        label.relative(header).x(4).y(0.5F).anchorY(0.5F);
+        header.add(label);
+
+        return header;
     }
 
     /** The same shape UIValueFactory.column builds for a settings row: a label and a control. */
