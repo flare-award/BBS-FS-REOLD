@@ -74,6 +74,13 @@ public final class IrliteL10n
     private IrliteL10n()
     {}
 
+    /** Temporary diagnostics: how many intercepted calls to print, to find out
+     *  whether the interception fires at all and which exact strings the
+     *  installed addon jar actually passes. Remove once the translation works. */
+    private static final int DIAG_LIMIT = 40;
+
+    private static int diagCount = 0;
+
     public static String translate(String label)
     {
         if (label == null)
@@ -81,20 +88,24 @@ public final class IrliteL10n
             return null;
         }
 
+        String lang;
+
         try
         {
-            if (!"ru_ru".equals(BBSSettings.language.get()))
-            {
-                return label;
-            }
+            lang = BBSSettings.language.get();
         }
         catch (Throwable t)
         {
-            /* Settings not up yet — keep the English. */
-            return label;
+            lang = "<unreadable: " + t + ">";
         }
 
-        String ru = RU.get(label);
+        String ru = "ru_ru".equals(lang) ? RU.get(label) : null;
+
+        if (diagCount++ < DIAG_LIMIT)
+        {
+            System.out.println("[IrliteL10n] lang=\"" + lang + "\" label=\"" + label + "\" -> "
+                + (ru != null ? "RU" : "EN"));
+        }
 
         return ru != null ? ru : label;
     }
