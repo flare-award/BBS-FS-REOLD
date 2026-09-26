@@ -20,7 +20,7 @@ public class IrlitePresetSectionL10nMixin
         index = 0,
         remap = false
     )
-    private String irliteRu(String label)
+    private static String irliteRu(String label)
     {
         return IrliteL10n.translate(label);
     }

@@ -15,25 +15,25 @@ public class IrlitePatcherSectionL10nMixin
         "Lmchorse/bbs_mod/l10n/keys/IKey;constant(Ljava/lang/String;)Lmchorse/bbs_mod/l10n/keys/IKey;";
 
     @ModifyArg(method = "append", at = @At(value = "INVOKE", target = IKEY_CONSTANT), index = 0, remap = false)
-    private String irliteRuAppend(String label)
+    private static String irliteRuAppend(String label)
     {
         return IrliteL10n.translate(label);
     }
 
     @ModifyArg(method = "headerRow", at = @At(value = "INVOKE", target = IKEY_CONSTANT), index = 0, remap = false)
-    private String irliteRuHeader(String label)
+    private static String irliteRuHeader(String label)
     {
         return IrliteL10n.translate(label);
     }
 
     @ModifyArg(method = "setMeta", at = @At(value = "INVOKE", target = IKEY_CONSTANT), index = 0, remap = false)
-    private String irliteRuMeta(String label)
+    private static String irliteRuMeta(String label)
     {
         return IrliteL10n.translate(label);
     }
 
     @ModifyArg(method = "setStatus", at = @At(value = "INVOKE", target = IKEY_CONSTANT), index = 0, remap = false)
-    private String irliteRuStatus(String label)
+    private static String irliteRuStatus(String label)
     {
         return IrliteL10n.translate(label);
     }
