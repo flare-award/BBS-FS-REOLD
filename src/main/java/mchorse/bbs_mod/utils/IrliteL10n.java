@@ -72,14 +72,6 @@ public final class IrliteL10n
     private IrliteL10n()
     {}
 
-    /** Temporary diagnostics: how many lines to print, to confirm the
-     *  resolved language and catch any string that still misses the map.
-     *  Remove once the translation works. */
-    private static final int DIAG_LIMIT = 25;
-
-    private static int diagCount = 0;
-    private static int diagPrinted = 0;
-
     public static String translate(String label, String language)
     {
         if (label == null)
@@ -88,14 +80,6 @@ public final class IrliteL10n
         }
 
         String ru = isRussian(language) ? RU.get(label) : null;
-
-        if (diagPrinted < DIAG_LIMIT && (diagCount < 5 || ru == null))
-        {
-            diagPrinted++;
-            System.out.println("[IrliteL10n] lang=\"" + language + "\" label=\"" + label + "\" -> "
-                + (ru != null ? "RU" : "EN"));
-        }
-        diagCount++;
 
         return ru != null ? ru : label;
     }
