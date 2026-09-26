@@ -25,7 +25,7 @@ public final class IrliteL10n
         RU.put("Presets", "Пресеты");
         RU.put("Quality", "Качество");
         RU.put("Beam style", "Стиль лучей");
-        RU.put("Performance", "Эффективность");
+        RU.put("Performance", "Низкое");
         RU.put("Balanced", "Сбалансированное");
         RU.put("Ultra", "Ультра");
         RU.put("Custom", "Свой");
