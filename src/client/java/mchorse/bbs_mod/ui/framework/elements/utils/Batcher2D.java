@@ -338,7 +338,10 @@ public class Batcher2D
     private static final int ROUNDED_RING_SAMPLES = 96;
 
     /** Scratch for the fill's outline; the fan reads it while the batch builds. */
-    private static final float[][] ROUNDED_FILL_POINTS = new float[1024][2];
+    /* Sized for the staircase's 512-iteration guard: four corners of at most 512 steps of
+     * up to two points each, plus the outline's start point. A real radius fills a few
+     * dozen; the size is there so even a pathological one overflows nothing. */
+    private static final float[][] ROUNDED_FILL_POINTS = new float[4200][2];
 
     /** Scratch for the ring's four corner points of a band segment. */
     private static final float[][] ROUNDED_RING_POINTS = new float[4][2];
@@ -1260,6 +1263,8 @@ public class Batcher2D
         float h = Math.max(1F, y2 - y1);
         float hubU = u1 + (cx - x1) / w * (u2 - u1);
         float hubV = v1 + (cy - y1) / h * (v2 - v1);
+
+        builder.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_TEXTURE_COLOR);
 
         for (int i = 0; i < count; i ++)
         {
