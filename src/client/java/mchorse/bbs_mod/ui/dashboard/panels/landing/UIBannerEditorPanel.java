@@ -17,8 +17,6 @@ import mchorse.bbs_mod.ui.framework.elements.input.UITexturePicker;
 import mchorse.bbs_mod.ui.framework.elements.input.UITrackpad;
 import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlayPanel;
-import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
-import mchorse.bbs_mod.ui.framework.elements.utils.UIRenderable;
 import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.ScrollDirection;
 import mchorse.bbs_mod.ui.utils.UI;
@@ -179,10 +177,8 @@ public class UIBannerEditorPanel extends UIOverlayPanel
         this.bannerPage = new UIElement();
         this.bannerPage.column(6).vertical().stretch().padding(0);
         this.bannerPage.add(
-            this.sectionHeader(UIKeys.BANNER_EDITOR_BANNERS),
             this.list,
             this.add,
-            this.sectionHeader(UIKeys.BANNER_EDITOR_CROP),
             previewRow,
             this.labeledRow(UIKeys.BANNER_EDITOR_X, this.x),
             this.labeledRow(UIKeys.BANNER_EDITOR_Y, this.y),
@@ -190,17 +186,15 @@ public class UIBannerEditorPanel extends UIOverlayPanel
             this.reset
         );
 
-        /* Page two: the captions — the credit line and the plate under the artwork. The rows
-         * carry no caption of their own where a section above already says what they are. */
+        /* Page two: the captions — the credit line and the plate under the artwork; each toggle
+         * keeps its caption, since it is the only clue to what it switches. */
         this.creditPage = new UIElement();
         this.creditPage.column(6).vertical().stretch().padding(0);
         this.creditPage.add(
-            this.sectionHeader(UIKeys.BANNER_EDITOR_CREDIT),
-            this.creditToggle,
+            this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT, this.creditToggle),
             this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT_TEXT, this.creditText),
             this.labeledRow(UIKeys.BANNER_EDITOR_CREDIT_STYLE, this.creditStyle),
-            this.sectionHeader(UIKeys.BANNER_EDITOR_PLATE),
-            this.plateToggle
+            this.labeledRow(UIKeys.BANNER_EDITOR_PLATE, this.plateToggle)
         );
         this.creditPage.setVisible(false);
 
@@ -229,27 +223,6 @@ public class UIBannerEditorPanel extends UIOverlayPanel
         this.creditPage.setVisible(page != PAGE_BANNER);
         this.sections.resize();
         UIUtils.playClick();
-    }
-
-    /**
-     * A section title on its own darker ground: it must read as a divider, not as one of the
-     * controls under it, and it keeps its distance from the first row.
-     */
-    private UIElement sectionHeader(IKey title)
-    {
-        UIElement header = new UIElement();
-        header.h(18);
-
-        header.add(new UIRenderable((context) ->
-            context.batcher.box(header.area.x, header.area.y, header.area.ex(), header.area.ey(), BBSSettings.chromeSurface())
-        ));
-
-        UILabel label = UI.label(title, 18);
-        label.labelAnchor(0, 0.5F);
-        label.relative(header).x(4).y(0.5F).anchorY(0.5F);
-        header.add(label);
-
-        return header;
     }
 
     /** The same shape UIValueFactory.column builds for a settings row: a label and a control. */

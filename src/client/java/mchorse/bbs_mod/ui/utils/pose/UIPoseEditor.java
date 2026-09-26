@@ -265,6 +265,9 @@ public class UIPoseEditor extends UIElement
                 consumer.accept(this.pose.getOrCreate(key));
             }
         }
+
+        /* Applying a fix onto children can tip the skeleton into or out of the uniform state. */
+        this.syncFullFixState();
     }
 
     public Pose getPose()
@@ -528,12 +531,12 @@ public class UIPoseEditor extends UIElement
         {
             this.boneSelection().set("");
             this.fix.setValue(0F);
-            this.fullFixSlider.setValue(0F);
             this.boneVisible.setValue(true);
             this.color.setColor(Colors.WHITE);
             this.overlay.setColor(0x00ffffff);
             this.lighting.setValue(0F);
             this.transform.setTransform(null);
+            this.syncFullFixState();
 
             return;
         }
@@ -545,12 +548,12 @@ public class UIPoseEditor extends UIElement
         PoseTransform poseTransform = this.pose.getOrCreate(primary);
 
         this.fix.setValue(poseTransform.fix);
-        this.fullFixSlider.setValue(poseTransform.fix);
         this.boneVisible.setValue(poseTransform.visible);
         this.color.setColor(poseTransform.color.getARGBColor());
         this.overlay.setColor(poseTransform.overlay.getARGBColor());
         this.lighting.setValue(poseTransform.lighting);
         this.transform.setTransform(poseTransform);
+        this.syncFullFixState();
     }
 
     private void forEachSelectedPose(Consumer<? super PoseTransform> consumer)
@@ -706,6 +709,7 @@ public class UIPoseEditor extends UIElement
     {
         this.forEachSelectedPose((pt) -> this.setFix(pt, value));
         this.fix.setValue(value);
+        this.syncFullFixState();
     }
 
     /**
@@ -726,6 +730,11 @@ public class UIPoseEditor extends UIElement
         {
             this.pose.getOrCreate(bone).fix = value;
         }
+
+        /* The bone on screen and the full-fix control follow the skeleton at once, without a
+         * re-selection of the bone to see the new value. */
+        this.fix.setValue(value);
+        this.syncFullFixState();
     }
 
     /** Which of the two full-fix rows is shown: the toggle, or the slider when the setting says so. */
@@ -736,26 +745,38 @@ public class UIPoseEditor extends UIElement
         this.fullFixToggleRow.setVisible(this.hasBones && !slider);
         this.fullFixSliderRow.setVisible(this.hasBones && slider);
 
-        /* Coming in on the slider (a mode switch) must not show 0 for a skeleton that was
-         * just fully fixed: read the value the regular fix slider already reads. */
-        if (slider)
-        {
-            this.syncFullFixSlider();
-        }
+        this.syncFullFixState();
     }
 
-    /** The full-fix slider tracks the same bone the regular fix slider does, so the two never disagree. */
-    private void syncFullFixSlider()
+    /**
+     * The full-fix control reads the whole skeleton, not the selected bone: while every bone is
+     * pinned to the same value it is on and carries that value, and the moment any bone deviates
+     * &mdash; even one left at 0 among pinned ones &mdash; it reads off. Re-derived wherever a
+     * fix value can change: a full-fix write, a per-bone edit, an apply-to-children, a
+     * re-selection.
+     */
+    protected void syncFullFixState()
     {
-        if (this.pose == null)
+        float common = 0F;
+        boolean uniform = this.pose != null && !this.allBones.isEmpty();
+
+        for (String bone : this.allBones)
         {
-            this.fullFixSlider.setValue(0F);
-            return;
+            PoseTransform pt = this.pose.get(bone);
+            float fix = pt == null ? 0F : pt.fix;
+
+            if (Math.abs(fix - common) > 0.001F)
+            {
+                uniform = false;
+                break;
+            }
+
+            common = fix;
         }
 
-        String primary = this.groups.list.getCurrentFirst();
-
-        this.fullFixSlider.setValue(primary == null || primary.isEmpty() ? 0F : this.pose.getOrCreate(primary).fix);
+        this.fullFix.setValue(uniform);
+        this.fullFixSlider.setValue(uniform ? common : 0F);
+        this.fullFixSlider.setEnabled(uniform);
     }
 
     private static void attachFullFixListener()

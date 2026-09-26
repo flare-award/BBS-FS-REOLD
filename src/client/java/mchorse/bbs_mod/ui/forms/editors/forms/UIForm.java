@@ -64,32 +64,12 @@ public abstract class UIForm <T extends Form> extends UIPanelBase<UIFormPanel<T>
     }
 
     /**
-     * Which edge the tab strip is docked to, as the settings currently have it. The order of the
-     * modes in the settings is bottom, top, left, right, so the right side (the 2.7 default) is 3.
+     * Which edge the tab strip is docked to, as the settings currently have it. The strip only
+     * docks to the left and the right, so the setting's modes are left, right.
      */
     public static Direction getSettingsSide()
     {
-        int value = MathUtils.clamp(BBSSettings.tabStripSide.get(), 0, 3);
-
-        switch (value)
-        {
-            case 0:
-            {
-                return Direction.BOTTOM;
-            }
-            case 1:
-            {
-                return Direction.TOP;
-            }
-            case 2:
-            {
-                return Direction.LEFT;
-            }
-            default:
-            {
-                return Direction.RIGHT;
-            }
-        }
+        return MathUtils.clamp(BBSSettings.tabStripSide.get(), 0, 1) == 0 ? Direction.LEFT : Direction.RIGHT;
     }
 
     /**

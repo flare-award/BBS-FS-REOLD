@@ -606,9 +606,12 @@ public class BBSModClient implements ClientModInitializer
 
         BBSSettings.taskbarSide.modes(UIDashboardPanels.getSideLabels());
 
+        /* The strip only docks to the left and the right now; the old bottom/top values are
+         * mapped onto the default right side so the setting stays in range of the two modes. */
+        int tabSide = BBSSettings.tabStripSide.get();
+        BBSSettings.tabStripSide.set(tabSide == 2 ? 0 : 1);
+
         BBSSettings.tabStripSide.modes(
-            UIKeys.FORMS_TABS_STRIP_SIDE_BOTTOM,
-            UIKeys.FORMS_TABS_STRIP_SIDE_TOP,
             UIKeys.FORMS_TABS_STRIP_SIDE_LEFT,
             UIKeys.FORMS_TABS_STRIP_SIDE_RIGHT
         );

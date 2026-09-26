@@ -230,6 +230,8 @@ public class UIPoseKeyframeFactory extends UIKeyframeFactory<Pose>
         protected void applyFullFix(float value)
         {
             apply(this.editor, this.keyframe, this.allBones, (poseT) -> poseT.fix = value);
+            this.fix.setValue(value);
+            this.syncFullFixState();
         }
 
         @Override

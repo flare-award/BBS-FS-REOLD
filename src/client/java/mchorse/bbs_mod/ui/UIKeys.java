@@ -262,10 +262,8 @@ public class UIKeys
     public static final IKey DASHBOARD_TASKBAR_SIDE_LEFT = L10n.lang("bbs.ui.dashboard.taskbar_side.left");
     public static final IKey DASHBOARD_TASKBAR_SIDE_RIGHT = L10n.lang("bbs.ui.dashboard.taskbar_side.right");
     public static final IKey DASHBOARD_TASKBAR_SIDE_TOP = L10n.lang("bbs.ui.dashboard.taskbar_side.top");
-    public static final IKey FORMS_TABS_STRIP_SIDE_BOTTOM = L10n.lang("bbs.ui.forms.tabs_strip_side.bottom");
     public static final IKey FORMS_TABS_STRIP_SIDE_LEFT = L10n.lang("bbs.ui.forms.tabs_strip_side.left");
     public static final IKey FORMS_TABS_STRIP_SIDE_RIGHT = L10n.lang("bbs.ui.forms.tabs_strip_side.right");
-    public static final IKey FORMS_TABS_STRIP_SIDE_TOP = L10n.lang("bbs.ui.forms.tabs_strip_side.top");
     public static final IKey ENGINE_KEYSTROKES_POSITION_AUTO = L10n.lang("bbs.keystrokes_position.auto");
     public static final IKey ENGINE_KEYSTROKES_POSITION_BOTTOM_LEFT = L10n.lang("bbs.keystrokes_position.bottom_left");
     public static final IKey ENGINE_KEYSTROKES_POSITION_BOTTOM_RIGHT = L10n.lang("bbs.keystrokes_position.bottom_right");
@@ -1414,12 +1412,10 @@ public class UIKeys
     public static final IKey BANNER_EDITOR_TITLE = L10n.lang("bbs.ui.banner_editor.title");
     public static final IKey BANNER_EDITOR_PAGE_BANNER = L10n.lang("bbs.ui.banner_editor.page.banner");
     public static final IKey BANNER_EDITOR_PAGE_CREDIT = L10n.lang("bbs.ui.banner_editor.page.credit");
-    public static final IKey BANNER_EDITOR_BANNERS = L10n.lang("bbs.ui.banner_editor.banners");
     public static final IKey BANNER_EDITOR_ADD = L10n.lang("bbs.ui.banner_editor.add");
     public static final IKey BANNER_EDITOR_PICK = L10n.lang("bbs.ui.banner_editor.pick");
     public static final IKey BANNER_EDITOR_REMOVE = L10n.lang("bbs.ui.banner_editor.remove");
     public static final IKey BANNER_EDITOR_RESET = L10n.lang("bbs.ui.banner_editor.reset");
-    public static final IKey BANNER_EDITOR_CROP = L10n.lang("bbs.ui.banner_editor.crop");
     public static final IKey BANNER_EDITOR_X = L10n.lang("bbs.ui.banner_editor.x");
     public static final IKey BANNER_EDITOR_Y = L10n.lang("bbs.ui.banner_editor.y");
     public static final IKey BANNER_EDITOR_ZOOM = L10n.lang("bbs.ui.banner_editor.zoom");

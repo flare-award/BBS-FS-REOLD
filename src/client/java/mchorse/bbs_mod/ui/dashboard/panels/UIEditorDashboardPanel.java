@@ -143,6 +143,18 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
 
         if (desired == this.dataManager)
         {
+            /* The width is one value for every tab: another tab may have dragged the shared
+             * column while this one was off screen, and this one follows it. */
+            int persisted = (int) BBSSettings.editorLayoutSettings.getSplitSize("open_data_list", DATA_LIST_WIDTH);
+
+            if (persisted != this.dataListWidth && this.landing != null && this.landing.area.w > 0)
+            {
+                this.dataListWidth = MathUtils.clamp(persisted, DATA_LIST_MIN_WIDTH, this.dataListMaxWidth());
+                desired.w(this.dataListWidth);
+                desired.resize();
+                this.landing.setListInset(this.dataListWidth);
+            }
+
             return;
         }
 
@@ -209,7 +221,10 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
 
             this.add(desired);
             desired.relative(this).x(0).y(UIPanelTopBar.HEIGHT).w(this.dataListWidth).h(1F, -UIPanelTopBar.HEIGHT);
-            this.dataListEdge.relative(desired).x(1F).y(0).w(6).h(1F).anchorX(0.5F);
+
+            /* No handle to see, no strip to show: a three-pixel seam hugging the column's right
+             * edge, inside it, where the cursor says "drag" and that is all. */
+            this.dataListEdge.relative(desired).x(1F, -3).y(0).w(3).h(1F);
             desired.add(this.dataListEdge);
         }
 
