@@ -70,11 +70,24 @@ public class UIFormRenderer extends UIModelRenderer
     }
 
     /**
+     * Whether the space's background composites against the world: viewports that show the
+     * world through the panel (the immersive block editor) keep the world's depth buffer, so
+     * the background draws depth-tested, without writing, and sits behind the world's
+     * geometry - the block stays over the space, wherever the camera looks from. Preview
+     * viewports clear the depth and simply draw the background first instead.
+     */
+    protected boolean backgroundAgainstWorld()
+    {
+        return false;
+    }
+
+    /**
      * The space this form's viewport shows around the model. Normal leaves whatever is under
-     * the viewport in place; solid and studio fill it; photo lays the picture over it. The
-     * fill sits at {@link #SPACE_FAR_Z} behind the model and the grid, so the compositing is
-     * decided by the depth buffer, not by draw order. The values are the form's own, live - a
-     * change in the space tab is visible on the next frame without any plumbing.
+     * the viewport in place; solid and studio fill it; photo lays the picture over it. In a
+     * preview viewport the background is drawn first and touches no depth, so it sits behind
+     * the grid and the model at every zoom; against the world it is depth-tested on the
+     * world's depth, so it sits behind the world's geometry instead. Either way the values
+     * are the form's own, live - a change in the space tab is visible on the next frame.
      */
     @Override
     protected void renderBackground(UIContext context)
@@ -86,6 +99,7 @@ public class UIFormRenderer extends UIModelRenderer
             return;
         }
 
+        boolean againstWorld = this.backgroundAgainstWorld();
         int mode = MathUtils.clamp(form.spaceMode.get(), Form.SPACE_NORMAL, Form.SPACE_STUDIO);
 
         switch (mode)
@@ -94,19 +108,19 @@ public class UIFormRenderer extends UIModelRenderer
             {
                 Color color = form.spaceColor.get();
 
-                this.renderSpaceFill(context, color.r, color.g, color.b);
+                this.renderSpaceFill(context, color.r, color.g, color.b, againstWorld);
 
                 break;
             }
             case Form.SPACE_PHOTO:
             {
-                this.renderSpacePhoto(context, form);
+                this.renderSpacePhoto(context, form, againstWorld);
 
                 break;
             }
             case Form.SPACE_STUDIO:
             {
-                this.renderSpaceStudio(context);
+                this.renderSpaceStudio(context, againstWorld);
 
                 break;
             }
@@ -116,24 +130,40 @@ public class UIFormRenderer extends UIModelRenderer
                  * existed. */
             }
         }
+
+        if (againstWorld)
+        {
+            /* The world's depth was there only for the space's background; hand the viewport
+             * back to the cleared state the gizmo, outlines and hitboxes expect, so they
+             * render exactly as in a preview. */
+            GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+        }
     }
 
     /**
-     * The flat space fill: a full-viewport quad, in NDC, drawn first in the pass with the
-     * depth test and write both off. No fixed depth is ever safe here - the camera zooms out
-     * to 256 units, and at that range the model's own depth is closer to 1 than any quad's
-     * could be, so a depth-tested fill simply lost to the model and covered it. The pass's
-     * order is fixed (fill, grid, model, overlays), so "drawn first, touches no depth" puts
-     * the fill behind the model at every zoom, for good.
+     * The flat space fill: a full-viewport quad, in NDC, drawn first in the pass. It never
+     * writes depth, and against a preview it is not tested either - no fixed depth is ever
+     * safe there (the camera zooms out to 256 units, and at that range the model's own
+     * depth is closer to 1 than any quad's could be), so "drawn first, touches no depth"
+     * puts it behind the model at every zoom, for good. Against the world it is tested on
+     * the world's depth, so the world's geometry stays over it.
      */
-    private void renderSpaceFill(UIContext context, float r, float g, float b)
+    private void renderSpaceFill(UIContext context, float r, float g, float b, boolean againstWorld)
     {
         Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
         VertexSorter previousSorter = RenderSystem.getVertexSorting();
 
         RenderSystem.setProjectionMatrix(new Matrix4f(), VertexSorter.BY_Z);
         RenderSystem.disableBlend();
-        RenderSystem.disableDepthTest();
+        if (againstWorld)
+        {
+            RenderSystem.enableDepthTest();
+        }
+        else
+        {
+            RenderSystem.disableDepthTest();
+        }
+
         RenderSystem.depthMask(false);
         RenderSystem.disableCull();
         RenderSystem.setShader(GameRenderer::getPositionColorProgram);
@@ -165,12 +195,12 @@ public class UIFormRenderer extends UIModelRenderer
     /**
      * The photo behind the model: a screen-space quad in the same placement language as the
      * film's photo layers (scale 1 spans the viewport's full height, x/y roam +-2, the width
-     * keeps the photo's aspect). Like the fill it is drawn first, without the depth test or
-     * write, so the model and its translucent parts always draw over it at any zoom. Where
-     * the quad does not reach, whatever was under the viewport - the world - stays visible,
-     * on purpose.
+     * keeps the photo's aspect). Like the fill it is drawn first and never writes depth, so
+     * the model and its translucent parts always draw over it at any zoom; against the world
+     * it is depth-tested, so the world's geometry stays over it. Where the quad does not
+     * reach, whatever was under the viewport stays visible, on purpose.
      */
-    private void renderSpacePhoto(UIContext context, Form form)
+    private void renderSpacePhoto(UIContext context, Form form, boolean againstWorld)
     {
         Texture photo = FilmEffects.getPhotoTexture(form.spacePhoto.get());
 
@@ -208,7 +238,15 @@ public class UIFormRenderer extends UIModelRenderer
         BBSModClient.getTextures().bindTexture(photo);
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
-        RenderSystem.disableDepthTest();
+        if (againstWorld)
+        {
+            RenderSystem.enableDepthTest();
+        }
+        else
+        {
+            RenderSystem.disableDepthTest();
+        }
+
         RenderSystem.depthMask(false);
         RenderSystem.disableCull();
         RenderSystem.setShader(GameRenderer::getPositionTexColorProgram);
@@ -275,9 +313,9 @@ public class UIFormRenderer extends UIModelRenderer
      * camera and the model whenever the camera dips below it - with no depth written, the
      * model (drawn later) always lands over the floor, at any angle.
      */
-    private void renderSpaceStudio(UIContext context)
+    private void renderSpaceStudio(UIContext context, boolean againstWorld)
     {
-        this.renderSpaceFill(context, STUDIO_BACKGROUND.r, STUDIO_BACKGROUND.g, STUDIO_BACKGROUND.b);
+        this.renderSpaceFill(context, STUDIO_BACKGROUND.r, STUDIO_BACKGROUND.g, STUDIO_BACKGROUND.b, againstWorld);
 
         Matrix4f matrix4f = context.batcher.getContext().getMatrices().peek().getPositionMatrix();
         BufferBuilder builder = Tessellator.getInstance().getBuffer();

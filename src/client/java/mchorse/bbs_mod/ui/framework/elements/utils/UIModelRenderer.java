@@ -420,12 +420,24 @@ public abstract class UIModelRenderer extends UIElement
 
     protected void setupViewport(UIContext context)
     {
-        GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+        this.clearViewportDepth();
 
         int[] viewport = UIUtils.viewportArea(this.area);
 
         this.camera.updatePerspectiveProjection(viewport[2], viewport[3]);
         this.camera.updateView();
+    }
+
+    /**
+     * The viewport's depth buffer starts empty (all far), so what the pass draws is judged
+     * against itself, not against the world behind the panel. Viewports that show the world
+     * through the panel (the immersive block editor, F7) keep the world's depth instead -
+     * the space's background composites behind the world's geometry on it, and the buffer
+     * is cleared again before the gizmo and outlines (see UIFormRenderer#renderBackground).
+     */
+    protected void clearViewportDepth()
+    {
+        GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
     }
 
     /**

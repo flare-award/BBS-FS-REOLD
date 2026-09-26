@@ -65,6 +65,32 @@ public class UIPickableFormRenderer extends UIFormRenderer implements GizmoViewp
         this.renderForm = renderForm;
     }
 
+    /** Whether the viewport draws the form's own preview right now (the default). */
+    protected boolean rendersForm()
+    {
+        return this.renderForm == null || this.renderForm.get();
+    }
+
+    /**
+     * While the viewport shows the world instead of a preview (immersive editing, F7), the
+     * world's depth must survive: the space's background composites behind the world's
+     * geometry on it, and renderBackground clears the buffer again afterwards.
+     */
+    @Override
+    protected void clearViewportDepth()
+    {
+        if (this.rendersForm())
+        {
+            super.clearViewportDepth();
+        }
+    }
+
+    @Override
+    protected boolean backgroundAgainstWorld()
+    {
+        return !this.rendersForm();
+    }
+
     public IEntity getTargetEntity()
     {
         return this.target == null ? this.entity : this.target;
