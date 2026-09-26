@@ -1326,7 +1326,7 @@ public class UIFormEditor extends UIElement implements IUIFormList, ICursor, IBo
             this.plause.relative(this.openStates).x(1F).y(0);
             this.shiftDuration.relative(this.plause).x(1F).y(0);
             this.statesKeyframes.relative(this.statesEditor).x(0).y(20).w(1F).h(1F, -20);
-            tip = Direction.DOWN;
+            tip = Direction.BOTTOM;
         }
         else if (side == Direction.BOTTOM)
         {
@@ -1334,7 +1334,7 @@ public class UIFormEditor extends UIElement implements IUIFormList, ICursor, IBo
             this.plause.relative(this.openStates).x(1F).y(0);
             this.shiftDuration.relative(this.plause).x(1F).y(0);
             this.statesKeyframes.relative(this.statesEditor).x(0).y(0).w(1F).h(1F, -20);
-            tip = Direction.UP;
+            tip = Direction.TOP;
         }
         else
         {
