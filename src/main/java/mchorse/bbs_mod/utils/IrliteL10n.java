@@ -1,7 +1,5 @@
 package mchorse.bbs_mod.utils;
 
-import mchorse.bbs_mod.BBSSettings;
-
 import java.util.HashMap;
 import java.util.Map;
 
@@ -74,39 +72,39 @@ public final class IrliteL10n
     private IrliteL10n()
     {}
 
-    /** Temporary diagnostics: how many intercepted calls to print, to find out
-     *  whether the interception fires at all and which exact strings the
-     *  installed addon jar actually passes. Remove once the translation works. */
-    private static final int DIAG_LIMIT = 40;
+    /** Temporary diagnostics: how many lines to print, to confirm the
+     *  resolved language and catch any string that still misses the map.
+     *  Remove once the translation works. */
+    private static final int DIAG_LIMIT = 25;
 
     private static int diagCount = 0;
+    private static int diagPrinted = 0;
 
-    public static String translate(String label)
+    public static String translate(String label, String language)
     {
         if (label == null)
         {
             return null;
         }
 
-        String lang;
+        String ru = isRussian(language) ? RU.get(label) : null;
 
-        try
+        if (diagPrinted < DIAG_LIMIT && (diagCount < 5 || ru == null))
         {
-            lang = BBSSettings.language.get();
-        }
-        catch (Throwable t)
-        {
-            lang = "<unreadable: " + t + ">";
-        }
-
-        String ru = "ru_ru".equals(lang) ? RU.get(label) : null;
-
-        if (diagCount++ < DIAG_LIMIT)
-        {
-            System.out.println("[IrliteL10n] lang=\"" + lang + "\" label=\"" + label + "\" -> "
+            diagPrinted++;
+            System.out.println("[IrliteL10n] lang=\"" + language + "\" label=\"" + label + "\" -> "
                 + (ru != null ? "RU" : "EN"));
         }
+        diagCount++;
 
         return ru != null ? ru : label;
+    }
+
+    /** The BBS setting can be empty ("Minecraft (auto)"), in which case the
+     *  effective language is Minecraft's own, resolved by the caller via
+     *  BBSModClient.getLanguageKey(). Accept any ru* tag. */
+    private static boolean isRussian(String language)
+    {
+        return language != null && language.toLowerCase().startsWith("ru");
     }
 }

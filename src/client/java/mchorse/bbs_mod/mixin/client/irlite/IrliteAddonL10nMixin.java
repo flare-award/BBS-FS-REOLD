@@ -1,5 +1,6 @@
 package mchorse.bbs_mod.mixin.client.irlite;
 
+import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.utils.IrliteL10n;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -24,6 +25,13 @@ public class IrliteAddonL10nMixin
     )
     private static String irliteRu(String label)
     {
-        return IrliteL10n.translate(label);
+        try
+        {
+            return IrliteL10n.translate(label, BBSModClient.getLanguageKey());
+        }
+        catch (Throwable t)
+        {
+            return label;
+        }
     }
 }

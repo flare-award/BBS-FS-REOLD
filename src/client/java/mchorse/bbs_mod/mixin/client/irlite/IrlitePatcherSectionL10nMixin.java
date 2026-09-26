@@ -1,5 +1,6 @@
 package mchorse.bbs_mod.mixin.client.irlite;
 
+import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.utils.IrliteL10n;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -18,24 +19,36 @@ public class IrlitePatcherSectionL10nMixin
     @ModifyArg(method = "append", at = @At(value = "INVOKE", target = IKEY_CONSTANT), index = 0, remap = false)
     private static String irliteRuAppend(String label)
     {
-        return IrliteL10n.translate(label);
+        return irliteRu(label);
     }
 
     @ModifyArg(method = "headerRow", at = @At(value = "INVOKE", target = IKEY_CONSTANT), index = 0, remap = false)
     private static String irliteRuHeader(String label)
     {
-        return IrliteL10n.translate(label);
+        return irliteRu(label);
     }
 
     @ModifyArg(method = "setMeta", at = @At(value = "INVOKE", target = IKEY_CONSTANT), index = 0, remap = false)
     private static String irliteRuMeta(String label)
     {
-        return IrliteL10n.translate(label);
+        return irliteRu(label);
     }
 
     @ModifyArg(method = "setStatus", at = @At(value = "INVOKE", target = IKEY_CONSTANT), index = 0, remap = false)
     private static String irliteRuStatus(String label)
     {
-        return IrliteL10n.translate(label);
+        return irliteRu(label);
+    }
+
+    private static String irliteRu(String label)
+    {
+        try
+        {
+            return IrliteL10n.translate(label, BBSModClient.getLanguageKey());
+        }
+        catch (Throwable t)
+        {
+            return label;
+        }
     }
 }
