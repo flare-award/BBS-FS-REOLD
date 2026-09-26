@@ -144,15 +144,21 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
         if (desired == this.dataManager)
         {
             /* The width is one value for every tab: another tab may have dragged the shared
-             * column while this one was off screen, and this one follows it. */
-            int persisted = (int) BBSSettings.editorLayoutSettings.getSplitSize("open_data_list", DATA_LIST_WIDTH);
-
-            if (persisted != this.dataListWidth && this.landing != null && this.landing.area.w > 0)
+             * column while this one was off screen, and this one follows it. Not while this
+             * tab's own drag is in flight, though: the persisted value only lands at the
+             * release, so following it mid-drag would fight the hand and hold the column at
+             * its old width. */
+            if (this.dataListEdge == null || !this.dataListEdge.isDragging())
             {
-                this.dataListWidth = MathUtils.clamp(persisted, DATA_LIST_MIN_WIDTH, this.dataListMaxWidth());
-                desired.w(this.dataListWidth);
-                desired.resize();
-                this.landing.setListInset(this.dataListWidth);
+                int persisted = (int) BBSSettings.editorLayoutSettings.getSplitSize("open_data_list", DATA_LIST_WIDTH);
+
+                if (persisted != this.dataListWidth && this.landing != null && this.landing.area.w > 0)
+                {
+                    this.dataListWidth = MathUtils.clamp(persisted, DATA_LIST_MIN_WIDTH, this.dataListMaxWidth());
+                    desired.w(this.dataListWidth);
+                    desired.resize();
+                    this.landing.setListInset(this.dataListWidth);
+                }
             }
 
             return;
