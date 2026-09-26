@@ -41,10 +41,9 @@ public class UIFormRenderer extends UIModelRenderer
     private static final float STUDIO_PLANE_HALF = 16F;
 
     /**
-     * The depth the space fill sits at: just inside the far plane, so the model and the grid
-     * (which wrote real depth in front of it) always occlude it. The fill is a quad at this
-     * depth, not a color clear - a clear's result depends on the scissor and buffer state at
-     * the moment, the quad composites by depth, so it can never land over the model.
+     * The z the space quads are built at. The quads are drawn without the depth test or write
+     * (see below), so the value is cosmetic; it is kept near the far plane so a quad that
+     * leaks into a depth-tested state still loses to the model, not wins it.
      */
     private static final float SPACE_FAR_Z = 0.9999F;
 
@@ -120,11 +119,12 @@ public class UIFormRenderer extends UIModelRenderer
     }
 
     /**
-     * The flat space fill: a full-viewport quad at the far depth, in NDC. Depth is tested
-     * (the viewport's depth was just cleared, so nothing is in front of it yet) and written,
-     * so everything the pass draws afterwards - the grid, the model, its translucent parts -
-     * composites over it by depth, and nothing drawn earlier can show through except what
-     * the quad itself leaves alone.
+     * The flat space fill: a full-viewport quad, in NDC, drawn first in the pass with the
+     * depth test and write both off. No fixed depth is ever safe here - the camera zooms out
+     * to 256 units, and at that range the model's own depth is closer to 1 than any quad's
+     * could be, so a depth-tested fill simply lost to the model and covered it. The pass's
+     * order is fixed (fill, grid, model, overlays), so "drawn first, touches no depth" puts
+     * the fill behind the model at every zoom, for good.
      */
     private void renderSpaceFill(UIContext context, float r, float g, float b)
     {
@@ -133,8 +133,8 @@ public class UIFormRenderer extends UIModelRenderer
 
         RenderSystem.setProjectionMatrix(new Matrix4f(), VertexSorter.BY_Z);
         RenderSystem.disableBlend();
-        RenderSystem.enableDepthTest();
-        RenderSystem.depthMask(true);
+        RenderSystem.disableDepthTest();
+        RenderSystem.depthMask(false);
         RenderSystem.disableCull();
         RenderSystem.setShader(GameRenderer::getPositionColorProgram);
         RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
@@ -156,6 +156,8 @@ public class UIFormRenderer extends UIModelRenderer
         finally
         {
             RenderSystem.enableCull();
+            RenderSystem.enableDepthTest();
+            RenderSystem.depthMask(true);
             RenderSystem.setProjectionMatrix(previousProjection, previousSorter);
         }
     }
@@ -163,9 +165,10 @@ public class UIFormRenderer extends UIModelRenderer
     /**
      * The photo behind the model: a screen-space quad in the same placement language as the
      * film's photo layers (scale 1 spans the viewport's full height, x/y roam +-2, the width
-     * keeps the photo's aspect). It sits at the far depth with the depth test on, so the
-     * model and its translucent parts draw over it. Where the quad does not reach, whatever
-     * was under the viewport - the world - stays visible, on purpose.
+     * keeps the photo's aspect). Like the fill it is drawn first, without the depth test or
+     * write, so the model and its translucent parts always draw over it at any zoom. Where
+     * the quad does not reach, whatever was under the viewport - the world - stays visible,
+     * on purpose.
      */
     private void renderSpacePhoto(UIContext context, Form form)
     {
@@ -205,8 +208,8 @@ public class UIFormRenderer extends UIModelRenderer
         BBSModClient.getTextures().bindTexture(photo);
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
-        RenderSystem.enableDepthTest();
-        RenderSystem.depthMask(true);
+        RenderSystem.disableDepthTest();
+        RenderSystem.depthMask(false);
         RenderSystem.disableCull();
         RenderSystem.setShader(GameRenderer::getPositionTexColorProgram);
         RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
@@ -221,11 +224,13 @@ public class UIFormRenderer extends UIModelRenderer
         {
             RenderSystem.enableCull();
             RenderSystem.disableBlend();
+            RenderSystem.enableDepthTest();
+            RenderSystem.depthMask(true);
             RenderSystem.setProjectionMatrix(previousProjection, previousSorter);
         }
     }
 
-    /** One photo quad in NDC at the far depth; the placement math is the film's, so both features agree. */
+    /** One photo quad in NDC; the placement math is the film's, so both features agree. */
     private void drawSpacePhotoQuad(Texture photo, float opacity, float x, float y, float scale, float rotate, int width, int height)
     {
         float halfW = scale * (photo.width / (float) photo.height) * (height / (float) width);
@@ -263,10 +268,12 @@ public class UIFormRenderer extends UIModelRenderer
     }
 
     /**
-     * The studio space: the dark far fill, then the plane with its grid in scene space. The
-     * plane and the lines follow the scene matrix, so when a rotated model block is edited
-     * immersively the floor turns with it, the way the grid does; real depth, so the model
-     * stands in it and occludes it where it is in front.
+     * The studio space: the dark fill (first, no depth), then the plane with its grid in
+     * scene space. The plane and the lines follow the scene matrix, so when a rotated model
+     * block is edited immersively the floor turns with it, the way the grid does. They write
+     * no depth: the floor is a backdrop, and an opaque 32x32 plane would sit between the
+     * camera and the model whenever the camera dips below it - with no depth written, the
+     * model (drawn later) always lands over the floor, at any angle.
      */
     private void renderSpaceStudio(UIContext context)
     {
@@ -277,7 +284,7 @@ public class UIFormRenderer extends UIModelRenderer
 
         RenderSystem.disableBlend();
         RenderSystem.enableDepthTest();
-        RenderSystem.depthMask(true);
+        RenderSystem.depthMask(false);
         RenderSystem.disableCull();
         RenderSystem.setShader(GameRenderer::getPositionColorProgram);
         RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
@@ -295,6 +302,7 @@ public class UIFormRenderer extends UIModelRenderer
         finally
         {
             RenderSystem.enableCull();
+            RenderSystem.depthMask(true);
         }
     }
 

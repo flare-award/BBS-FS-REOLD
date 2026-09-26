@@ -274,10 +274,6 @@ public class UIKeys
     public static final IKey ENGINE_BACKGROUND_MODE_DEFAULT = L10n.lang("bbs.background_mode.default");
     public static final IKey ENGINE_BACKGROUND_MODE_SOLID = L10n.lang("bbs.background_mode.solid");
     public static final IKey ENGINE_BACKGROUND_MODE_GRADIENT = L10n.lang("bbs.background_mode.gradient");
-    public static final IKey SETTINGS_ROUND_CORNERS_OFF = L10n.lang("bbs.config.appearance.round_corners.off");
-    public static final IKey SETTINGS_ROUND_CORNERS_SMOOTH = L10n.lang("bbs.config.appearance.round_corners.smooth");
-    public static final IKey SETTINGS_ROUND_CORNERS_PIXEL = L10n.lang("bbs.config.appearance.round_corners.pixel");
-
     public static final IKey ENGINE_GRADIENT_DIRECTION_HORIZONTAL = L10n.lang("bbs.gradient_direction.horizontal");
     public static final IKey ENGINE_GRADIENT_DIRECTION_VERTICAL = L10n.lang("bbs.gradient_direction.vertical");
     public static final IKey ENGINE_GRADIENT_DIRECTION_DIAGONAL = L10n.lang("bbs.gradient_direction.diagonal");

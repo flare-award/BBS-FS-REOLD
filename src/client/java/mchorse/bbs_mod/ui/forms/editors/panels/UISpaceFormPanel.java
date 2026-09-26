@@ -125,6 +125,14 @@ public class UISpaceFormPanel extends UIFormPanel
     {
         super.startEdit(form);
 
+        /* Panels are rebuilt from scratch on every editor (re)build, so the mode button -
+         * unlike the self-syncing trackpads and the colour - must be told what the form
+         * actually holds; without this it always showed the first option. */
+        if (form != null)
+        {
+            this.mode.setValue(MathUtils.clamp(form.spaceMode.get(), Form.SPACE_NORMAL, Form.SPACE_STUDIO));
+        }
+
         this.refreshByMode();
     }
 

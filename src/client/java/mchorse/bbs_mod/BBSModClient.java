@@ -626,12 +626,6 @@ public class BBSModClient implements ClientModInitializer
             UIKeys.FORMS_TABS_STRIP_SIDE_RIGHT
         );
 
-        BBSSettings.roundCorners.modes(
-            UIKeys.SETTINGS_ROUND_CORNERS_OFF,
-            UIKeys.SETTINGS_ROUND_CORNERS_SMOOTH,
-            UIKeys.SETTINGS_ROUND_CORNERS_PIXEL
-        );
-
         BBSSettings.keystrokeMode.modes(
             UIKeys.ENGINE_KEYSTROKES_POSITION_AUTO,
             UIKeys.ENGINE_KEYSTROKES_POSITION_BOTTOM_LEFT,

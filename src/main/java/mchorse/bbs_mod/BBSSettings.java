@@ -62,8 +62,6 @@ public class BBSSettings {
 	public static ValueBoolean pixelArtSmoothing;
 	public static ValueInt taskbarSide;
 	public static ValueInt tabStripSide;
-	/** 0 - off, 1 - smooth, 2 - pixel: how the interface's floating corners are rounded. */
-	public static ValueInt roundCorners;
 	public static ValueBoolean openDataList;
 	public static ValueFloat fov;
 	public static ValueBoolean colorPickerHsvTab;
@@ -872,8 +870,6 @@ public class BBSSettings {
 		taskbarSide = builder.getInt("taskbar_side", 0);
 		/* Which edge of the form editor the strip of tab buttons is docked to; right is the 2.7 default. */
 		tabStripSide = builder.getInt("tab_strip_side", 3);
-		/* 0 - square corners (the default), 1 - smooth rounding, 2 - pixelated rounding */
-		roundCorners = builder.getInt("round_corners", 0);
 		openDataList = builder.getBoolean("open_data_list", false);
 		fov = builder.getFloat("fov", 70, 0, 180);
 		colorPickerHsvTab = builder.getBoolean("hsv_color_picker", true);
