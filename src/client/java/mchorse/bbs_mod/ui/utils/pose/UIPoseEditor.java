@@ -750,33 +750,41 @@ public class UIPoseEditor extends UIElement
 
     /**
      * The full-fix control reads the whole skeleton, not the selected bone: while every bone is
-     * pinned to the same value it is on and carries that value, and the moment any bone deviates
-     * &mdash; even one left at 0 among pinned ones &mdash; it reads off. Re-derived wherever a
-     * fix value can change: a full-fix write, a per-bone edit, an apply-to-children, a
-     * re-selection.
+     * pinned to the same non-zero value it is on and carries that value, and it reads off both
+     * when any bone deviates (even one left at 0 among pinned ones) and when nothing is pinned
+     * at all. The control itself stays live whatever the state: a disabled control would
+     * swallow the mouse release of an in-flight drag and lock the slider for good.
+     * Re-derived wherever a fix value can change: a full-fix write, a per-bone edit, an
+     * apply-to-children, a re-selection.
      */
     protected void syncFullFixState()
     {
         float common = 0F;
-        boolean uniform = this.pose != null && !this.allBones.isEmpty();
+        boolean uniform = false;
 
-        for (String bone : this.allBones)
+        if (this.pose != null && !this.allBones.isEmpty())
         {
-            PoseTransform pt = this.pose.get(bone);
-            float fix = pt == null ? 0F : pt.fix;
+            PoseTransform first = this.pose.get(this.allBones.get(0));
+            common = first == null ? 0F : first.fix;
+            uniform = true;
 
-            if (Math.abs(fix - common) > 0.001F)
+            for (int i = 1; i < this.allBones.size(); i++)
             {
-                uniform = false;
-                break;
-            }
+                PoseTransform pt = this.pose.get(this.allBones.get(i));
+                float fix = pt == null ? 0F : pt.fix;
 
-            common = fix;
+                if (Math.abs(fix - common) > 0.001F)
+                {
+                    uniform = false;
+                    break;
+                }
+            }
         }
 
-        this.fullFix.setValue(uniform);
-        this.fullFixSlider.setValue(uniform ? common : 0F);
-        this.fullFixSlider.setEnabled(uniform);
+        boolean on = uniform && common > 0.001F;
+
+        this.fullFix.setValue(on);
+        this.fullFixSlider.setValue(on ? common : 0F);
     }
 
     private static void attachFullFixListener()

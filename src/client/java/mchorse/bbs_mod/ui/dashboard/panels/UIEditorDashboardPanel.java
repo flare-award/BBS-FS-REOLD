@@ -207,7 +207,10 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
             {
                 this.dataListEdge = new UIDraggable(this::dragDataListWidth)
                     .cursors(GLFW.GLFW_HRESIZE_CURSOR, GLFW.GLFW_HRESIZE_CURSOR)
-                    .dragEnd(() -> BBSSettings.editorLayoutSettings.setSplitSize("open_data_list", this.dataListWidth));
+                    .dragEnd(() -> BBSSettings.editorLayoutSettings.setSplitSize("open_data_list", this.dataListWidth))
+                    /* The default draggable skin is a scrollbar; the seam wants none of it &mdash;
+                     * transparent, only the cursor betrays where the edge is. */
+                    .rendering((context) -> {});
             }
 
             /* The width the user last dragged to, the default until there is one; a screen
