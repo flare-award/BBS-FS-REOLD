@@ -1,4 +1,4 @@
-package mchorse.bbs_mod.mixin.client.irlite;
+package mchorse.bbs_mod.utils;
 
 import mchorse.bbs_mod.BBSSettings;
 

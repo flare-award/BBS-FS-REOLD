@@ -1,5 +1,6 @@
 package mchorse.bbs_mod.mixin.client.irlite;
 
+import mchorse.bbs_mod.utils.IrliteL10n;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
