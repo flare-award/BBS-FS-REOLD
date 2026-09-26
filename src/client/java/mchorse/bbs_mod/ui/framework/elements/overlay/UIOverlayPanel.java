@@ -295,21 +295,27 @@ public class UIOverlayPanel extends UIElement
     @Override
     public boolean subKeyPressed(UIContext context)
     {
-        if (!context.isFocused() && context.isPressed(Keys.CLOSE))
+        /* A panel embedded as a fixed column of some interface is no overlay: it has nothing
+         * to close and nothing to confirm, so those keys must keep travelling to the menu
+         * (Esc closing it) and the lists around (Enter opening the picked row). */
+        if (this.getParent() instanceof UIOverlay)
         {
-            this.close();
+            if (!context.isFocused() && context.isPressed(Keys.CLOSE))
+            {
+                this.close();
 
-            return true;
-        }
+                return true;
+            }
 
-        /* Enter is not gated on focus, unlike the closing escape: children are offered the key
-         * first, so whoever spends it on itself (a text area, a list) has already taken it, and
-         * what reaches the panel is the Enter of someone done filling the dialog in */
-        if (context.isPressed(Keys.CONFIRM) || context.isPressed(GLFW.GLFW_KEY_ENTER) || context.isPressed(GLFW.GLFW_KEY_KP_ENTER))
-        {
-            this.confirm();
+            /* Enter is not gated on focus, unlike the closing escape: children are offered the key
+             * first, so whoever spends it on itself (a text area, a list) has already taken it,
+             * and what reaches the panel is the Enter of someone done filling the dialog in */
+            if (context.isPressed(Keys.CONFIRM) || context.isPressed(GLFW.GLFW_KEY_ENTER) || context.isPressed(GLFW.GLFW_KEY_KP_ENTER))
+            {
+                this.confirm();
 
-            return true;
+                return true;
+            }
         }
 
         return super.subKeyPressed(context);
