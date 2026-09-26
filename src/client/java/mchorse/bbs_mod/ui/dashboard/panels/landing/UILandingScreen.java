@@ -16,6 +16,7 @@ import mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
 import mchorse.bbs_mod.ui.framework.elements.utils.UIRenderable;
 import mchorse.bbs_mod.ui.utils.Area;
+import mchorse.bbs_mod.ui.utils.RoundedCorners;
 import mchorse.bbs_mod.ui.utils.UI;
 import mchorse.bbs_mod.ui.utils.UIUtils;
 import mchorse.bbs_mod.ui.utils.context.ContextMenuManager;
@@ -347,9 +348,21 @@ public class UILandingScreen extends UIElement
         int bg = BBSSettings.raisedSurface();
         int border = BBSSettings.color(BBSSettings.dividerColor(), Colors.A12);
 
-        context.batcher.dropShadow(area.x, area.y, area.ex(), area.ey(), 14, Colors.A50, 0);
-        context.batcher.box(area.x, area.y, area.ex(), area.ey(), bg);
-        context.batcher.outline(area.x, area.y, area.ex(), area.ey(), border);
+        float[] radii = RoundedCorners.radii(area, context);
+        boolean rounded = radii[0] > 0F || radii[1] > 0F || radii[2] > 0F || radii[3] > 0F;
+
+        if (rounded)
+        {
+            context.batcher.roundRing(area.x, area.y, area.ex(), area.ey(), radii[0], radii[1], radii[2], radii[3], 14F, Colors.A50, 0, true);
+            context.batcher.roundBox(area.x, area.y, area.ex(), area.ey(), radii[0], radii[1], radii[2], radii[3], bg);
+            context.batcher.roundRing(area.x, area.y, area.ex(), area.ey(), radii[0], radii[1], radii[2], radii[3], 1F, border, border, false);
+        }
+        else
+        {
+            context.batcher.dropShadow(area.x, area.y, area.ex(), area.ey(), 14, Colors.A50, 0);
+            context.batcher.box(area.x, area.y, area.ex(), area.ey(), bg);
+            context.batcher.outline(area.x, area.y, area.ex(), area.ey(), border);
+        }
     }
 
     private void renderEmptyHint(UIContext context)
@@ -498,9 +511,14 @@ public class UILandingScreen extends UIElement
             BBSModClient.getTextures().getTexture(banner.link);
         }
 
+        /* The banner is the card's top half, so it follows the card's top corners */
+        float[] cardRadii = RoundedCorners.radii(this.card.area, context);
+        float radiusTL = cardRadii[0];
+        float radiusTR = cardRadii[1];
+
         if (banners.size() == 1)
         {
-            this.renderBannerImage(context, area, banners.get(0), 1F);
+            this.renderBannerImage(context, area, banners.get(0), 1F, radiusTL, radiusTR);
             return;
         }
 
@@ -517,15 +535,15 @@ public class UILandingScreen extends UIElement
         float alpha = progress * progress * (3F - 2F * progress);
 
         /* Keep the lower image opaque: fading both layers would darken the midpoint. */
-        this.renderBannerImage(context, area, banners.get(current), 1F);
+        this.renderBannerImage(context, area, banners.get(current), 1F, radiusTL, radiusTR);
 
         if (alpha > 0F)
         {
-            this.renderBannerImage(context, area, banners.get((current + 1) % banners.size()), alpha);
+            this.renderBannerImage(context, area, banners.get((current + 1) % banners.size()), alpha, radiusTL, radiusTR);
         }
     }
 
-    private void renderBannerImage(UIContext context, Area area, BannerConfig.Banner banner, float alpha)
+    private void renderBannerImage(UIContext context, Area area, BannerConfig.Banner banner, float alpha, float radiusTL, float radiusTR)
     {
         Texture texture = BBSModClient.getTextures().getTexture(banner.link);
 
@@ -534,7 +552,7 @@ public class UILandingScreen extends UIElement
             return;
         }
 
-        renderBannerCrop(context.batcher, area, texture, banner.focusX, banner.focusY, banner.zoom, alpha);
+        renderBannerCrop(context.batcher, area, texture, banner.focusX, banner.focusY, banner.zoom, alpha, radiusTL, radiusTR, 0F, 0F);
     }
 
     /**
@@ -543,7 +561,7 @@ public class UILandingScreen extends UIElement
      * which slice of the leftover image is shown. Centre focus at zoom 1 is a plain cover crop;
      * {@code alpha} fades the whole slice, for the crossfade between banners.
      */
-    public static void renderBannerCrop(Batcher2D batcher, Area area, Texture texture, float focusX, float focusY, float zoom, float alpha)
+    public static void renderBannerCrop(Batcher2D batcher, Area area, Texture texture, float focusX, float focusY, float zoom, float alpha, float radiusTL, float radiusTR, float radiusBR, float radiusBL)
     {
         float scale = Math.max(area.w / (float) texture.width, area.h / (float) texture.height) * Math.max(zoom, 1F);
         float cropW = area.w / scale;
@@ -551,7 +569,12 @@ public class UILandingScreen extends UIElement
         float u1 = (texture.width - cropW) * MathUtils.clamp(focusX, 0F, 1F);
         float v1 = (texture.height - cropH) * MathUtils.clamp(focusY, 0F, 1F);
 
-        batcher.texturedBox(texture, Colors.setA(Colors.WHITE, alpha), area.x, area.y, area.w, area.h, u1, v1, u1 + cropW, v1 + cropH, texture.width, texture.height);
+        batcher.texturedRoundBox(texture, Colors.setA(Colors.WHITE, alpha), area.x, area.y, area.ex(), area.ey(), u1, v1, u1 + cropW, v1 + cropH, radiusTL, radiusTR, radiusBR, radiusBL);
+    }
+
+    public static void renderBannerCrop(Batcher2D batcher, Area area, Texture texture, float focusX, float focusY, float zoom, float alpha)
+    {
+        renderBannerCrop(batcher, area, texture, focusX, focusY, zoom, alpha, 0F, 0F, 0F, 0F);
     }
 
     public static void renderBannerCrop(Batcher2D batcher, Area area, Texture texture, float focusX, float focusY, float zoom)

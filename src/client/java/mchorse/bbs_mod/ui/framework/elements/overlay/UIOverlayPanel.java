@@ -11,6 +11,7 @@ import mchorse.bbs_mod.ui.framework.elements.events.UIOverlayCloseEvent;
 import mchorse.bbs_mod.ui.framework.elements.utils.EventPropagation;
 import mchorse.bbs_mod.ui.framework.elements.utils.UIDraggable;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
+import mchorse.bbs_mod.ui.utils.RoundedCorners;
 import mchorse.bbs_mod.ui.utils.UI;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.utils.MathUtils;
@@ -350,14 +351,37 @@ public class UIOverlayPanel extends UIElement
 
     protected void renderBackground(UIContext context)
     {
-        context.batcher.dropShadow(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 10, BBSSettings.panelShadowOpaqueColor(), BBSSettings.panelShadowTransparentColor());
+        /* A panel docked as a fixed column of some interface is no floating thing: its edges
+         * sit against other panels and stay square, whatever the setting says. */
+        float[] radii = this.getParent() instanceof UIOverlay ? RoundedCorners.radii(this.area, context) : new float[] {0F, 0F, 0F, 0F};
+        boolean rounded = radii[0] > 0F || radii[1] > 0F || radii[2] > 0F || radii[3] > 0F;
 
-        this.area.render(context.batcher, BBSSettings.raisedSurface());
-        this.icons.area.render(context.batcher, BBSSettings.chromeSurface());
+        if (rounded)
+        {
+            context.batcher.roundRing(this.area.x, this.area.y, this.area.ex(), this.area.ey(), radii[0], radii[1], radii[2], radii[3], 10F, BBSSettings.panelShadowOpaqueColor(), BBSSettings.panelShadowTransparentColor(), true);
+            context.batcher.roundBox(this.area.x, this.area.y, this.area.ex(), this.area.ey(), radii[0], radii[1], radii[2], radii[3], BBSSettings.raisedSurface());
+
+            /* The chrome column keeps the panel's own right corners */
+            context.batcher.roundBox(this.icons.area.x, this.icons.area.y, this.icons.area.ex(), this.icons.area.ey(), 0F, radii[1], radii[2], 0F, BBSSettings.chromeSurface());
+        }
+        else
+        {
+            context.batcher.dropShadow(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 10, BBSSettings.panelShadowOpaqueColor(), BBSSettings.panelShadowTransparentColor());
+
+            this.area.render(context.batcher, BBSSettings.raisedSurface());
+            this.icons.area.render(context.batcher, BBSSettings.chromeSurface());
+        }
 
         if (this.close.area.isInside(context))
         {
-            this.close.area.render(context.batcher, Colors.RED | Colors.A100);
+            if (radii[1] > 0F)
+            {
+                context.batcher.roundBox(this.close.area.x, this.close.area.y, this.close.area.ex(), this.close.area.ey(), 0F, radii[1], 0F, 0F, Colors.RED | Colors.A100);
+            }
+            else
+            {
+                this.close.area.render(context.batcher, Colors.RED | Colors.A100);
+            }
         }
 
         if (this.title.area.isInside(context))
