@@ -29,7 +29,6 @@ import mchorse.bbs_mod.camera.clips.converters.PathToKeyframeConverter;
 import mchorse.bbs_mod.camera.clips.misc.AudioClip;
 import mchorse.bbs_mod.camera.clips.misc.CurveClip;
 import mchorse.bbs_mod.camera.clips.misc.FilterClip;
-import mchorse.bbs_mod.camera.clips.misc.PhotoClip;
 import mchorse.bbs_mod.camera.clips.misc.ImageClip;
 import mchorse.bbs_mod.camera.clips.misc.SubtitleClip;
 import mchorse.bbs_mod.camera.clips.misc.VideoClip;
@@ -482,7 +481,6 @@ public class BBSMod implements ModInitializer
             .register(Link.bbs("video"), VideoClip.class, new ClipFactoryData(Icons.VIDEO_CAMERA, 0xd21f3c))
             .register(Link.bbs("curve"), CurveClip.class, new ClipFactoryData(Icons.ARC, 0xff1493))
             .register(Link.bbs("filters"), FilterClip.class, new ClipFactoryData(Icons.MATERIAL, 0x21c0ad))
-            .register(Link.bbs("photo"), PhotoClip.class, new ClipFactoryData(Icons.IMAGE, 0xd8a032))
             .register(Link.bbs("tracker"), TrackerClip.class, new ClipFactoryData(Icons.USER, 0xffffff))
             .register(Link.bbs("dolly_zoom"), DollyZoomClip.class, new ClipFactoryData(Icons.FILTER, 0x7d56c9));
 

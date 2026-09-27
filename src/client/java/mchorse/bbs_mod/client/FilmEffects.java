@@ -6,7 +6,6 @@ import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.blocks.entities.ModelBlockEntity;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.camera.clips.misc.FilterClip;
-import mchorse.bbs_mod.camera.clips.misc.PhotoClip;
 import mchorse.bbs_mod.camera.controller.CameraWorkCameraController;
 import mchorse.bbs_mod.data.DataToString;
 import mchorse.bbs_mod.data.types.MapType;
@@ -996,14 +995,6 @@ public class FilmEffects
             }
         }
 
-        for (PhotoClip.State state : getClipPhotoStates())
-        {
-            if (!state.texture.isEmpty())
-            {
-                return true;
-            }
-        }
-
         return false;
     }
 
@@ -1519,14 +1510,6 @@ public class FilmEffects
             }
         }
 
-        for (PhotoClip.State state : getClipPhotoStates())
-        {
-            if (!state.texture.isEmpty() && clampLayerMode(state.layerMode) == mode)
-            {
-                return true;
-            }
-        }
-
         return false;
     }
 
@@ -1544,14 +1527,6 @@ public class FilmEffects
         for (PhotoLayer layer : getPhotoLayers())
         {
             if (!layer.texture.isEmpty() && layerMode(layer) == LAYER_OVER)
-            {
-                return true;
-            }
-        }
-
-        for (PhotoClip.State state : getClipPhotoStates())
-        {
-            if (!state.texture.isEmpty() && clampLayerMode(state.layerMode) == LAYER_OVER)
             {
                 return true;
             }
@@ -1713,13 +1688,6 @@ public class FilmEffects
                 }
             }
 
-            for (PhotoClip.State state : getClipPhotoStates())
-            {
-                if (drawsInStage(clampLayerMode(state.layerMode), afterForms))
-                {
-                    drawPhotoInWorld(getPhotoTexture(state.texture), state.opacity, state.x, state.y, state.scale, state.stretchX, state.stretchY, state.rotate, state.flip, width, height);
-                }
-            }
         }
         catch (Exception e)
         {
@@ -1917,15 +1885,6 @@ public class FilmEffects
                 drawPhoto(getPhotoTexture(layer.texture), layer.opacity, layer.x, layer.y, layer.scale, layer.stretchX, layer.stretchY, layer.rotate, layer.flip, width, height);
             }
         }
-
-        /* Layers animated by playing photo clips draw on top of the static stack */
-        for (PhotoClip.State state : getClipPhotoStates())
-        {
-            if (clampLayerMode(state.layerMode) == LAYER_OVER)
-            {
-                drawPhoto(getPhotoTexture(state.texture), state.opacity, state.x, state.y, state.scale, state.stretchX, state.stretchY, state.rotate, state.flip, width, height);
-            }
-        }
     }
 
     private static void drawPhoto(Texture photo, float opacity, float x, float y, float scale, float stretchX, float stretchY, float rotate, float flip, int width, int height)
@@ -1949,17 +1908,6 @@ public class FilmEffects
         GL20.glUniform1f(uniformPhotoFlip, Math.round(flip));
         photo.bind();
         GL11.glDrawArrays(GL11.GL_TRIANGLE_STRIP, 0, 4);
-    }
-
-    /** Photo layers contributed by photo clips playing on the camera timeline right now. */
-    private static List<PhotoClip.State> getClipPhotoStates()
-    {
-        if (BBSModClient.getCameraController().getCurrent() instanceof CameraWorkCameraController controller)
-        {
-            return PhotoClip.getStates(controller.getContext());
-        }
-
-        return Collections.emptyList();
     }
 
     /**

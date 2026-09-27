@@ -190,7 +190,7 @@ public class UIFilmPreview extends UIElement
         });
         this.filters = new UIIcon(Icons.FILTER, (b) -> UIOverlay.addOverlay(this.getContext(), new UIFilmFiltersOverlayPanel(), UIFilmEffectsOverlayPanel.WIDTH, UIFilmEffectsOverlayPanel.HEIGHT));
         this.filters.tooltip(UIKeys.FILM_FILTERS_TITLE);
-        this.photoFilter = new UIIcon(Icons.IMAGE, (b) -> UIOverlay.addOverlay(this.getContext(), new UIFilmPhotoOverlayPanel(), UIFilmEffectsOverlayPanel.WIDTH, UIFilmEffectsOverlayPanel.HEIGHT));
+        this.photoFilter = new UIIcon(Icons.PICTURE, (b) -> UIOverlay.addOverlay(this.getContext(), new UIFilmPhotoOverlayPanel(), UIFilmEffectsOverlayPanel.WIDTH, UIFilmEffectsOverlayPanel.HEIGHT));
         this.photoFilter.tooltip(UIKeys.FILM_PHOTO_TITLE);
         this.recordReplay = new UIIcon(Icons.SPHERE, (b) -> this.panel.getController().pickRecording());
         this.recordReplay.highlight(() -> this.panel.getController().isRecording(), Direction.BOTTOM);
