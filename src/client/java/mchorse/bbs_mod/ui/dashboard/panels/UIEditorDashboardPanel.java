@@ -143,6 +143,15 @@ public abstract class UIEditorDashboardPanel extends UIDashboardPanel implements
 
         if (desired == this.dataManager)
         {
+            /* No column on screen — nothing to size. The persisted width is read back when
+             * the column is created, so there is no sync to do while it does not exist.
+             * (Without this guard, a saved width different from the default NPE'd on
+             * desired.w() below whenever the column was off.) */
+            if (desired == null)
+            {
+                return;
+            }
+
             /* The width is one value for every tab: another tab may have dragged the shared
              * column while this one was off screen, and this one follows it. Not while this
              * tab's own drag is in flight, though: the persisted value only lands at the
