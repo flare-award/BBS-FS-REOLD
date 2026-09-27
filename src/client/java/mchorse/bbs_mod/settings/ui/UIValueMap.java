@@ -4,6 +4,7 @@ import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.settings.value.ValueKeyCombo;
+import mchorse.bbs_mod.utils.IrliteL10n;
 import mchorse.bbs_mod.settings.values.base.BaseValue;
 import mchorse.bbs_mod.settings.values.core.ValueLink;
 import mchorse.bbs_mod.settings.values.core.ValueString;
@@ -120,7 +121,11 @@ public class UIValueMap
 
                 for (IKey key : value.getLabels())
                 {
-                    button.addLabel(key);
+                    /* The labels are created while the settings register, when the language
+                     * can still be "Minecraft (auto)" with the client options not loaded
+                     * yet — so an English default can get baked in. The wrapper re-resolves
+                     * the text at render time, when the effective language is known. */
+                    button.addLabel(() -> IrliteL10n.translate(key.get(), BBSModClient.getLanguageKey()));
                 }
 
                 button.callback = (b) -> value.set(button.getValue());
