@@ -5,7 +5,6 @@ import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
 import mchorse.bbs_mod.utils.IrliteL10n;
-import org.spongepowered.asm.mixin.Accessor;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -17,10 +16,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  *  {@code IKey.constant(...)} in the constructor; the two dynamic status
  *  labels are lambdas, so they get wrapped at the end of the constructor —
  *  the "Default list:" line keeps the user's replay names and only its
- *  prefix is translated. Without the addon the target class never loads
- *  and this mixin is never applied. */
+ *  prefix is translated. Field accessors live in
+ *  {@link IrliteLightReplayWidgetsAccessor}. Without the addon the target
+ *  class never loads and this mixin is never applied. */
 @Mixin(targets = "qualet.irlite.client.ui.forms.editors.panels.LightReplayWidgets")
-public class IrliteLightReplayWidgetsL10nMixin
+public class IrliteLightReplayWidgetsL10nMixin implements IrliteLightReplayWidgetsAccessor
 {
     private static final String IKEY_CONSTANT =
         "Lmchorse/bbs_mod/l10n/keys/IKey;constant(Ljava/lang/String;)Lmchorse/bbs_mod/l10n/keys/IKey;";
@@ -37,12 +37,6 @@ public class IrliteLightReplayWidgetsL10nMixin
             return label;
         }
     }
-
-    @Accessor("summary")
-    private UIElement irliteSummary();
-
-    @Accessor("status")
-    private UIElement irliteStatus();
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void irliteRuDynamicLabels(CallbackInfo ci)
