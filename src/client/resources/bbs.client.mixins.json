@@ -43,7 +43,6 @@
         "irlite.IrliteLightFormPanelsL10nMixin",
         "irlite.IrliteFormSectionsL10nMixin",
         "irlite.IrliteLightReplayWidgetsL10nMixin",
-        "irlite.IrliteLightFormsL10nMixin",
         "KeyboardInputMixin",
         "EntityRendererMixin",
         "ClientPlayerEntityAccessor",

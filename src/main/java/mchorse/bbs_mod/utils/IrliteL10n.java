@@ -68,10 +68,6 @@ public final class IrliteL10n
         RU.put("File error. Close the pack in other programs and try again.", "Ошибка файла. Закройте пак в других программах и попробуйте снова.");
         RU.put("This patch didn't fit the selected pack, maybe it's a different version.", "Патч не подошёл к выбранному паку, возможно, это другая версия.");
 
-        /* PointLightForm / SpotlightForm: the model display names. */
-        RU.put("Point light", "Точечный свет");
-        RU.put("Spotlight", "Прожектор");
-
         /* IrliteFormSections: the collapsible section headers of the two
          * light model forms. */
         RU.put("Light", "Свет");
