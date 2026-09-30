@@ -83,11 +83,17 @@ public class UIWebTutorialOverlayPanel extends UIOverlayPanel
         this.next = new UIButton(UIKeys.FORMS_EDITORS_WEB_TUTORIAL_NEXT, (b) -> this.step(1));
 
         UIElement navigation = UI.row(this.previous, this.next);
+        navigation.h(16);
 
-        this.page = UI.scrollView(8, 6, this.preview, this.heading, this.body, navigation);
-        this.page.relative(this.content).x(144).y(6).w(1F, -150).h(1F, -12);
+        this.page = UI.scrollView(8, 6, this.preview, this.heading, this.body);
+        this.page.relative(this.content).x(144).y(6).w(1F, -150).h(1F, -30);
 
-        this.content.add(this.chapters, this.page);
+        /* The nav stays out of the scroll view and is pinned to the bottom, so
+         * "Back" / "Next" live at the same spot on every page no matter how
+         * long the chapter's text is */
+        navigation.relative(this.content).x(144).y(1F, -22).w(1F, -150);
+
+        this.content.add(this.chapters, this.page, navigation);
 
         this.pick(0);
         this.chapters.setIndex(0);
