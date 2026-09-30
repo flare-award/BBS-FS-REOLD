@@ -67,6 +67,45 @@ public final class IrliteL10n
         RU.put("Couldn't open the shaderpack. Make sure a valid pack is selected.", "Не удалось открыть шейдерпак. Убедитесь, что выбран корректный пак.");
         RU.put("File error. Close the pack in other programs and try again.", "Ошибка файла. Закройте пак в других программах и попробуйте снова.");
         RU.put("This patch didn't fit the selected pack, maybe it's a different version.", "Патч не подошёл к выбранному паку, возможно, это другая версия.");
+
+        /* PointLightForm / SpotlightForm: the model display names. */
+        RU.put("Point light", "Точечный свет");
+        RU.put("Spotlight", "Прожектор");
+
+        /* IrliteFormSections: the collapsible section headers of the two
+         * light model forms. */
+        RU.put("Light", "Свет");
+        RU.put("Volumetric beam", "Объёмный луч");
+        RU.put("Shadows", "Тени");
+        RU.put("Affects", "Влияние");
+        RU.put("Cookie / gobo (spot mask)", "Маска луча (гобо)");
+
+        /* UIPointLightFormPanel / UISpotlightFormPanel: the field labels and
+         * toggles of the two light model forms. */
+        RU.put("Color", "Цвет");
+        RU.put("Intensity", "Интенсивность");
+        RU.put("Radius", "Радиус");
+        RU.put("Range", "Дальность");
+        RU.put("Inner radius", "Внутренний радиус");
+        RU.put("Beam strength", "Сила луча");
+        RU.put("Anisotropy", "Анизотропия");
+        RU.put("VL density", "Плотность объёмного света");
+        RU.put("Bulb size (shadow softness)", "Размер лампы (мягкость теней)");
+        RU.put("Entities only", "Только сущности");
+        RU.put("Blocks only", "Только блоки");
+        RU.put("Cookie texture (gobo)", "Текстура маски (гобо)");
+        RU.put("Invert gobo", "Инверсия маски");
+        RU.put("Cookie rotation", "Поворот маски");
+        RU.put("Cookie scale", "Масштаб маски");
+
+        /* LightReplayWidgets: the replay-filter row inside "Affects". */
+        RU.put("Light: selected replays only", "Свет: только выбранные реплеи");
+        RU.put("Choose lit replays...", "Выбрать освещённые реплеи...");
+        RU.put("Click a replay to add or remove it. None clears the list. Changes apply immediately.",
+            "Кликните по реплею, чтобы добавить или убрать его. «Ни один» очищает список. Изменения применяются сразу.");
+        RU.put("Filter ON: empty list = nobody.", "Фильтр включён: пустой список = никто.");
+        RU.put("Filter OFF: list ignored.", "Фильтр выключен: список не учитывается.");
+        RU.put("Default list: ", "Список по умолчанию: ");
     }
 
     private IrliteL10n()
@@ -82,6 +121,21 @@ public final class IrliteL10n
         String ru = isRussian(language) ? RU.get(label) : null;
 
         return ru != null ? ru : label;
+    }
+
+    /** For labels that start with a translatable prefix and then embed
+     *  dynamic user content (replay names): translate the prefix, keep the
+     *  rest untouched. Returns the input as-is when it doesn't match. */
+    public static String translatePrefix(String text, String prefix, String language)
+    {
+        if (text == null || !text.startsWith(prefix))
+        {
+            return text;
+        }
+
+        String ru = isRussian(language) ? RU.get(prefix) : null;
+
+        return ru != null ? ru + text.substring(prefix.length()) : text;
     }
 
     /** The BBS setting can be empty ("Minecraft (auto)"), in which case the
