@@ -20,7 +20,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  *  {@link IrliteLightReplayWidgetsAccessor}. Without the addon the target
  *  class never loads and this mixin is never applied. */
 @Mixin(targets = "qualet.irlite.client.ui.forms.editors.panels.LightReplayWidgets")
-public class IrliteLightReplayWidgetsL10nMixin implements IrliteLightReplayWidgetsAccessor
+public class IrliteLightReplayWidgetsL10nMixin
 {
     private static final String IKEY_CONSTANT =
         "Lmchorse/bbs_mod/l10n/keys/IKey;constant(Ljava/lang/String;)Lmchorse/bbs_mod/l10n/keys/IKey;";
@@ -45,7 +45,11 @@ public class IrliteLightReplayWidgetsL10nMixin implements IrliteLightReplayWidge
         {
             String language = BBSModClient.getLanguageKey();
 
-            UIElement summaryElement = this.irliteSummary();
+            /* the mixin merges into LightReplayWidgets, which implements the
+             * accessor interface once Mixin applies it */
+            IrliteLightReplayWidgetsAccessor accessor = (IrliteLightReplayWidgetsAccessor) (Object) this;
+
+            UIElement summaryElement = accessor.irliteSummary();
 
             if (summaryElement instanceof UILabel summary)
             {
@@ -54,7 +58,7 @@ public class IrliteLightReplayWidgetsL10nMixin implements IrliteLightReplayWidge
                 summary.label = () -> IrliteL10n.translatePrefix(originalSummary.get(), "Default list: ", language);
             }
 
-            UIElement statusElement = this.irliteStatus();
+            UIElement statusElement = accessor.irliteStatus();
 
             if (statusElement instanceof UILabel status)
             {
